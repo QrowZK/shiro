@@ -22,6 +22,9 @@ Other scripts:
 |---|---|
 | `npm test` | Unit tests - protocol, stores, adapters (Node's runner, no extra deps) |
 | `npm run test:e2e` | Drives every live code path against a fake server in a real browser |
+| `npm run serve:csp` | Serves `dist/` with the packaged CSP, to catch a policy that blanks the window |
+| `npm run gen:icons` | Rebuild the icon set from what the source actually draws |
+| `npm run gen:fonts` | Re-vendor the webfonts from Google Fonts |
 | `npm run gen:protocol` | Regenerate `src/protocol/` from upstream C# |
 | `npm run tauri:dev` | Run inside the desktop shell — **blocked, see below** |
 | `npm run tauri:build` | Produce the NSIS installer — **blocked, see below** |
@@ -219,6 +222,26 @@ SYNC panel or the engine's own error dialog.
 A local `ZkLobbyServer` is no longer a prerequisite — see ARCHITECTURE.md section 8
 for the revised guidance on developing against live.
 
+## Content security policy
+
+The packaged app runs under a real CSP rather than Tauri's permissive default:
+
+    default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+    font-src 'self'; img-src 'self' data: https://zero-k.info;
+    connect-src 'self' ipc: http://ipc.localhost; object-src 'none';
+    frame-src 'none'; base-uri 'self'
+
+`'unsafe-inline'` for styles is unavoidable: the design system styles every
+element with a `style` attribute, which CSP counts as inline. Nothing builds a
+style string out of server data, so that is a smaller exposure than it reads.
+`img-src` allows zero-k.info because that is where map images live.
+
+A CSP that is one directive too tight shows up as a blank window from an
+installer, which is a miserable way to find out — so `npm run serve:csp` serves
+the production build with exactly this policy and the end-to-end suite runs
+against it. WebView2 is Chromium, so the rules are the same ones; the only thing
+that cannot be checked outside Tauri is the `ipc:` scheme.
+
 ## Vendor patches to `src/ds/shiro.js`
 
 That file is generated from the Claude Design bundle and normally must not be
@@ -232,19 +255,30 @@ re-sync**, and report them upstream so the design project can fix them at source
    the placeholder instead. Never reintroduce a document-wide `createIcons()` call.
 2. **Map URLs.** `MapImage` assumed map names are URL-safe. They are not — see
    ARCHITECTURE.md section 8. Spaces are normalized to underscores for the URL only.
+3. **Icon set.** The bundle looks icons up in `lucide.icons`, which defeats
+   tree-shaking. The shim resolves them through `src/ds/icons.js` instead — see
+   Known issues.
 
 Both are bugs in the design kit, not in the port. They were invisible in the static
 prototype because nothing ever unmounted and the demo map names all used underscores.
 
 ## Known issues
 
-- **Elo renders twice per player in the battle room.** `PlayerRow` spreads `user`
-  into `UserChip` (which renders Elo) and `TeamColumn` also passes Elo via `right`.
-  Present in the design kit as authored; left as-is rather than silently diverging.
-  Designer decides the fix.
-- **Bundle is 837 kB** because `lucide` is imported whole. Switch to per-icon imports
-  before shipping.
-- **Fonts load from Google Fonts.** Must be self-hosted before packaging — the app
-  has to render offline and the Tauri CSP will block the request.
 - **React pinned to 18.3.1** to match the version the design kit was authored against,
   not the 19 named in ARCHITECTURE.md. Revisit once the UI is stable.
+- **The engine launch has never run against a real Zero-K install.** Everything up
+  to the process spawn is tested; the spawn itself is not.
+
+Resolved since the port:
+
+- ~~Elo renders twice per player in the battle room.~~ `UserChip` already draws it;
+  the design kit's second copy in `TeamColumn`'s `right` slot was a bug, and that
+  slot now carries the host's kick control instead.
+- ~~Bundle is 837 kB because `lucide` is imported whole.~~ 286 kB. `src/ds/icons.js`
+  names the 31 icons the app actually draws so the bundler can drop the other 1712;
+  `npm test` fails if that list drifts from the source.
+- ~~Fonts load from Google Fonts.~~ Self-hosted in `src/assets/fonts/`, latin and
+  latin-ext, no italics — 146 kB for eight faces.
+- ~~The packaged CSP will block requests.~~ A real policy is set in
+  `tauri.conf.json`, and the whole end-to-end suite passes against a build served
+  with it (`npm run serve:csp`), so it does not blank the window.

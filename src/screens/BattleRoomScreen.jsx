@@ -17,13 +17,14 @@ export function TeamColumn({ ally, players, max = 8, onJoin, onKick, onAddBot })
       </div>
       {players.map((p, i) => (
         <PlayerRow key={i} {...p} user={p.user}
+          /* Host controls are offered to everyone; the server ignores them from
+             anyone else, which is the only authority that counts. The rating
+             is not repeated here - UserChip already draws it, and the design
+             kit's duplicate was a bug. */
           right={onKick
-            /* Host controls are offered to everyone; the server ignores them
-               from anyone else, which is the only authority that counts. */
             ? <IconButton icon="x" size="sm" label={"Remove " + p.user.name}
                 onClick={() => onKick(p.user)} />
-            : <span style={{ font: "var(--w-medium) var(--size-tiny)/1 var(--font-mono)",
-                color: "var(--text-low)", fontVariantNumeric: "tabular-nums" }}>{p.user.elo || ""}</span>} />
+            : null} />
       ))}
       {Array.from({ length: Math.max(0, Math.min(3, max - players.length)) }).map((_, i) => (
         <div key={"e" + i} style={{ height: "var(--row-default)", display: "flex", alignItems: "center",

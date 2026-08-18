@@ -10,9 +10,13 @@
     "tauri": "tauri",
     "tauri:dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tauri.ps1 dev",
     "tauri:build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/tauri.ps1 build",
-    "test": "node --test \"src/**/*.test.ts\"",
+    "test": "node tools/gen-icons.mjs --check && node --test \"src/**/*.test.ts\"",
     "gen:protocol": "node tools/gen-protocol.mjs",
-    "test:e2e": "node tools/e2e/live.mjs"
+    "test:e2e": "node tools/e2e/live.mjs",
+    "gen:fonts": "node tools/fetch-fonts.mjs",
+    "serve:csp": "node tools/e2e/serve-csp.mjs",
+    "gen:icons": "node tools/gen-icons.mjs",
+    "check:icons": "node tools/gen-icons.mjs --check"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
