@@ -1,0 +1,8 @@
+/* Shiro webfonts.
+
+   Instrument Sans - contemporary neo-grotesque, holds up at 11px in a data column.
+   DM Mono - the numeral face, real tabular figures.
+
+   TODO(ship): self-host both before shipping in Tauri. The app must render offline,
+   and the packaged CSP will block this request. */
+@import url("https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wdth,wght@0,75..100,400..700;1,75..100,400..700&family=DM+Mono:wght@300;400;500&display=swap");
