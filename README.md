@@ -68,6 +68,7 @@ implemented, rendering, and driven by fake data shaped like the real protocol pa
 | Screen | File | State |
 |---|---|---|
 | Login | `src/screens/LoginScreen.jsx` | done |
+| Settings | `src/screens/SettingsScreen.jsx` | built from primitives - screen 9 was never designed |
 | App shell | `src/screens/AppShell.jsx` | done |
 | Battle list | `src/screens/BattleListScreen.jsx` | done |
 | Battle room | `src/screens/BattleRoomScreen.jsx` | done |
@@ -76,8 +77,11 @@ implemented, rendering, and driven by fake data shaped like the real protocol pa
 | Debriefing | `src/screens/DebriefingScreen.jsx` | done |
 | Friends / profile | `src/screens/FriendsScreen.jsx` | done |
 
-Not built: settings (screen 9), downloads (10), Planet Wars (11) — deferred per the
-handoff.
+Downloads (screen 10) and Planet Wars (11) are not built — deferred per the
+handoff. Settings (9) was deferred too, but the app needed somewhere to put the
+account, the Zero-K install and the server, so it is built from the same
+primitives rather than from a design. Both bottom nav buttons land there, because
+a button that does nothing is worse than one that explains itself.
 
 **Protocol layer: built and tested.**
 
@@ -92,14 +96,15 @@ handoff.
 | Chat | `src/store/chat.ts` | live - channels, DMs, battle chat, unread and mention state |
 | Matchmaker | `src/store/matchmaker.ts` | live - queues, joining, the ready check |
 | Parties | `src/store/party.ts` | live - invite, accept, leave |
+| Local settings | `src/store/settings.ts` | account, install override, server, persisted |
 | Friends | `src/store/friends.ts` | live - list, add, remove, ignore, profiles |
 | Match history | `src/store/history.ts` | live - debriefings, ratings, awards |
 | Engine launch | `src/store/game.ts`, `src-tauri/src/launch.rs` | built; **not yet run against a real engine** |
 | Install detection | `src-tauri/src/install.rs` | built; **not yet run against a real install** |
 | Rust TCP relay | `src-tauri/src/relay.rs` | builds clean |
 
-`npm test` runs 70 TypeScript tests; `cargo test` in `src-tauri/` runs 13 Rust tests;
-`npm run test:e2e` runs 60 end-to-end checks.
+`npm test` runs 73 TypeScript tests; `cargo test` in `src-tauri/` runs 15 Rust tests;
+`npm run test:e2e` runs 68 end-to-end checks.
 
 ## Testing the live paths
 
@@ -109,8 +114,8 @@ replaces `window.__TAURI_INTERNALS__` with [a fake
 server](tools/e2e/fake-server.js) and drives the real UI through login, joining,
 hosting, a passworded join, spectating, ignoring, room votes, host controls,
 chat, the matchmaker ready check, parties, friends, launching an engine, a
-rejoin offer, a dropped socket and a debriefing — 60 assertions against the same
-code the desktop build runs.
+rejoin offer, a dropped socket, settings, a debriefing and logging out — 68
+assertions against the same code the desktop build runs.
 
 ```bash
 npm run dev          # in another shell
@@ -180,8 +185,9 @@ Tokens under `src/styles/tokens/` mirror the project's `tokens/*.css` one-to-one
 9. ~~Hosting.~~ done — `OpenBattle` with title, map, size and password.
 10. ~~Parties, room votes, host controls (kick, add AI), spectating, ignores,
     rejoin offers and reconnect.~~ done.
-11. Not built: settings, downloads and Planet Wars — screens 9-11, deferred per
-    the handoff.
+11. ~~Settings, install override, server override, stay-logged-in, away.~~ done.
+12. Not built: downloads and Planet Wars — screens 10 and 11, deferred per the
+    handoff.
 
 ## Launching a game
 

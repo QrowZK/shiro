@@ -16,9 +16,14 @@
  *   await page.evaluate(() => window.__ZKS.push('BattleAdded {"Header":{...}}'));
  */
 (() => {
-  const listeners = new Map();
+  /** eventId -> {event, handler}. Ids are what `listen` hands back, and what
+   *  `unlisten` gives us to take a handler back off. */
+  const handlers = new Map();
+  let nextId = 1;
   const emit = (event, payload) => {
-    for (const h of listeners.get(event) || []) h({ event, id: 0, payload });
+    for (const [id, h] of handlers) {
+      if (h.event === event) h.handler({ event, id, payload });
+    }
   };
 
   const state = {
@@ -170,6 +175,12 @@
     }
   }
 
+  /* Tauri's own `unlisten` goes through this object rather than an invoke, so
+     without it every teardown throws. */
+  window.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+    unregisterListener: (_event, eventId) => { handlers.delete(eventId); },
+  };
+
   window.__TAURI_INTERNALS__ = {
     // The real one hands back an id and calls window[`_${id}`]; keeping the
     // function itself is equivalent and saves the indirection.
@@ -177,12 +188,12 @@
     async invoke(cmd, args) {
       switch (cmd) {
         case "plugin:event|listen": {
-          const set = listeners.get(args.event) || new Set();
-          set.add(args.handler);
-          listeners.set(args.event, set);
-          return 1;
+          const id = nextId++;
+          handlers.set(id, { event: args.event, handler: args.handler });
+          return id;
         }
         case "plugin:event|unlisten":
+          handlers.delete(args.eventId);
           return;
         case "zks_connect":
           soon(() => {
@@ -201,7 +212,15 @@
         case "zks_disconnect":
           return;
         case "zks_locate_install":
-          return { root: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Zero-K", source: "Steam" };
+          state.installRoot = args.root;
+          // An override that is not a Zero-K folder fails the way Rust's does.
+          if (args.root && !/zero-k/i.test(args.root)) {
+            throw new Error(args.root + " is not a Zero-K installation - no engine/ with games, maps or pool beside it.");
+          }
+          return {
+            root: args.root || "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Zero-K",
+            source: args.root ? "settings" : "Steam",
+          };
         case "zks_launch_spring":
           state.launched = args.req;
           soon(() => emit("zks://game", { kind: "launched", pid: 4242 }));

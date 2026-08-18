@@ -120,11 +120,18 @@ pub fn script_path() -> PathBuf {
 #[derive(Default)]
 pub struct Game {
     running: Arc<Mutex<bool>>,
+    /// A path from settings, if the player keeps Zero-K somewhere unusual.
+    root: Arc<Mutex<Option<String>>>,
 }
 
 #[tauri::command]
-pub fn zks_locate_install() -> Result<Install, String> {
-    install::detect()
+pub fn zks_locate_install(game: State<'_, Game>, root: Option<String>) -> Result<Install, String> {
+    // The override is remembered so a launch uses the same install the settings
+    // screen just confirmed, without having to pass it through ConnectSpring.
+    if let Ok(mut r) = game.root.lock() {
+        *r = root.clone().filter(|s| !s.trim().is_empty());
+    }
+    install::detect_with(root.as_deref())
 }
 
 /// Write the script and start the engine. Returns once the process has been
@@ -148,7 +155,8 @@ pub fn zks_launch_spring(
         *running = true;
     }
 
-    let mut child = match start(&req) {
+    let root = game.root.lock().ok().and_then(|r| r.clone());
+    let mut child = match start(&req, root.as_deref()) {
         Ok(child) => child,
         Err(e) => {
             if let Ok(mut r) = game.running.lock() {
@@ -177,8 +185,8 @@ pub fn zks_launch_spring(
 }
 
 /// Resolve install and engine, write the script, spawn.
-fn start(req: &ConnectRequest) -> Result<std::process::Child, String> {
-    let install = install::detect()?;
+fn start(req: &ConnectRequest, root: Option<&str>) -> Result<std::process::Child, String> {
+    let install = install::detect_with(root)?;
     let exe = install::find_engine(&install.root, &req.engine)?;
     let script = script_path();
     if let Some(dir) = script.parent() {

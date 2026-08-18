@@ -11,6 +11,7 @@ import ChatScreen from "./screens/ChatScreen.jsx";
 import QueueScreen from "./screens/QueueScreen.jsx";
 import DebriefingScreen from "./screens/DebriefingScreen.jsx";
 import FriendsScreen from "./screens/FriendsScreen.jsx";
+import SettingsScreen from "./screens/SettingsScreen.jsx";
 import HostBattleDialog from "./screens/HostBattleDialog.jsx";
 import JoinPasswordDialog from "./screens/JoinPasswordDialog.jsx";
 
@@ -23,6 +24,7 @@ import { useChat, BATTLE_ROOM, selectTabs } from "./store/chat";
 import { useMatchmaker, secondsLeft } from "./store/matchmaker";
 import { useFriends } from "./store/friends";
 import { useParty, inviteSecondsLeft } from "./store/party";
+import { useSettings } from "./store/settings";
 import { useHistory, buildDebriefView } from "./store/history";
 import {
   battleList, statusBarKind, describeFailure, roomModel, chatLines, userToChip,
@@ -48,6 +50,9 @@ export default function App() {
   const [locked, setLocked] = React.useState(null);
   const [install, setInstall] = React.useState(null);
   const [profileOf, setProfileOf] = React.useState(null);
+  const [away, setAway] = React.useState(false);
+
+  const settings = useSettings();
 
   const connection = useLobby(s => s.connection);
   const welcome = useLobby(s => s.welcome);
@@ -91,18 +96,20 @@ export default function App() {
 
   React.useEffect(() => () => { if (live) void teardown(); }, [live]);
 
-  /* Where Zero-K lives. Asked once: it is a disk scan, and the answer does not
-     change while the lobby is open. */
+  /* Where Zero-K lives. A disk scan, so it is asked once - and again only when
+     the settings screen asks, or the override changes. */
+  const [detectNonce, redetect] = React.useReducer(n => n + 1, 0);
+  const [installError, setInstallError] = React.useState("");
   React.useEffect(() => {
     if (!live) return;
     let cancelled = false;
     void import("./net/launch").then(({ locateInstall }) =>
-      locateInstall().then(
-        i => { if (!cancelled) setInstall(i); },
-        () => { if (!cancelled) setInstall(null); },
+      locateInstall(settings.installRoot).then(
+        i => { if (!cancelled) { setInstall(i); setInstallError(""); } },
+        e => { if (!cancelled) { setInstall(null); setInstallError(String(e)); } },
       ));
     return () => { cancelled = true; };
-  }, [live]);
+  }, [live, settings.installRoot, detectNonce]);
 
   /* The demo ready-check counts itself down; the live one runs against the
      deadline the server gave us. */
@@ -133,16 +140,38 @@ export default function App() {
      renders. */
   const ignored = React.useMemo(() => new Set(ignoreNames), [ignoreNames]);
 
-  const handleLogin = React.useCallback(async (name, password) => {
+  const handleLogin = React.useCallback(async (name, password, remember) => {
+    // Remember the name either way - it is not a secret, and typing it every
+    // time is the single most annoying thing a lobby can do.
+    useSettings.getState().set({ name, remember: Boolean(remember),
+      password: remember ? password : undefined });
     if (!live) {
       await new Promise(r => setTimeout(r, 700));
       setLoggedIn(true);
       return;
     }
-    await login({ name, password });
+    const { host, port } = useSettings.getState();
+    await login({ name, password }, host || undefined, port || undefined);
     const c = useLobby.getState().connection;
     if (c.kind !== "online") throw new Error(describeFailure(c));
     setLoggedIn(true);
+  }, [live]);
+
+  const handleLogout = React.useCallback(() => {
+    // Every store holds session state; leaving any of it behind would show the
+    // next account the last one's friends.
+    if (live) void teardown();
+    useLobby.getState().reset();
+    useRoom.getState().reset();
+    useChat.getState().reset();
+    useGame.getState().reset();
+    useMatchmaker.getState().reset();
+    useParty.getState().reset();
+    useFriends.getState().reset();
+    useHistory.getState().reset();
+    useSettings.getState().forgetPassword();
+    setLoggedIn(false);
+    setView("battles");
   }, [live]);
 
   // Who is in each battle room. Only `User` carries BattleID, so this is the
@@ -164,7 +193,11 @@ export default function App() {
   if (!loggedIn) {
     return (
       <AppShell view={view} onView={setView} {...shell}>
-        <ErrorBoundary><LoginScreen onLogin={handleLogin} live={live} /></ErrorBoundary>
+        <ErrorBoundary>
+          <LoginScreen onLogin={handleLogin} live={live}
+            defaultName={settings.name} defaultPassword={settings.password}
+            defaultRemember={settings.remember} />
+        </ErrorBoundary>
       </AppShell>
     );
   }
@@ -294,6 +327,19 @@ export default function App() {
       onIgnore={live ? name => useFriends.getState().ignore(name) : undefined}
       onAdd={live ? name => useFriends.getState().add(name) : undefined}
       onRemove={live ? name => useFriends.getState().remove(name) : undefined} />
+  );
+  else if (view === "settings") body = (
+    <SettingsScreen
+      me={live ? me : "Shadowfury"}
+      install={live ? install : { root: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Zero-K", source: "Steam" }}
+      installError={installError}
+      engine={live ? welcome?.Engine : D.welcome.Engine}
+      settings={settings}
+      onSettings={patch => useSettings.getState().set(patch)}
+      onRedetect={live ? redetect : undefined}
+      onLogout={handleLogout}
+      away={away}
+      onAway={live ? next => { setAway(next); void send("ChangeUserStatus", { IsAfk: next }); } : undefined} />
   );
   else body = (
     <DebriefingScreen

@@ -5,21 +5,22 @@ import logoMark from "../assets/logo-mark.svg";
 /* Screen 1. First impression, and the only place the "Steam users must set a
    password" caveat is explained.
 
-   onLogin(name, password) may be async and may reject; the rejection message is
-   shown against the password field. It is never retried automatically - the
+   onLogin(name, password, remember) may be async and may reject; the rejection
+   message is shown against the password field. It is never retried automatically - the
    server logs failed attempts by IP and bans repeat offenders. */
-export default function LoginScreen({ onLogin, live }) {
-  const [name, setName] = React.useState("");
-  const [pw, setPw] = React.useState("");
+export default function LoginScreen({ onLogin, live, defaultName, defaultPassword, defaultRemember }) {
+  const [name, setName] = React.useState(defaultName || "");
+  const [pw, setPw] = React.useState(defaultPassword || "");
   const [busy, setBusy] = React.useState(false);
   const [error, setError] = React.useState("");
+  const [remember, setRemember] = React.useState(defaultRemember !== false);
 
   const submit = async () => {
     if (!name || !pw) { setError("Enter a name and password."); return; }
     setBusy(true);
     setError("");
     try {
-      await onLogin(name, pw);
+      await onLogin(name, pw, remember);
     } catch (e) {
       setError(e && e.message ? e.message : String(e));
     } finally {
@@ -60,7 +61,9 @@ export default function LoginScreen({ onLogin, live }) {
           onKeyDown={e => e.key === "Enter" && submit()} />
         <Input label="Password" type="password" value={pw} onChange={e => setPw(e.target.value)}
           onKeyDown={e => e.key === "Enter" && submit()} error={error || undefined} />
-        <Checkbox label="Stay logged in" checked onChange={() => {}} />
+        <Checkbox label="Stay logged in" checked={remember}
+          onChange={e => setRemember(e.target.checked)}
+          hint="Saves your password on this machine." />
         <Button variant="primary" size="lg" block loading={busy} onClick={submit}>
           {busy ? "Connecting" : "Log in"}
         </Button>

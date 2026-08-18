@@ -308,6 +308,25 @@ const rowsAfter = await page.getByText(/^Teams 8v8 - all welcome$/).count();
 check("and the directory is replayed, not doubled", rowsAfter === rowsBefore,
   `before ${rowsBefore}, after ${rowsAfter}`);
 
+console.log("settings");
+await page.locator("nav button").last().click();
+check("settings knows who we are and where Zero-K is",
+  await waitFor("settings", () => seeing(/Zero-K installation/) && seeing(/Qrow/)));
+check("the detected install is shown", await seeing(/steamapps/));
+const badMark = await mark();
+await page.getByPlaceholder("Leave empty to detect automatically").fill("D:/nonsense");
+await page.getByRole("button", { name: /^Apply$/ }).first().click();
+check("a path that is not an install says so, rather than failing at the engine",
+  await waitFor("badroot", () => seeing(/is not a Zero-K installation/)));
+await page.getByPlaceholder("Leave empty to detect automatically").fill("");
+await page.getByRole("button", { name: /^Apply$/ }).first().click();
+check("clearing the override goes back to detection",
+  await waitFor("goodroot", () => seeing(/steamapps/)));
+await page.locator("label", { hasText: "Away" }).first().click();
+check("away is a status the server is told about",
+  await waitFor("afk", () => sentSince(badMark, /^ChangeUserStatus \{"IsAfk":true\}/)));
+await shot("live-08-settings");
+
 console.log("debriefing");
 await page.evaluate(() => window.__ZKS.push(JSON.stringify({
   DebriefingUsers: {
@@ -324,6 +343,17 @@ check("a finished match pulls you to the debriefing",
   await waitFor("debrief", () => seeing(/Victory/)));
 check("both sides are listed", await seeing(/hexed/) && await seeing(/Qrow/));
 await shot("live-07-debrief");
+
+console.log("logging out");
+await page.locator("nav button").last().click();
+await waitFor("settings", () => seeing(/Zero-K installation/));
+await clickText(/^Log out$/);
+check("logging out returns to the login screen",
+  await waitFor("loggedout", () => seeing(/Steam accounts need a lobby password/)));
+check("and remembers the name, which is not a secret", await waitFor("name", async () =>
+  (await page.locator("input").first().inputValue()) === "Qrow"));
+check("but not the password", await waitFor("pw", async () =>
+  (await page.locator("input").nth(1).inputValue()) === ""));
 
 console.log("");
 console.log(`${checks - failures.length}/${checks} checks passed`);

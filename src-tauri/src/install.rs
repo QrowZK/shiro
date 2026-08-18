@@ -116,6 +116,25 @@ fn candidates() -> Vec<(PathBuf, String)> {
 }
 
 /// Find the Zero-K install, or explain where we looked.
+///
+/// `override_root` is a path someone typed into settings. It is checked like
+/// any other candidate rather than trusted, so a typo says "that is not a
+/// Zero-K folder" instead of failing later at the engine.
+pub fn detect_with(override_root: Option<&str>) -> Result<Install, String> {
+    if let Some(root) = override_root.map(str::trim).filter(|r| !r.is_empty()) {
+        let path = PathBuf::from(root);
+        if looks_like_zk_root(&path) {
+            return Ok(Install { root: path, source: "settings".into() });
+        }
+        return Err(format!(
+            "{} is not a Zero-K installation - no engine/ with games, maps or pool beside it.",
+            path.display()
+        ));
+    }
+    detect()
+}
+
+/// Find the Zero-K install, or explain where we looked.
 pub fn detect() -> Result<Install, String> {
     let probed = candidates();
     for (root, source) in &probed {
@@ -230,6 +249,20 @@ mod tests {
         assert!(parse_library_folders("").is_empty());
         assert!(parse_library_folders("\"path\"").is_empty());
         assert!(parse_library_folders("\"path\" \"\"").is_empty());
+    }
+
+    #[test]
+    fn an_override_is_checked_like_any_other_candidate() {
+        let err = detect_with(Some("/definitely/not/zero-k")).unwrap_err();
+        assert!(err.contains("not a Zero-K installation"), "{err}");
+    }
+
+    #[test]
+    fn a_blank_override_falls_through_to_detection() {
+        // Whatever detection returns here, it must not be the override error.
+        if let Err(e) = detect_with(Some("   ")) {
+            assert!(e.contains("No Zero-K installation found"), "{e}");
+        }
     }
 
     #[test]

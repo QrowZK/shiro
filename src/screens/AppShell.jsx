@@ -42,8 +42,13 @@ export function NavRail({ view, onView }) {
         </div>
       ))}
       <span style={{ flex: 1 }} />
-      <IconButton icon="download" label="Downloads" size="lg" />
-      <IconButton icon="settings" label="Settings" size="lg" />
+      {/* Screens 9 and 10 were deferred, so both of these land on Settings -
+          which is where the content policy and the install live. A button that
+          does nothing is worse than one that explains itself. */}
+      <IconButton icon="download" label="Content and downloads" size="lg"
+        active={view === "settings"} onClick={() => onView("settings")} />
+      <IconButton icon="settings" label="Settings" size="lg"
+        active={view === "settings"} onClick={() => onView("settings")} />
     </nav>
   );
 }

@@ -27,8 +27,13 @@ export interface ConnectRequest {
   scriptPassword: string;
 }
 
-export function locateInstall(): Promise<Install> {
-  return invoke("zks_locate_install");
+/**
+ * Find the Zero-K install. An explicit `root` from settings is checked like any
+ * other candidate, and is remembered by the Rust side so the next launch uses
+ * the same one.
+ */
+export function locateInstall(root?: string): Promise<Install> {
+  return invoke("zks_locate_install", { root });
 }
 
 /** Resolves with the engine's pid once it has started. */
