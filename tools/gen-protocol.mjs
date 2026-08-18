@@ -30,6 +30,9 @@ const FILES = [
   // Referenced by Messages.cs but declared in another namespace. Without it
   // BattleHeader.Mode and ConnectSpring.Mode degrade to `unknown`.
   "Shared/PlasmaShared/ISpringieService/AutohostMode.cs",
+  // Same story for SetAccountRelation.Relation, which is how friends and
+  // ignores are set - guessing at those numbers would be unforgivable.
+  "Shared/PlasmaShared/Relation.cs",
 ];
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");

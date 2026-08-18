@@ -42,16 +42,21 @@ export function NavRail({ view, onView }) {
         </div>
       ))}
       <span style={{ flex: 1 }} />
-      <IconButton icon="download" label="Downloads" size="lg" />
-      <IconButton icon="settings" label="Settings" size="lg" />
+      {/* Screens 9 and 10 were deferred, so both of these land on Settings -
+          which is where the content policy and the install live. A button that
+          does nothing is worse than one that explains itself. */}
+      <IconButton icon="download" label="Content and downloads" size="lg"
+        active={view === "settings"} onClick={() => onView("settings")} />
+      <IconButton icon="settings" label="Settings" size="lg"
+        active={view === "settings"} onClick={() => onView("settings")} />
     </nav>
   );
 }
 
-export function StatusBar({ connection = "online", users, engine, game, onReconnect }) {
+export function StatusBar({ connection = "online", users, engine, game, onReconnect, attempt }) {
   const map = {
     online: { icon: "wifi", text: "Connected", color: "var(--text-low)" },
-    reconnecting: { icon: "loader", text: "Reconnecting - attempt 3", color: "var(--signal-warn)" },
+    reconnecting: { icon: "loader", text: attempt ? "Reconnecting - attempt " + attempt : "Connecting", color: "var(--signal-warn)" },
     offline: { icon: "wifi-off", text: "Lost connection", color: "var(--signal-danger)" }
   }[connection];
   return (
@@ -77,7 +82,7 @@ export function StatusBar({ connection = "online", users, engine, game, onReconn
   );
 }
 
-export default function AppShell({ view, onView, connection, users, engine, game, onReconnect, children, overlay }) {
+export default function AppShell({ view, onView, connection, users, engine, game, onReconnect, attempt, children, overlay }) {
   return (
     <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%",
       minHeight: 0, background: "var(--surface-base)", overflow: "hidden" }}>
@@ -86,7 +91,7 @@ export default function AppShell({ view, onView, connection, users, engine, game
         <NavRail view={view} onView={onView} />
         <main style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>{children}</main>
       </div>
-      <StatusBar connection={connection} users={users} engine={engine} game={game} onReconnect={onReconnect} />
+      <StatusBar connection={connection} users={users} engine={engine} game={game} onReconnect={onReconnect} attempt={attempt} />
       {overlay}
     </div>
   );

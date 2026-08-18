@@ -113,3 +113,9 @@ export const AutohostModeLabel: Record<AutohostMode, string> = {
   [AutohostMode.Planetwars]: "PlanetWars",
 };
 
+export enum Relation {
+  None = 0,
+  Friend = 1,
+  Ignore = 2,
+}
+

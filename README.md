@@ -20,7 +20,11 @@ Other scripts:
 
 | Command | What it does |
 |---|---|
-| `npm test` | Protocol wire + merge-semantics tests (Node's runner, no extra deps) |
+| `npm test` | Unit tests - protocol, stores, adapters (Node's runner, no extra deps) |
+| `npm run test:e2e` | Drives every live code path against a fake server in a real browser |
+| `npm run serve:csp` | Serves `dist/` with the packaged CSP, to catch a policy that blanks the window |
+| `npm run gen:icons` | Rebuild the icon set from what the source actually draws |
+| `npm run gen:fonts` | Re-vendor the webfonts from Google Fonts |
 | `npm run gen:protocol` | Regenerate `src/protocol/` from upstream C# |
 | `npm run tauri:dev` | Run inside the desktop shell — **blocked, see below** |
 | `npm run tauri:build` | Produce the NSIS installer — **blocked, see below** |
@@ -66,7 +70,8 @@ implemented, rendering, and driven by fake data shaped like the real protocol pa
 
 | Screen | File | State |
 |---|---|---|
-| Login | `src/screens/LoginScreen.jsx` | done |
+| Login and registration | `src/screens/LoginScreen.jsx`, `RegisterDialog.jsx` | done |
+| Settings | `src/screens/SettingsScreen.jsx` | built from primitives - screen 9 was never designed |
 | App shell | `src/screens/AppShell.jsx` | done |
 | Battle list | `src/screens/BattleListScreen.jsx` | done |
 | Battle room | `src/screens/BattleRoomScreen.jsx` | done |
@@ -75,19 +80,61 @@ implemented, rendering, and driven by fake data shaped like the real protocol pa
 | Debriefing | `src/screens/DebriefingScreen.jsx` | done |
 | Friends / profile | `src/screens/FriendsScreen.jsx` | done |
 
-Not built: settings (screen 9), downloads (10), Planet Wars (11) — deferred per the
-handoff.
+Downloads (screen 10) and Planet Wars (11) are not built — deferred per the
+handoff. Settings (9) was deferred too, but the app needed somewhere to put the
+account, the Zero-K install and the server, so it is built from the same
+primitives rather than from a design. Both bottom nav buttons land there, because
+a button that does nothing is worse than one that explains itself.
 
 **Protocol layer: built and tested.**
 
 | Piece | File | State |
 |---|---|---|
 | Generated types | `src/protocol/{enums,types,registry}.ts` | 76 commands, 7 DTOs, 8 enums, pinned to `48f6f09b` |
-| Wire encode/decode + merge rule | `src/protocol/wire.ts` | 8 passing tests |
-| Relay bridge | `src/net/connection.ts` | compiles; not yet exercised in-app |
-| Session + login handshake | `src/net/session.ts` | compiles; not yet exercised in-app |
-| Normalized store | `src/store/lobby.ts` | compiles; not yet exercised in-app |
-| Rust TCP relay | `src-tauri/src/relay.rs` | builds clean, 1 unit test passing |
+| Wire encode/decode + merge rule | `src/protocol/wire.ts` | tested |
+| Relay bridge | `src/net/connection.ts` | live - logs in against `zero-k.info:8200` |
+| Session + login handshake | `src/net/session.ts` | live |
+| Normalized store | `src/store/lobby.ts` | live - drives the status bar and battle list |
+| Battle room membership | `src/store/room.ts` | live - roster, teams, spectators, bots, mod options |
+| Chat | `src/store/chat.ts` | live - channels, DMs, battle chat, unread and mention state |
+| Matchmaker | `src/store/matchmaker.ts` | live - queues, joining, the ready check |
+| Parties | `src/store/party.ts` | live - invite, accept, leave |
+| Local settings | `src/store/settings.ts` | account, install override, server, persisted |
+| Website commands | `src/store/site.ts` | live - join, add friend, open a channel from zero-k.info |
+| Friends | `src/store/friends.ts` | live - list, add, remove, ignore, profiles |
+| Match history | `src/store/history.ts` | live - debriefings, ratings, awards |
+| Engine launch | `src/store/game.ts`, `src-tauri/src/launch.rs` | built; preflight-checkable; **not yet run against a real engine** |
+| Install detection | `src-tauri/src/install.rs` | built; **not yet run against a real install** |
+| Rust TCP relay | `src-tauri/src/relay.rs` | builds clean |
+
+`npm test` runs 92 TypeScript tests; `cargo test` in `src-tauri/` runs 15 Rust tests;
+`npm run test:e2e` runs 78 end-to-end checks.
+
+## Testing the live paths
+
+Most of the client only runs inside Tauri, which makes the interesting half
+invisible to a browser and to unit tests. `npm run test:e2e` closes that gap: it
+replaces `window.__TAURI_INTERNALS__` with [a fake
+server](tools/e2e/fake-server.js) and drives the real UI through login, joining,
+hosting, a passworded join, spectating, ignoring, room votes, host controls,
+chat, the matchmaker ready check, parties, friends, launching an engine, a
+rejoin offer, a dropped socket, a server notice, a command from the website,
+settings, the launch preflight, a debriefing, registering an account and logging
+out — 78 assertions against the same code the desktop build runs.
+
+```bash
+npm run dev          # in another shell
+npm run test:e2e
+```
+
+It drives a browser you already have rather than downloading one — the app ships
+against WebView2, so any machine that can build it has Edge. Override with
+`CHROMIUM_PATH=/path/to/chrome`.
+
+The fake server is not a mock of our own code: it speaks the wire protocol, so
+the assertions are about what we *send* (`OpenBattle` carries the engine from
+`Welcome`; a locked battle sends its password with the join) rather than about
+which function was called.
 
 **The desktop app builds and packages.** `npm run tauri:build` produces:
 
@@ -103,8 +150,8 @@ Login against the live server is **verified working** out-of-band: account `Qrow
 `ResultCode: 0`, session token issued. The auth format is confirmed as base64 of the
 raw MD5 digest bytes.
 
-The screens still render from `src/data.js`. Nothing is wired to the store yet —
-that is the next step once the shell builds.
+Every screen reads from the live store inside Tauri, and from `src/data.js` in a
+plain browser tab, so the click-through still works with no server.
 
 ## Layout
 
@@ -132,19 +179,75 @@ Tokens under `src/styles/tokens/` mirror the project's `tokens/*.css` one-to-one
 1. ~~Generate `src/protocol/` from upstream `Messages.cs`; pin the source SHA.~~ done
 2. ~~Merge-not-replace store semantics, unit-tested.~~ done
 3. ~~Tauri shell + Rust TCP relay.~~ done — builds and packages
-4. **Run the app and log in.** The relay, session and login wiring all compile,
-   but nothing has driven them through a real GUI yet. Run `npm run tauri:dev`
-   (or install the NSIS package) and confirm a real account reaches
-   `ResultCode: 0` and the battle list populates from the server.
-5. Swap the rest of `src/data.js` for the live store, screen by screen. Login,
-   status bar and battle list already read from it; chat, battle room, queue,
-   friends and debriefing are still demo data.
-6. `RequestConnectSpring` → write `script.txt` → spawn
-   `<ZK>/engine/win64/<Engine>/spring.exe`. The install is already located and the
-   version string the server sends matches the directory name exactly.
+4. ~~Run the app and log in.~~ done — verified against `zero-k.info:8200`.
+5. ~~Battle room from the live store.~~ done — join, roster, teams, spectators,
+   bots, mod options, room chat, team/spectate changes.
+6. ~~`RequestConnectSpring` → write `script.txt` → spawn the engine.~~ built —
+   see below. **Needs one run on a machine with Zero-K installed.**
+7. ~~Swap the remaining demo screens for the live store.~~ done — chat,
+   matchmaker, friends and debriefing all read live.
+8. ~~Passworded battles.~~ done — a locked battle prompts before joining.
+9. ~~Hosting.~~ done — `OpenBattle` with title, map, size and password.
+10. ~~Parties, room votes, host controls (kick, add AI), spectating, ignores,
+    rejoin offers and reconnect.~~ done.
+11. ~~Settings, install override, server override, stay-logged-in, away.~~ done.
+12. ~~Account registration, forced joins, admin kicks, topic changes, engine
+    and game changes.~~ done.
+13. ~~Commands from the website.~~ done — `SiteToLobbyCommand`, parsed against
+    upstream's grammar in `ZeroKLobby/ActionHandler.cs`.
+14. Not built: downloads and Planet Wars — screens 10 and 11, deferred per the
+    handoff. Also unhandled, deliberately: the news, forum and ladder lists (no
+    screen asks for them), custom game modes, player reports, and the site
+    actions that need content we do not have (missions, replays, benchmarks).
+
+## Launching a game
+
+Implemented per ARCHITECTURE.md section 6, and **this is the part of the client
+that has never touched real hardware.** Everything up to the process spawn is
+unit-tested; the spawn itself has not run against a Zero-K install.
+
+1. `src-tauri/src/install.rs` finds the Zero-K data directory — the standalone
+   installer's location, the home directory, and every Steam library listed in
+   `libraryfolders.vdf` (people move games to a second drive constantly).
+2. `src-tauri/src/launch.rs` writes the eight-line connect script to the temp
+   directory — deliberately *not* into the install, which under
+   `Program Files` is not writable by a per-user process — and spawns the engine
+   with `SPRING_DATADIR`/`SPRING_WRITEDIR` pointing at the install. The data dir
+   goes through the environment rather than a flag because engine versions
+   disagree about the spelling of the write-dir option and an unknown flag
+   aborts startup.
+3. The launch is driven by the *arrival* of `ConnectSpring`, not by the button
+   that asks for it, so a matchmaker game starts correctly with nothing pressed.
+
+**Check it before you need it.** Settings has a "Check launch setup" button that
+resolves the install, the engine binary and the connect script and reports
+exactly what would be run — without starting anything. That turns the two likely
+first-run failures into a sentence: `engine/win64/<version>/spring.exe` not being
+where we expect, and the data dir not pointing at the Zero-K folder (which is how
+the engine ends up finding none of your maps).
 
 A local `ZkLobbyServer` is no longer a prerequisite — see ARCHITECTURE.md section 8
 for the revised guidance on developing against live.
+
+## Content security policy
+
+The packaged app runs under a real CSP rather than Tauri's permissive default:
+
+    default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+    font-src 'self'; img-src 'self' data: https://zero-k.info;
+    connect-src 'self' ipc: http://ipc.localhost; object-src 'none';
+    frame-src 'none'; base-uri 'self'
+
+`'unsafe-inline'` for styles is unavoidable: the design system styles every
+element with a `style` attribute, which CSP counts as inline. Nothing builds a
+style string out of server data, so that is a smaller exposure than it reads.
+`img-src` allows zero-k.info because that is where map images live.
+
+A CSP that is one directive too tight shows up as a blank window from an
+installer, which is a miserable way to find out — so `npm run serve:csp` serves
+the production build with exactly this policy and the end-to-end suite runs
+against it. WebView2 is Chromium, so the rules are the same ones; the only thing
+that cannot be checked outside Tauri is the `ipc:` scheme.
 
 ## Vendor patches to `src/ds/shiro.js`
 
@@ -159,19 +262,30 @@ re-sync**, and report them upstream so the design project can fix them at source
    the placeholder instead. Never reintroduce a document-wide `createIcons()` call.
 2. **Map URLs.** `MapImage` assumed map names are URL-safe. They are not — see
    ARCHITECTURE.md section 8. Spaces are normalized to underscores for the URL only.
+3. **Icon set.** The bundle looks icons up in `lucide.icons`, which defeats
+   tree-shaking. The shim resolves them through `src/ds/icons.js` instead — see
+   Known issues.
 
 Both are bugs in the design kit, not in the port. They were invisible in the static
 prototype because nothing ever unmounted and the demo map names all used underscores.
 
 ## Known issues
 
-- **Elo renders twice per player in the battle room.** `PlayerRow` spreads `user`
-  into `UserChip` (which renders Elo) and `TeamColumn` also passes Elo via `right`.
-  Present in the design kit as authored; left as-is rather than silently diverging.
-  Designer decides the fix.
-- **Bundle is 837 kB** because `lucide` is imported whole. Switch to per-icon imports
-  before shipping.
-- **Fonts load from Google Fonts.** Must be self-hosted before packaging — the app
-  has to render offline and the Tauri CSP will block the request.
 - **React pinned to 18.3.1** to match the version the design kit was authored against,
   not the 19 named in ARCHITECTURE.md. Revisit once the UI is stable.
+- **The engine launch has never run against a real Zero-K install.** Everything up
+  to the process spawn is tested; the spawn itself is not.
+
+Resolved since the port:
+
+- ~~Elo renders twice per player in the battle room.~~ `UserChip` already draws it;
+  the design kit's second copy in `TeamColumn`'s `right` slot was a bug, and that
+  slot now carries the host's kick control instead.
+- ~~Bundle is 837 kB because `lucide` is imported whole.~~ 286 kB. `src/ds/icons.js`
+  names the 31 icons the app actually draws so the bundler can drop the other 1712;
+  `npm test` fails if that list drifts from the source.
+- ~~Fonts load from Google Fonts.~~ Self-hosted in `src/assets/fonts/`, latin and
+  latin-ext, no italics — 146 kB for eight faces.
+- ~~The packaged CSP will block requests.~~ A real policy is set in
+  `tauri.conf.json`, and the whole end-to-end suite passes against a build served
+  with it (`npm run serve:csp`), so it does not blank the window.

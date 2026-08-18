@@ -6,7 +6,7 @@ const DEMO_OCCUPANTS = ["hexed", "quantum", "tinman", "lorelei", "marrow", "nine
 
 /* Screen 3 - the default view and the highest-traffic surface.
    Left: filter strip. Centre: the list. Right: detail for the selected battle. */
-export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty, occupants }) {
+export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty, occupants, onHost, onSpectate }) {
   const [sel, setSel] = React.useState(battles[0] && battles[0].id);
   const [q, setQ] = React.useState("");
   const [mode, setMode] = React.useState("All modes");
@@ -22,7 +22,7 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
     <div style={{ flex: 1, display: "grid", gridTemplateColumns: "200px minmax(0,1fr) 300px", minHeight: 0 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)", padding: "var(--sp-5)",
         borderRight: "1px solid var(--w-12)", background: "var(--surface-sunken)" }}>
-        <Button variant="primary" icon="plus" block>Host a battle</Button>
+        <Button variant="primary" icon="plus" block onClick={onHost}>Host a battle</Button>
         <Input label="Filter" placeholder="Title, host, map" icon="search" value={q} onChange={e => setQ(e.target.value)} />
         <Select label="Mode" value={mode} onChange={e => setMode(e.target.value)}
           options={["All modes", "Teams", "1v1", "FFA", "Coop"]} />
@@ -47,7 +47,7 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
           {list.length === 0
             ? <EmptyState numeral={100} title="No battles open right now."
                 body="Off-peak hours are quiet. 100 players are online - start one and they will come."
-                action={<Button variant="primary" icon="plus">Host a battle</Button>} />
+                action={<Button variant="primary" icon="plus" onClick={onHost}>Host a battle</Button>} />
             : list.map((b, i) => (
               <BattleRow key={b.id} {...b} selected={current && current.id === b.id}
                 onClick={() => setSel(b.id)} onJoin={() => onJoin(b)}
@@ -107,7 +107,8 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
             <div style={{ padding: "var(--sp-5)", borderTop: "1px solid var(--w-12)", display: "flex", gap: "var(--sp-4)" }}>
               <Button variant="primary" size="lg" style={{ flex: 1 }} icon={current.running ? "eye" : "play"}
                 onClick={() => onJoin(current)}>{current.running ? "Watch" : "Join battle"}</Button>
-              <IconButton icon="eye" label="Spectate" variant="outline" size="lg" />
+              <IconButton icon="eye" label="Spectate" variant="outline" size="lg"
+                onClick={() => (onSpectate ? onSpectate(current) : onJoin(current))} />
             </div>
           </>
         ) : <EmptyState icon="swords" title="Nothing selected." body="Pick a battle to see its map and players." />}

@@ -8,7 +8,8 @@
  * The bundle expects React and lucide as globals, so we bind them first.
  */
 import React from "react";
-import * as lucide from "lucide";
+import createIconElement from "lucide/dist/esm/createElement.js";
+import { ICONS } from "./icons.js";
 
 window.React = React;
 
@@ -31,22 +32,17 @@ window.React = React;
  */
 const ICON_NODES = new Map();
 
-function pascalCase(name) {
-  return name.split(/[-_\s]+/).filter(Boolean)
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1)).join("");
-}
-
 function renderIconsInPlace({ nameAttr = "data-lucide", root } = {}) {
   const scope = root && typeof root.querySelectorAll === "function" ? root : document;
   for (const el of scope.querySelectorAll("[" + nameAttr + "]")) {
     const name = el.getAttribute(nameAttr);
     if (!name || el.getAttribute("data-lucide-drawn") === name) continue;
 
-    if (!ICON_NODES.has(name)) ICON_NODES.set(name, lucide.icons[pascalCase(name)] || null);
+    if (!ICON_NODES.has(name)) ICON_NODES.set(name, ICONS[name] || null);
     const node = ICON_NODES.get(name);
     if (!node) continue;
 
-    const svg = lucide.createElement(node);
+    const svg = createIconElement(node);
     svg.setAttribute("width", "100%");
     svg.setAttribute("height", "100%");
     // Drop the baked-in presentation attribute so stroke-width inherits from
@@ -59,7 +55,9 @@ function renderIconsInPlace({ nameAttr = "data-lucide", root } = {}) {
   }
 }
 
-window.lucide = { ...lucide, createIcons: renderIconsInPlace };
+/* The bundle's components call window.lucide.createIcons(); nothing else in
+   lucide's API is used, so nothing else is provided. */
+window.lucide = { createIcons: renderIconsInPlace };
 
 
 (() => {

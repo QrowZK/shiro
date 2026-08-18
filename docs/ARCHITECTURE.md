@@ -234,6 +234,13 @@ MyPasswd=<ScriptPassword>;
 
 That is it. Eight lines of script and a process spawn.
 
+Steps 1-5 are also available without step 6: `zks_launch_preview` resolves the
+install, the engine binary, the working directory, the environment and the script
+and returns them without spawning anything. The settings screen exposes it as
+"Check launch setup". This exists because the launch is the only path in the
+client that cannot be exercised without a Zero-K install and a live match, and a
+first run that fails should say which of those five steps it failed at.
+
 ---
 
 ## 7. Content acquisition — deliberately deferred

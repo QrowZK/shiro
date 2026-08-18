@@ -277,6 +277,21 @@ export const useChat = create<ChatState>((set, get) => ({
             break;
           }
 
+          /* A topic change is broadcast on its own, and is worth a line in the
+             channel: it is usually why the channel suddenly went quiet. */
+          case "ChangeTopic": {
+            const d = m.data as T.ChangeTopic;
+            if (!d.ChannelName || !rooms[roomKey("channel", d.ChannelName)]) break;
+            const room = ensure("channel", d.ChannelName);
+            if (d.Topic) {
+              room.topic = mergePatch(room.topic, d.Topic);
+              if (d.Topic.Text) {
+                notice(room, `${d.Topic.SetBy ?? "somebody"} set the topic: ${d.Topic.Text}`);
+              }
+            }
+            break;
+          }
+
           case "ChannelHeader": {
             const d = m.data as T.ChannelHeader;
             if (!d.ChannelName) break;
@@ -368,7 +383,12 @@ export const useChat = create<ChatState>((set, get) => ({
         }
       }
 
-      return { rooms, order, me, lastError, nextId };
+      /* Land on the first room that appears. Without this the chat screen has
+         tabs and no selection until you click one, which reads as a channel
+         you joined but that has no backlog. Later rooms do not steal focus. */
+      const active = state.active && rooms[state.active] ? state.active : order[0];
+
+      return { rooms, order, me, lastError, nextId, active };
     });
 
     for (const channel of autoJoin) get().join(channel);
