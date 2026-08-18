@@ -121,7 +121,7 @@ C# to TS mapping: `string` to `string`, `int`/`float`/`double` to `number`, `boo
 +------------- Tauri (Rust) --------------+   +---- Webview (TS) -----+
 | TCP connect / reconnect w/ backoff      |   | codegen'd types       |
 | line framing + write queue              |<->| message handlers      |
-| keepalive (Ping {} every 30s)           |   | normalized stores     |
+| TCP keepalive (socket option)           |   | normalized stores     |
 | engine process spawn + supervision      |   | React UI              |
 | filesystem, script.txt, pr-downloader   |   |                       |
 +-----------------------------------------+   +-----------------------+
@@ -169,7 +169,16 @@ Re-login is fast and this keeps a single, well-tested startup path.
    hundred `User` messages. The UI must not render per-message — batch into an
    animation frame. Note `Say` arrives in the flood too, so chat scrollback must
    handle a backlog burst before any live message appears.
-6. **Steady state** — incremental updates. Send `Ping {}` every 30s.
+6. **Steady state** — incremental updates.
+
+> **Do not send an application-level keepalive.** `Ping` is not a registered
+> command: `CommandJsonSerializer.DeserializeLine` throws
+> `Invalid json type ... : Ping`, which lands in the server's logs against the
+> user's account and consumes the connection's throttle budget. Chobby has an
+> `Interface:Ping`, but it is fenced behind a `REVERSE_COMPAT` flag that is off —
+> easy to copy without the fence. The server has no idle timeout, so nothing
+> needs sending; the relay sets a TCP keepalive socket option instead, which is
+> the right layer for noticing a silently dead connection.
 
 ### Authentication
 

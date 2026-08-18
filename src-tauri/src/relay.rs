@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use serde::Serialize;
+use socket2::{SockRef, TcpKeepalive};
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
@@ -22,8 +23,22 @@ const LINE_EVENT: &str = "zks://line";
 /// Connection lifecycle transitions.
 const STATUS_EVENT: &str = "zks://status";
 
-/// The server drops idle connections, so hold it open.
-const KEEPALIVE: Duration = Duration::from_secs(30);
+/// Keepalive is done at the TCP layer, not the protocol layer.
+///
+/// There is deliberately no application-level ping. `Ping` is NOT a registered
+/// command on ZkLobbyServer - sending it makes the server throw
+/// `Invalid json type ... : Ping` on every beat, which lands in their logs
+/// against the user's account and burns the connection's throttle budget
+/// (ClientConnection.OnCommandReceived calls Throttle(line.Length) on the way
+/// through). Chobby's `Interface:Ping` exists but is fenced behind a
+/// `REVERSE_COMPAT` flag that is off; the line was copied without the fence.
+///
+/// The server has no idle timeout, so nothing needs to be sent at all. These
+/// only make the OS notice a socket that died silently - a NAT or router
+/// dropping the mapping produces no FIN, so without them a dead connection
+/// looks healthy until the next write.
+const KEEPALIVE_IDLE: Duration = Duration::from_secs(60);
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -72,24 +87,24 @@ pub async fn zks_connect(
         .map_err(|e| format!("connect {host}:{port} failed: {e}"))?;
     stream.set_nodelay(true).ok();
 
+    // TCP-level keepalive. See the KEEPALIVE_* docs above for why this is here
+    // and not an application-level ping. Best effort: an OS that refuses the
+    // option is not a reason to fail the connection.
+    {
+        let keepalive = TcpKeepalive::new()
+            .with_time(KEEPALIVE_IDLE)
+            .with_interval(KEEPALIVE_INTERVAL);
+        if let Err(e) = SockRef::from(&stream).set_tcp_keepalive(&keepalive) {
+            eprintln!("could not enable TCP keepalive: {e}");
+        }
+    }
+
     let (read_half, mut write_half) = stream.into_split();
     let (tx, mut rx) = mpsc::unbounded_channel::<String>();
 
     let writer = tokio::spawn(async move {
         while let Some(line) = rx.recv().await {
             if write_half.write_all(line.as_bytes()).await.is_err() {
-                break;
-            }
-        }
-    });
-
-    let ka_tx = tx.clone();
-    let keepalive = tokio::spawn(async move {
-        let mut tick = tokio::time::interval(KEEPALIVE);
-        tick.tick().await; // interval fires immediately; skip that one
-        loop {
-            tick.tick().await;
-            if ka_tx.send("Ping {}\n".to_string()).is_err() {
                 break;
             }
         }
@@ -120,7 +135,7 @@ pub async fn zks_connect(
 
     *relay.conn.lock().await = Some(Conn {
         tx,
-        tasks: vec![reader, writer, keepalive],
+        tasks: vec![reader, writer],
     });
 
     app.emit(STATUS_EVENT, Status::Connected).ok();
