@@ -16,6 +16,7 @@ import DownloadsScreen from "./screens/DownloadsScreen.jsx";
 import HostBattleDialog from "./screens/HostBattleDialog.jsx";
 import JoinPasswordDialog from "./screens/JoinPasswordDialog.jsx";
 import RegisterDialog from "./screens/RegisterDialog.jsx";
+import LoadingDialog from "./screens/LoadingDialog.jsx";
 
 import { inTauri } from "./net/connection";
 import { login, register, teardown, send, say, reconnectNow } from "./net/session";
@@ -56,6 +57,7 @@ export default function App() {
   const [profileOf, setProfileOf] = React.useState(null);
   const [away, setAway] = React.useState(false);
   const [registering, setRegistering] = React.useState(false);
+  const [loadingIn, setLoadingIn] = React.useState(false);
 
   const settings = useSettings();
   /* `logout` is one of the site's actions, but the handler is defined below;
@@ -188,11 +190,42 @@ export default function App() {
       return;
     }
     const { host, port } = useSettings.getState();
-    await login({ name, password }, host || undefined, port || undefined);
-    const c = useLobby.getState().connection;
-    if (c.kind !== "online") throw new Error(describeFailure(c));
+    setLoadingIn(true);
+    try {
+      await login({ name, password }, host || undefined, port || undefined);
+      const c = useLobby.getState().connection;
+      if (c.kind !== "online") throw new Error(describeFailure(c));
+    } catch (e) {
+      // A rejected login goes back to the form; nothing is loading any more.
+      setLoadingIn(false);
+      throw e;
+    }
     setLoggedIn(true);
   }, [live]);
+
+  /* The dialog stays up past the LoginResponse. Being accepted is not the same
+     as being usable: the server then floods the whole directory down - hundreds
+     of User and BattleAdded lines - and until that lands the battle list is
+     empty. That gap is the few seconds this covers.
+
+     There is no "flood finished" message in the protocol, so it clears on the
+     first sign of a populated directory, with a hard cap in case a quiet server
+     never sends one. */
+  React.useEffect(() => {
+    if (!loadingIn) return;
+    if (connection.kind === "rejected" || connection.kind === "disconnected") {
+      setLoadingIn(false);
+      return;
+    }
+    const populated = Object.keys(liveBattles).length > 0
+      || Object.keys(liveUsers).length > 0;
+    if (connection.kind === "online" && populated) {
+      setLoadingIn(false);
+      return;
+    }
+    const cap = setTimeout(() => setLoadingIn(false), 8000);
+    return () => clearTimeout(cap);
+  }, [loadingIn, connection.kind, liveBattles, liveUsers]);
 
   /* The website talks to the lobby you already have open: "join this player",
      "add this friend", "open this channel". The grammar is upstream's - see
@@ -238,7 +271,7 @@ export default function App() {
     } else if (command.path === "battles") setView("battles");
     else if (isExternalUrl(command.path)) {
       const url = command.path.startsWith("www.") ? `http://${command.path}` : command.path;
-      window.open(url, "_blank", "noreferrer");
+      void openExternal(url);
     }
   }, [live, siteCommand]);
 
@@ -303,6 +336,7 @@ export default function App() {
         </ErrorBoundary>
         <RegisterDialog open={registering} onClose={() => setRegistering(false)}
           onRegister={handleRegister} />
+        <LoadingDialog open={live && loadingIn} />
       </AppShell>
     );
   }
@@ -418,18 +452,25 @@ export default function App() {
   else if (view === "friends") body = (
     <FriendsScreen
       users={live ? friendNames.map(n => userToChip(liveUsers[n], n)) : D.channelUsers}
-      profile={live && profileOf && profiles[profileOf] ? {
+      /* Our own profile is pushed by the server and is the rich one. For anyone
+         else only their User record exists - the protocol has no way to ask for
+         another person's profile - so the screen shows what we do have rather
+         than nothing at all. */
+      profile={live && profileOf ? (profiles[profileOf] ? {
         level: profiles[profileOf].Level,
         rank: profiles[profileOf].Rank,
         elo: Math.round(profiles[profileOf].EffectiveElo),
         mmElo: Math.round(profiles[profileOf].EffectiveMmElo),
         pwElo: Math.round(profiles[profileOf].EffectivePwElo),
         badges: profiles[profileOf].Badges,
-      } : undefined}
-      onSelect={live ? name => {
-        setProfileOf(name);
-        if (!profiles[name]) useFriends.getState().requestProfile(name);
-      } : undefined}
+      } : liveUsers[profileOf] ? {
+        level: liveUsers[profileOf].Level,
+        elo: Math.round(liveUsers[profileOf].EffectiveElo || 0),
+        mmElo: Math.round(liveUsers[profileOf].EffectiveMmElo || 0),
+        badges: liveUsers[profileOf].Badges,
+        partial: true,
+      } : undefined) : undefined}
+      onSelect={live ? name => setProfileOf(name) : undefined}
       onMessage={live ? openDm : undefined}
       onIgnore={live ? name => useFriends.getState().ignore(name) : undefined}
       onAdd={live ? name => useFriends.getState().add(name) : undefined}
@@ -616,6 +657,10 @@ export default function App() {
             : "A battle you were in is still running."}
         </span>
       </Dialog>
+
+      {/* Login is accepted long before the directory flood that follows it
+          lands, so this outlives the login screen. */}
+      <LoadingDialog open={live && loadingIn} />
     </>
   );
 

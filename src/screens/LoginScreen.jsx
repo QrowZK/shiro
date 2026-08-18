@@ -1,6 +1,7 @@
 import React from "react";
 import { Button, Input, Checkbox, Icon } from "../ds/shiro.js";
 import logoMark from "../assets/logo-mark.svg";
+import glaive from "../assets/art/glaive-sidelit.png";
 
 /* Screen 1. First impression, and the only place the "Steam users must set a
    password" caveat is explained.
@@ -31,14 +32,27 @@ export default function LoginScreen({ onLogin, onRegister, live, defaultName, de
   return (
     <div style={{ flex: 1, display: "grid", gridTemplateColumns: "1fr 400px", minHeight: 0,
       background: "var(--surface-void)" }}>
-      <div style={{ display: "flex", flexDirection: "column", justifyContent: "center",
-        gap: "var(--sp-9)", padding: "var(--sp-12)", borderRight: "1px solid var(--w-12)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-6)" }}>
+      <div style={{ position: "relative", display: "flex", flexDirection: "column",
+        justifyContent: "center", gap: "var(--sp-9)", padding: "var(--sp-12)",
+        borderRight: "1px solid var(--w-12)", overflow: "hidden" }}>
+
+        {/* A Glaive, rendered from the game's own model as hard two-tone ink.
+            Anchored to the bottom-right and bled off both edges so it reads as
+            a printed plate rather than a sticker, and sits behind the type
+            without competing with it. */}
+        <img src={glaive} alt="" aria-hidden="true"
+          style={{ position: "absolute", right: "3%", bottom: "0%", height: "82%", width: "auto", pointerEvents: "none", userSelect: "none" }} />
+
+        {/* The type sits above the art, on its own so long copy stays readable
+            wherever the figure happens to fall. */}
+        <div style={{ position: "relative", display: "flex", alignItems: "center",
+          gap: "var(--sp-6)" }}>
           <img src={logoMark} width="72" height="72" alt="" />
           <span style={{ font: "var(--w-bold) var(--size-4xl)/1 var(--font-core)", fontStretch: "100%",
             letterSpacing: "var(--track-wordmark)", color: "var(--text-hi)" }}>SHIRO</span>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)", maxWidth: "44ch" }}>
+        <div style={{ position: "relative", display: "flex", flexDirection: "column",
+          gap: "var(--sp-4)", maxWidth: "44ch" }}>
           <span style={{ font: "var(--w-regular) var(--size-mid)/1.5 var(--font-core)", color: "var(--text-mid)" }}>
             A lobby client for Zero-K.
           </span>

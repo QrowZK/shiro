@@ -1,5 +1,6 @@
 import React from "react";
 import { Meter, Badge, Tag, Button, RatingDelta, UserChip, MapImage, EmptyState } from "../ds/shiro.js";
+import { openExternal } from "../net/external.ts";
 
 /* Screen 7 - the richest payload in the protocol, arriving at the emotional
    peak of the session. Display type states the result; everything else is mono. */
@@ -117,7 +118,7 @@ export default function DebriefingScreen({ d, onBack }) {
           <Button variant="primary" size="lg" style={{ flex: 1 }} icon="rotate-ccw" onClick={onBack}>Play again</Button>
           {d.url && (
             <Button variant="secondary" size="lg" icon="external-link" title="Open the full record on zero-k.info"
-              onClick={() => window.open(d.url, "_blank", "noreferrer")}>Details</Button>
+              onClick={() => openExternal(d.url)}>Details</Button>
           )}
         </div>
       </div>

@@ -14,6 +14,20 @@
     "core:window:allow-maximize",
     "core:window:allow-unminimize",
     "core:window:allow-set-focus",
-    "core:window:allow-is-maximized"
+    "core:window:allow-is-maximized",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        {
+          "url": "https://*"
+        },
+        {
+          "url": "http://zero-k.info/*"
+        },
+        {
+          "url": "http://*.zero-k.info/*"
+        }
+      ]
+    }
   ]
 }

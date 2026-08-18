@@ -9,3 +9,22 @@ body{font-family:var(--font-core);color:var(--text-body);display:flex;align-item
 a{color:var(--text-hi)}
 a:hover{color:var(--text-mid)}
 button:focus-visible,input:focus-visible,select:focus-visible{outline:none;box-shadow:var(--focus-ring)}
+
+/* The Dirtbag that walks along the bottom of the loading dialog.
+
+   Two animations at once: `shiro-walk` advances the sprite sheet a frame at a
+   time, `shiro-cross` carries it across. The durations are tuned against each
+   other - if the travel outruns the stride it moonwalks, which is exactly the
+   bug this cycle already had once. The sheet is rendered walking LEFT, so there
+   is no scaleX flip here; adding one is what caused that moonwalk. */
+@keyframes shiro-walk  { from { background-position: 0 0; }
+                         to   { background-position: -352px 0; } }
+@keyframes shiro-cross { from { transform: translateX(340px); }
+                         to   { transform: translateX(-44px); } }
+
+/* Nobody needs a 4-second traverse to know the app is busy. Under a reduced
+   motion preference it stands still in the middle and the box says the rest. */
+@media (prefers-reduced-motion: reduce) {
+  .shiro-runner { animation: none !important; left: 50% !important;
+                  margin-left: -22px; }
+}
