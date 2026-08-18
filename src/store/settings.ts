@@ -27,6 +27,11 @@ export interface Settings {
   port?: number;
   /** Overrides install detection when someone keeps Zero-K somewhere odd. */
   installRoot?: string;
+  /**
+   * Jump to the debriefing when a match ends. Spectators are never pulled
+   * there regardless - they have no progression to look at.
+   */
+  autoOpenDebriefing: boolean;
 }
 
 export interface SettingsState extends Settings {
@@ -35,7 +40,7 @@ export interface SettingsState extends Settings {
   forgetPassword: () => void;
 }
 
-const DEFAULTS: Settings = { name: "", remember: false };
+const DEFAULTS: Settings = { name: "", remember: false, autoOpenDebriefing: true };
 
 function load(): Settings {
   try {

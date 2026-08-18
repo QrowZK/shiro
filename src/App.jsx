@@ -12,6 +12,7 @@ import QueueScreen from "./screens/QueueScreen.jsx";
 import DebriefingScreen from "./screens/DebriefingScreen.jsx";
 import FriendsScreen from "./screens/FriendsScreen.jsx";
 import SettingsScreen from "./screens/SettingsScreen.jsx";
+import DownloadsScreen from "./screens/DownloadsScreen.jsx";
 import HostBattleDialog from "./screens/HostBattleDialog.jsx";
 import JoinPasswordDialog from "./screens/JoinPasswordDialog.jsx";
 import RegisterDialog from "./screens/RegisterDialog.jsx";
@@ -20,6 +21,7 @@ import { inTauri } from "./net/connection";
 import { login, register, teardown, send, say, reconnectNow } from "./net/session";
 import { useLobby } from "./store/lobby";
 import { useRoom } from "./store/room";
+import { useContent, prefetchForBattle } from "./store/content";
 import { useGame } from "./store/game";
 import { useChat, BATTLE_ROOM, selectTabs } from "./store/chat";
 import { useMatchmaker, secondsLeft } from "./store/matchmaker";
@@ -84,6 +86,10 @@ export default function App() {
   const chatActive = useChat(s => s.active);
 
   const phase = useGame(s => s.phase);
+  const contentJobs = useContent(s => s.jobs);
+  const contentOrder = useContent(s => s.order);
+  /* The most recent job, which in a room is the one we started on join. */
+  const activeDownload = contentOrder.length ? contentJobs[contentOrder[0]] : undefined;
 
   const mmQueues = useMatchmaker(s => s.queues);
   const mmJoined = useMatchmaker(s => s.joined);
@@ -141,8 +147,30 @@ export default function App() {
      were doing: the debriefing is the point of having played. */
   const newest = records[0];
   React.useEffect(() => {
-    if (newest) setView("debrief");
+    // Two exceptions. Spectators are never pulled there - they have no rating
+    // change, no XP and no awards, so the screen has nothing to tell them. And
+    // anyone who would rather go straight back to the battle list can turn it
+    // off in settings.
+    if (!newest || newest.spectator || !settings.autoOpenDebriefing) return;
+    setView("debrief");
   }, [newest && newest.serverBattleId]);
+
+  /* Content, as soon as you are in the room rather than at the whistle.
+     BattleHeader carries the game and map minutes before ConnectSpring does, so
+     the download runs while people are still picking teams. The launch still
+     runs its own preflight - this is a head start, not the gate. */
+  React.useEffect(() => {
+    if (!live || liveRoomID == null) return;
+    const header = liveBattles[liveRoomID];
+    if (!header) return;
+    void prefetchForBattle(
+      liveRoomID,
+      header.Engine || welcome?.Engine || "",
+      header.Game,
+      header.Map,
+      settings.installRoot,
+    );
+  }, [live, liveRoomID, liveBattles[liveRoomID]?.Map, liveBattles[liveRoomID]?.Game]);
 
   /* Hooks only: everything below the login screen's early return runs
      conditionally, so a hook down there changes the hook order between
@@ -332,6 +360,7 @@ export default function App() {
   // Being in a room does not pin you to it - the sidebar still navigates.
   if (liveRoom && view === "battles") body = (
     <BattleRoomScreen room={liveRoom}
+      download={activeDownload}
       chat={battleChat ? chatLines(battleChat.messages, liveUsers, ignored) : []}
       onLeave={() => useRoom.getState().leave()}
       onSay={text => void say(text, 1)}
@@ -406,6 +435,12 @@ export default function App() {
       onAdd={live ? name => useFriends.getState().add(name) : undefined}
       onRemove={live ? name => useFriends.getState().remove(name) : undefined} />
   );
+  else if (view === "downloads") body = (
+    <DownloadsScreen jobs={contentJobs} order={contentOrder}
+      onCancel={id => useContent.getState().cancel(id)}
+      onClear={() => useContent.getState().clearFinished()}
+      onSettings={() => setView("settings")} />
+  );
   else if (view === "settings") body = (
     <SettingsScreen
       me={live ? me : "Shadowfury"}
@@ -467,13 +502,58 @@ export default function App() {
         ) : null}
       </Dialog>
 
-      <Dialog open={launching || phase.kind === "launching"} title="Launching" width={360}>
+      {/* One dialog for the whole start sequence: check content, fetch what is
+          missing, then hand off. The engine must not be started before content
+          is settled - an engine told to join a game whose archive it lacks sits
+          on "waiting for connection" forever with nothing to explain why. */}
+      <Dialog
+        open={launching || phase.kind === "launching" || phase.kind === "preflight"
+          || phase.kind === "downloading"}
+        title={phase.kind === "downloading" ? "Downloading" : "Launching"}
+        width={380}
+        footer={phase.kind === "downloading" ? (
+          <>
+            <Button variant="ghost" onClick={() => {
+              useContent.getState().cancel(phase.jobId);
+              useGame.setState({ phase: { kind: "idle" } });
+            }}>Cancel</Button>
+            <Button variant="secondary" onClick={() => {
+              const c = useGame.getState().last;
+              useContent.getState().cancel(phase.jobId);
+              if (c) void useGame.getState().launch(c);
+            }}>Launch anyway</Button>
+          </>
+        ) : undefined}>
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)" }}>
-          <span style={{ font: "var(--text-ui)", color: "var(--text-body)" }}>Handing off to the engine.</span>
-          <Meter indeterminate />
-          <span style={{ font: "var(--w-regular) var(--size-tiny)/1.5 var(--font-core)", color: "var(--text-low)" }}>
-            Shiro goes dormant while the match runs and comes back with your results.
-          </span>
+          {phase.kind === "preflight" ? (
+            <>
+              <span style={{ font: "var(--text-ui)", color: "var(--text-body)" }}>
+                Checking you have the game and map.
+              </span>
+              <Meter indeterminate />
+            </>
+          ) : phase.kind === "downloading" ? (
+            <>
+              <span style={{ font: "var(--text-ui)", color: "var(--text-body)" }}>
+                Getting content Zero-K needs for this match.
+              </span>
+              <Meter value={phase.percent} max={100}
+                label={phase.what} right={phase.percent + "%"} />
+              <span style={{ font: "var(--w-regular) var(--size-tiny)/1.5 var(--font-core)",
+                color: "var(--text-low)" }}>
+                Starting without it would leave the engine waiting for a connection
+                it can never make.
+              </span>
+            </>
+          ) : (
+            <>
+              <span style={{ font: "var(--text-ui)", color: "var(--text-body)" }}>Handing off to the engine.</span>
+              <Meter indeterminate />
+              <span style={{ font: "var(--w-regular) var(--size-tiny)/1.5 var(--font-core)", color: "var(--text-low)" }}>
+                Shiro goes dormant while the match runs and comes back with your results.
+              </span>
+            </>
+          )}
         </div>
       </Dialog>
 
