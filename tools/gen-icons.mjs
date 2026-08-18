@@ -80,10 +80,14 @@ const body = header
   + used.map(n => `  "${n}": ${pascal(n)},`).join("\n")
   + "\n};\n";
 
+/* Compare content, not line endings: a Windows checkout gets CRLF and the
+   generator writes LF, which would fail this check on every Windows build. */
+const sameContent = (a, b) => a.replace(/\r\n/g, "\n") === b.replace(/\r\n/g, "\n");
+
 if (process.argv.includes("--check")) {
   let current = "";
   try { current = readFileSync(OUT, "utf8"); } catch { /* missing counts as stale */ }
-  if (current !== body) {
+  if (!sameContent(current, body)) {
     console.error("src/ds/icons.js is out of date - run: node tools/gen-icons.mjs");
     process.exit(1);
   }

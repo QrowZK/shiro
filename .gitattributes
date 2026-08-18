@@ -1,0 +1,6 @@
+# Generated files are compared byte for byte by tools/gen-icons.mjs --check,
+# and the Rust connect-script tests assert on exact newlines. Keeping LF in the
+# working tree on every platform stops both from failing on Windows alone.
+* text=auto eol=lf
+*.woff2 binary
+*.png binary
