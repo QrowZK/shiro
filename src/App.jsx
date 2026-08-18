@@ -13,9 +13,12 @@ import DebriefingScreen from "./screens/DebriefingScreen.jsx";
 import FriendsScreen from "./screens/FriendsScreen.jsx";
 
 import { inTauri } from "./net/connection";
-import { login, teardown } from "./net/session";
+import { login, teardown, send, say } from "./net/session";
 import { useLobby } from "./store/lobby";
-import { battleList, statusBarKind, describeFailure } from "./store/adapters";
+import { useRoom } from "./store/room";
+import { useGame } from "./store/game";
+import { useChat, BATTLE_ROOM } from "./store/chat";
+import { battleList, statusBarKind, describeFailure, roomModel } from "./store/adapters";
 
 /* Click-through: login -> battle list -> battle room -> (launch) -> debriefing.
    The ready-check is a shell-level overlay because it interrupts any screen.
@@ -38,6 +41,29 @@ export default function App() {
   const me = useLobby(s => s.me);
   const liveBattles = useLobby(s => s.battles);
   const liveUsers = useLobby(s => s.users);
+
+  /* The live battle room. `useRoom` holds membership; the header it decorates
+     still comes from the public battle directory in `useLobby`. */
+  const liveRoomID = useRoom(s => s.battleID);
+  const roomPlayers = useRoom(s => s.players);
+  const roomBots = useRoom(s => s.bots);
+  const roomOptions = useRoom(s => s.modOptions);
+  const roomChat = useChat(s => (s.rooms[BATTLE_ROOM] ? s.rooms[BATTLE_ROOM].messages : null));
+  const phase = useGame(s => s.phase);
+  const [install, setInstall] = React.useState(null);
+
+  /* Where Zero-K lives. Asked once: it is a disk scan, and the answer does not
+     change while the lobby is open. */
+  React.useEffect(() => {
+    if (!live) return;
+    let cancelled = false;
+    void import("./net/launch").then(({ locateInstall }) =>
+      locateInstall().then(
+        i => { if (!cancelled) setInstall(i); },
+        () => { if (!cancelled) setInstall(null); },
+      ));
+    return () => { cancelled = true; };
+  }, [live]);
 
   React.useEffect(() => () => { if (live) void teardown(); }, [live]);
 
@@ -83,12 +109,39 @@ export default function App() {
 
   const battles = live ? battleList(liveBattles) : D.battles;
 
+  const liveRoom = live && liveRoomID != null
+    ? roomModel(liveBattles[liveRoomID], roomPlayers, roomBots, liveUsers, roomOptions)
+    : null;
+
+  /* Not running: the host decides when to start, and every Zero-K autohost
+     takes `!start` in room chat - which is exactly what a player types today.
+     Running: ask for connect details and launch straight into it. */
+  const startRoom = () => {
+    if (!liveRoom) return;
+    if (liveRoom.running) useGame.getState().requestStart(liveRoom.id);
+    else void say("!start", 1);
+  };
+
+  const setBattleStatus = patch => {
+    if (me) void send("UpdateUserBattleStatus", { Name: me, ...patch });
+  };
+
   let body;
-  if (room) body = <BattleRoomScreen room={D.room} onLeave={() => setRoom(null)}
+  // Being in a room does not pin you to it - the sidebar still navigates.
+  if (liveRoom && view === "battles") body = <BattleRoomScreen room={liveRoom} chat={roomChat || []}
+    onLeave={() => useRoom.getState().leave()}
+    onSay={text => void say(text, 1)}
+    onTeam={ally => setBattleStatus({ AllyNumber: ally, IsSpectator: false })}
+    onSpectate={() => setBattleStatus({ IsSpectator: true })}
+    sync={{ install, engine: welcome?.Engine }}
+    phase={phase}
+    onStart={startRoom} />;
+  else if (room) body = <BattleRoomScreen room={D.room} onLeave={() => setRoom(null)}
     onStart={() => { setLaunching(true); setTimeout(() => { setLaunching(false); setRoom(null); setView("debrief"); }, 1600); }} />;
   else if (view === "battles") body = <BattleListScreen battles={battles} empty={empty}
     occupants={live ? occupantsOf : null}
-    onToggleEmpty={e => setEmpty(e.target.checked)} onJoin={b => setRoom(b)} />;
+    onToggleEmpty={e => setEmpty(e.target.checked)}
+    onJoin={b => (live ? useRoom.getState().join(b.id) : setRoom(b))} />;
   else if (view === "chat") body = <ChatScreen channels={D.channels} users={D.channelUsers} messages={D.channelChat} />;
   else if (view === "queue") body = <QueueScreen queued={queued} onQueue={setQueued} onFake={() => setCheck(9)} />;
   else if (view === "friends") body = <FriendsScreen users={D.channelUsers} />;
@@ -105,7 +158,7 @@ export default function App() {
         </div>
         <div style={{ marginTop: 14 }}><Meter value={check} max={9} height={2} /></div>
       </Dialog>
-      <Dialog open={launching} title="Launching" width={360}>
+      <Dialog open={launching || phase.kind === "launching"} title="Launching" width={360}>
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)" }}>
           <span style={{ font: "var(--text-ui)", color: "var(--text-body)" }}>Handing off to the engine.</span>
           <Meter indeterminate />

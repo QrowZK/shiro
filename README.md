@@ -83,11 +83,16 @@ handoff.
 | Piece | File | State |
 |---|---|---|
 | Generated types | `src/protocol/{enums,types,registry}.ts` | 76 commands, 7 DTOs, 8 enums, pinned to `48f6f09b` |
-| Wire encode/decode + merge rule | `src/protocol/wire.ts` | 8 passing tests |
-| Relay bridge | `src/net/connection.ts` | compiles; not yet exercised in-app |
-| Session + login handshake | `src/net/session.ts` | compiles; not yet exercised in-app |
-| Normalized store | `src/store/lobby.ts` | compiles; not yet exercised in-app |
-| Rust TCP relay | `src-tauri/src/relay.rs` | builds clean, 1 unit test passing |
+| Wire encode/decode + merge rule | `src/protocol/wire.ts` | tested |
+| Relay bridge | `src/net/connection.ts` | live - logs in against `zero-k.info:8200` |
+| Session + login handshake | `src/net/session.ts` | live |
+| Normalized store | `src/store/lobby.ts` | live - drives the status bar and battle list |
+| Battle room membership | `src/store/room.ts` | live - roster, teams, spectators, bots, mod options |
+| Engine launch | `src/store/game.ts`, `src-tauri/src/launch.rs` | built; **not yet run against a real engine** |
+| Install detection | `src-tauri/src/install.rs` | built; **not yet run against a real install** |
+| Rust TCP relay | `src-tauri/src/relay.rs` | builds clean |
+
+`npm test` runs 37 TypeScript tests; `cargo test` in `src-tauri/` runs 13 Rust tests.
 
 **The desktop app builds and packages.** `npm run tauri:build` produces:
 
@@ -103,8 +108,8 @@ Login against the live server is **verified working** out-of-band: account `Qrow
 `ResultCode: 0`, session token issued. The auth format is confirmed as base64 of the
 raw MD5 digest bytes.
 
-The screens still render from `src/data.js`. Nothing is wired to the store yet —
-that is the next step once the shell builds.
+Login, the status bar, the battle list and the battle room read from the live
+store. Chat, matchmaker, friends and debriefing still render `src/data.js`.
 
 ## Layout
 
@@ -132,16 +137,40 @@ Tokens under `src/styles/tokens/` mirror the project's `tokens/*.css` one-to-one
 1. ~~Generate `src/protocol/` from upstream `Messages.cs`; pin the source SHA.~~ done
 2. ~~Merge-not-replace store semantics, unit-tested.~~ done
 3. ~~Tauri shell + Rust TCP relay.~~ done — builds and packages
-4. **Run the app and log in.** The relay, session and login wiring all compile,
-   but nothing has driven them through a real GUI yet. Run `npm run tauri:dev`
-   (or install the NSIS package) and confirm a real account reaches
-   `ResultCode: 0` and the battle list populates from the server.
-5. Swap the rest of `src/data.js` for the live store, screen by screen. Login,
-   status bar and battle list already read from it; chat, battle room, queue,
-   friends and debriefing are still demo data.
-6. `RequestConnectSpring` → write `script.txt` → spawn
-   `<ZK>/engine/win64/<Engine>/spring.exe`. The install is already located and the
-   version string the server sends matches the directory name exactly.
+4. ~~Run the app and log in.~~ done — verified against `zero-k.info:8200`.
+5. ~~Battle room from the live store.~~ done — join, roster, teams, spectators,
+   bots, mod options, room chat, team/spectate changes.
+6. ~~`RequestConnectSpring` → write `script.txt` → spawn the engine.~~ built —
+   see below. **Needs one run on a machine with Zero-K installed.**
+7. Swap the remaining demo screens for the live store: chat (the store slice in
+   `src/store/chat.ts` is already written and tested, the screen is not wired to
+   it), matchmaker, friends, debriefing (`src/store/history.ts`, same situation).
+8. Passworded battles: `JoinBattle` is sent without a password, so joining a
+   locked room fails. Needs a prompt.
+
+## Launching a game
+
+Implemented per ARCHITECTURE.md section 6, and **this is the part of the client
+that has never touched real hardware.** Everything up to the process spawn is
+unit-tested; the spawn itself has not run against a Zero-K install.
+
+1. `src-tauri/src/install.rs` finds the Zero-K data directory — the standalone
+   installer's location, the home directory, and every Steam library listed in
+   `libraryfolders.vdf` (people move games to a second drive constantly).
+2. `src-tauri/src/launch.rs` writes the eight-line connect script to the temp
+   directory — deliberately *not* into the install, which under
+   `Program Files` is not writable by a per-user process — and spawns the engine
+   with `SPRING_DATADIR`/`SPRING_WRITEDIR` pointing at the install. The data dir
+   goes through the environment rather than a flag because engine versions
+   disagree about the spelling of the write-dir option and an unknown flag
+   aborts startup.
+3. The launch is driven by the *arrival* of `ConnectSpring`, not by the button
+   that asks for it, so a matchmaker game starts correctly with nothing pressed.
+
+What to check on first run: that `engine/win64/<version>/spring.exe` is where we
+expect it, and that the engine finds the game and map rather than writing a fresh
+data dir under Documents. Both failure modes surface as a message in the room's
+SYNC panel or the engine's own error dialog.
 
 A local `ZkLobbyServer` is no longer a prerequisite — see ARCHITECTURE.md section 8
 for the revised guidance on developing against live.
