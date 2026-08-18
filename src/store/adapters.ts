@@ -102,14 +102,24 @@ export function battleList(battles: Record<number, T.BattleHeader>): BattleRowMo
     .sort((a, b) => Number(a.running) - Number(b.running) || b.players - a.players);
 }
 
-/** The three states AppShell's StatusBar knows about. */
-export function statusBarKind(c: ConnectionState): "online" | "reconnecting" | "offline" {
+/**
+ * The three states AppShell's StatusBar knows about.
+ *
+ * A dropped connection with a retry already scheduled is "reconnecting", not
+ * "offline": the difference to a player is whether anything is being done about
+ * it, and something is. Only a session with no retry pending - never logged in,
+ * or torn down - reads as offline.
+ */
+export function statusBarKind(
+  c: ConnectionState,
+  reconnectAttempt = 0,
+): "online" | "reconnecting" | "offline" {
   switch (c.kind) {
     case "online": return "online";
     case "connecting":
     case "connected":
     case "loggingIn": return "reconnecting";
-    default: return "offline";
+    default: return reconnectAttempt > 0 ? "reconnecting" : "offline";
   }
 }
 
@@ -226,11 +236,20 @@ export interface StoredChatMessage {
   system: boolean;
 }
 
+/**
+ * `ignored` drops lines rather than greying them: the point of ignoring someone
+ * is not to read them. History is not rewritten - the messages stay in the
+ * store, so un-ignoring brings the backlog back.
+ */
 export function chatLines(
   messages: readonly StoredChatMessage[],
   users: Record<string, T.User>,
+  ignored?: ReadonlySet<string>,
 ): ChatLineModel[] {
-  return messages.map(m => ({
+  const visible = ignored && ignored.size
+    ? messages.filter(m => !m.user || !ignored.has(m.user))
+    : messages;
+  return visible.map(m => ({
     id: m.id,
     time: shortTime(m.time),
     text: m.text,

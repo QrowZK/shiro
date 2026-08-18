@@ -48,10 +48,10 @@ export function NavRail({ view, onView }) {
   );
 }
 
-export function StatusBar({ connection = "online", users, engine, game, onReconnect }) {
+export function StatusBar({ connection = "online", users, engine, game, onReconnect, attempt }) {
   const map = {
     online: { icon: "wifi", text: "Connected", color: "var(--text-low)" },
-    reconnecting: { icon: "loader", text: "Reconnecting - attempt 3", color: "var(--signal-warn)" },
+    reconnecting: { icon: "loader", text: attempt ? "Reconnecting - attempt " + attempt : "Connecting", color: "var(--signal-warn)" },
     offline: { icon: "wifi-off", text: "Lost connection", color: "var(--signal-danger)" }
   }[connection];
   return (
@@ -77,7 +77,7 @@ export function StatusBar({ connection = "online", users, engine, game, onReconn
   );
 }
 
-export default function AppShell({ view, onView, connection, users, engine, game, onReconnect, children, overlay }) {
+export default function AppShell({ view, onView, connection, users, engine, game, onReconnect, attempt, children, overlay }) {
   return (
     <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%",
       minHeight: 0, background: "var(--surface-base)", overflow: "hidden" }}>
@@ -86,7 +86,7 @@ export default function AppShell({ view, onView, connection, users, engine, game
         <NavRail view={view} onView={onView} />
         <main style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>{children}</main>
       </div>
-      <StatusBar connection={connection} users={users} engine={engine} game={game} onReconnect={onReconnect} />
+      <StatusBar connection={connection} users={users} engine={engine} game={game} onReconnect={onReconnect} attempt={attempt} />
       {overlay}
     </div>
   );

@@ -32,6 +32,8 @@ export interface GameState {
   phase: GamePhase;
   /** The last connect details the server sent, kept for a retry. */
   last?: T.ConnectSpring;
+  /** A battle we were in that is still running, offered by the server. */
+  rejoin?: number;
   me?: string;
 
   applyBatch: (messages: Message[]) => void;
@@ -39,6 +41,8 @@ export interface GameState {
   setMe: (name?: string) => void;
   /** Ask the server for connect details. Launching happens on the reply. */
   requestStart: (battleID: number, password?: string) => void;
+  /** Accept or dismiss a `RejoinOption`. */
+  takeRejoin: (accept: boolean) => void;
   /** Launch from connect details - called on arrival, or again by a retry. */
   launch: (c: T.ConnectSpring) => Promise<void>;
   setPhase: (p: GamePhase) => void;
@@ -59,6 +63,11 @@ export const useGame = create<GameState>((set, get) => ({
         const d = m.data as T.LoginResponse;
         if (d.ResultCode === 0 && d.Name) set({ me: d.Name });
       }
+      if (m.cmd === "RejoinOption") {
+        // Sent after login when a game we were in is still going. Purely an
+        // offer: nothing happens until the player takes it.
+        set({ rejoin: (m.data as T.RejoinOption).BattleID });
+      }
       if (m.cmd === "ConnectSpring") {
         const d = m.data as T.ConnectSpring;
         set({ last: d, phase: { kind: "launching", title: d.Title } });
@@ -68,6 +77,13 @@ export const useGame = create<GameState>((set, get) => ({
   },
 
   setMe: name => set({ me: name }),
+
+  /** Take the server up on a rejoin offer, or drop it. */
+  takeRejoin: (accept: boolean) => {
+    const battleID = get().rejoin;
+    set({ rejoin: undefined });
+    if (accept && battleID != null) get().requestStart(battleID);
+  },
 
   requestStart: (battleID, password) => {
     set({ phase: { kind: "launching" } });
@@ -110,7 +126,7 @@ export const useGame = create<GameState>((set, get) => ({
   },
 
   setPhase: p => set({ phase: p }),
-  reset: () => set({ phase: { kind: "idle" }, last: undefined, me: undefined }),
+  reset: () => set({ phase: { kind: "idle" }, last: undefined, rejoin: undefined, me: undefined }),
 }));
 
 function titleOf(p: GamePhase): string | undefined {

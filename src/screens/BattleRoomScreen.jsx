@@ -5,7 +5,7 @@ import { Button, Badge, Tag, PlayerRow, ChatLine, MapImage, Input,
 /* Screen 4 - the largest and densest screen. Teams, spectators, bots, map,
    options, chat, ready/start. Team columns are a grid so 1v1 and 16-way FFA
    use the same layout. */
-export function TeamColumn({ ally, players, max = 8, onJoin }) {
+export function TeamColumn({ ally, players, max = 8, onJoin, onKick, onAddBot }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", minWidth: 0,
       borderRight: "1px solid var(--w-06)" }}>
@@ -17,8 +17,13 @@ export function TeamColumn({ ally, players, max = 8, onJoin }) {
       </div>
       {players.map((p, i) => (
         <PlayerRow key={i} {...p} user={p.user}
-          right={<span style={{ font: "var(--w-medium) var(--size-tiny)/1 var(--font-mono)",
-            color: "var(--text-low)", fontVariantNumeric: "tabular-nums" }}>{p.user.elo || ""}</span>} />
+          right={onKick
+            /* Host controls are offered to everyone; the server ignores them
+               from anyone else, which is the only authority that counts. */
+            ? <IconButton icon="x" size="sm" label={"Remove " + p.user.name}
+                onClick={() => onKick(p.user)} />
+            : <span style={{ font: "var(--w-medium) var(--size-tiny)/1 var(--font-mono)",
+                color: "var(--text-low)", fontVariantNumeric: "tabular-nums" }}>{p.user.elo || ""}</span>} />
       ))}
       {Array.from({ length: Math.max(0, Math.min(3, max - players.length)) }).map((_, i) => (
         <div key={"e" + i} style={{ height: "var(--row-default)", display: "flex", alignItems: "center",
@@ -26,8 +31,10 @@ export function TeamColumn({ ally, players, max = 8, onJoin }) {
           <span style={{ font: "var(--w-regular) var(--size-tiny)/1 var(--font-core)", color: "var(--text-faint)" }}>empty</span>
         </div>
       ))}
-      <div style={{ padding: "var(--sp-4)" }}>
+      <div style={{ padding: "var(--sp-4)", display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
         <Button variant="quiet" size="sm" block onClick={onJoin}>Join team {ally + 1}</Button>
+        {onAddBot && <Button variant="ghost" size="sm" block icon="plus"
+          onClick={() => onAddBot(ally)}>Add AI</Button>}
       </div>
     </div>
   );
@@ -37,7 +44,7 @@ export function TeamColumn({ ally, players, max = 8, onJoin }) {
    the screen is driven by the live store; without them it renders the demo
    room from data.js and the interactive parts stand down. */
 export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
-  onTeam, onSpectate, sync, phase }) {
+  onTeam, onSpectate, sync, phase, poll, pollOutcome, onVote, onKick, onAddBot }) {
   const [msg, setMsg] = React.useState("");
   const total = room.teams.reduce((n, t) => n + t.players.length, 0);
   const lines = chat || room.chat || [];
@@ -60,7 +67,8 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
         <div style={{ flex: 1, minHeight: 0, display: "grid",
           gridTemplateColumns: "repeat(" + room.teams.length + ", minmax(0,1fr))", overflowY: "auto" }}>
           {room.teams.map(t => <TeamColumn key={t.ally} ally={t.ally} players={t.players} max={8}
-            onJoin={onTeam ? () => onTeam(t.ally) : undefined} />)}
+            onJoin={onTeam ? () => onTeam(t.ally) : undefined}
+            onKick={onKick} onAddBot={onAddBot} />)}
         </div>
 
         <div style={{ flex: "0 0 auto", borderTop: "1px solid var(--w-12)", display: "flex", minHeight: 0 }}>
@@ -97,6 +105,38 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
         <MapImage map={room.map} kind="minimap" ratio="1" caption link saturate={1} style={{ flex: "0 0 auto" }} />
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "var(--sp-5)",
           display: "flex", flexDirection: "column", gap: "var(--sp-6)" }}>
+          {poll && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
+              <span className="lab">VOTE</span>
+              <span style={{ font: "var(--text-ui)", color: "var(--text-hi)" }}>{poll.Topic}</span>
+              {poll.YesNoVote ? (
+                <div style={{ display: "flex", gap: "var(--sp-4)" }}>
+                  <Button variant="primary" size="sm" style={{ flex: 1 }}
+                    onClick={() => onVote && onVote(true)}>Yes</Button>
+                  <Button variant="secondary" size="sm" style={{ flex: 1 }}
+                    onClick={() => onVote && onVote(false)}>No</Button>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
+                  {(poll.Options || []).map(o => (
+                    <Button key={o.Id} variant="quiet" size="sm" block
+                      onClick={() => onVote && onVote(o.Id)}>
+                      {(o.DisplayName || o.Name) + "  " + o.Votes + "/" + poll.VotesToWin}
+                    </Button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {!poll && pollOutcome && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
+              <span className="lab">LAST VOTE</span>
+              <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
+                color: pollOutcome.Success ? "var(--text-low)" : "var(--text-faint)" }}>
+                {pollOutcome.Message || pollOutcome.Topic}
+              </span>
+            </div>
+          )}
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
             <span className="lab">MOD OPTIONS</span>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-3)" }}>

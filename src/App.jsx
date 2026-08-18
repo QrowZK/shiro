@@ -15,13 +15,14 @@ import HostBattleDialog from "./screens/HostBattleDialog.jsx";
 import JoinPasswordDialog from "./screens/JoinPasswordDialog.jsx";
 
 import { inTauri } from "./net/connection";
-import { login, teardown, send, say } from "./net/session";
+import { login, teardown, send, say, reconnectNow } from "./net/session";
 import { useLobby } from "./store/lobby";
 import { useRoom } from "./store/room";
 import { useGame } from "./store/game";
 import { useChat, BATTLE_ROOM, selectTabs } from "./store/chat";
 import { useMatchmaker, secondsLeft } from "./store/matchmaker";
 import { useFriends } from "./store/friends";
+import { useParty, inviteSecondsLeft } from "./store/party";
 import { useHistory, buildDebriefView } from "./store/history";
 import {
   battleList, statusBarKind, describeFailure, roomModel, chatLines, userToChip,
@@ -53,6 +54,7 @@ export default function App() {
   const me = useLobby(s => s.me);
   const liveBattles = useLobby(s => s.battles);
   const liveUsers = useLobby(s => s.users);
+  const reconnectAttempt = useLobby(s => s.reconnect);
 
   /* The live battle room. `useRoom` holds membership; the header it decorates
      still comes from the public battle directory in `useLobby`. */
@@ -60,6 +62,8 @@ export default function App() {
   const roomPlayers = useRoom(s => s.players);
   const roomBots = useRoom(s => s.bots);
   const roomOptions = useRoom(s => s.modOptions);
+  const roomPoll = useRoom(s => s.poll);
+  const roomPollOutcome = useRoom(s => s.pollOutcome);
 
   const chatRooms = useChat(s => s.rooms);
   const chatOrder = useChat(s => s.order);
@@ -75,7 +79,12 @@ export default function App() {
   const mmBanned = useMatchmaker(s => s.bannedSeconds);
   const mmCheck = useMatchmaker(s => s.check);
 
+  const partyMembers = useParty(s => s.members);
+  const partyInvite = useParty(s => s.invite);
+  const rejoinOffer = useGame(s => s.rejoin);
+
   const friendNames = useFriends(s => s.friends);
+  const ignoreNames = useFriends(s => s.ignores);
   const records = useHistory(s => s.records);
   const recordIndex = useHistory(s => s.index);
   const profiles = useHistory(s => s.profiles);
@@ -103,12 +112,14 @@ export default function App() {
     return () => clearInterval(t);
   }, [check]);
 
+  /* Both countdowns run against a deadline the server set, so the UI only has
+     to re-render; there is no local clock to keep in step. */
   const [, forceTick] = React.useReducer(n => n + 1, 0);
   React.useEffect(() => {
-    if (!mmCheck) return;
+    if (!mmCheck && !partyInvite) return;
     const t = setInterval(forceTick, 500);
     return () => clearInterval(t);
-  }, [mmCheck]);
+  }, [mmCheck, partyInvite]);
 
   /* A finished match is the one thing that should pull you out of whatever you
      were doing: the debriefing is the point of having played. */
@@ -116,6 +127,11 @@ export default function App() {
   React.useEffect(() => {
     if (newest) setView("debrief");
   }, [newest && newest.serverBattleId]);
+
+  /* Hooks only: everything below the login screen's early return runs
+     conditionally, so a hook down there changes the hook order between
+     renders. */
+  const ignored = React.useMemo(() => new Set(ignoreNames), [ignoreNames]);
 
   const handleLogin = React.useCallback(async (name, password) => {
     if (!live) {
@@ -137,10 +153,12 @@ export default function App() {
   );
 
   const shell = {
-    connection: live ? statusBarKind(connection) : "online",
+    connection: live ? statusBarKind(connection, reconnectAttempt) : "online",
     users: live ? (welcome?.UserCount ?? 0) : D.welcome.UserCount,
     engine: live ? (welcome?.Engine ?? "-") : D.welcome.Engine,
     game: live ? (welcome?.Game ?? "-") : D.welcome.Game,
+    attempt: live ? reconnectAttempt : 0,
+    onReconnect: live ? reconnectNow : undefined,
   };
 
   if (!loggedIn) {
@@ -204,13 +222,18 @@ export default function App() {
   // Being in a room does not pin you to it - the sidebar still navigates.
   if (liveRoom && view === "battles") body = (
     <BattleRoomScreen room={liveRoom}
-      chat={battleChat ? chatLines(battleChat.messages, liveUsers) : []}
+      chat={battleChat ? chatLines(battleChat.messages, liveUsers, ignored) : []}
       onLeave={() => useRoom.getState().leave()}
       onSay={text => void say(text, 1)}
       onTeam={ally => setBattleStatus({ AllyNumber: ally, IsSpectator: false })}
       onSpectate={() => setBattleStatus({ IsSpectator: true })}
       sync={{ install, engine: welcome?.Engine }}
       phase={phase}
+      poll={roomPoll}
+      pollOutcome={roomPollOutcome}
+      onVote={option => useRoom.getState().vote(option)}
+      onKick={u => useRoom.getState().kick(u.name)}
+      onAddBot={ally => useRoom.getState().addBot("CAI", ally)}
       onStart={startRoom} />
   );
   else if (room) body = <BattleRoomScreen room={D.room} onLeave={() => setRoom(null)}
@@ -219,20 +242,22 @@ export default function App() {
     occupants={live ? occupantsOf : null}
     onToggleEmpty={e => setEmpty(e.target.checked)}
     onHost={() => setHosting(true)}
+    onSpectate={b => (live ? useRoom.getState().join(b.id, undefined, true) : setRoom(b))}
     onJoin={joinBattle} />;
   else if (view === "chat") body = (
     <ChatScreen
       channels={chatTabs}
       users={chatUsers}
       messages={live
-        ? (activeRoom ? chatLines(activeRoom.messages, liveUsers) : [])
+        ? (activeRoom ? chatLines(activeRoom.messages, liveUsers, ignored) : [])
         : D.channelChat}
       active={live ? chatActive : undefined}
       topic={live && activeRoom && activeRoom.topic ? activeRoom.topic.Text : undefined}
       onTab={live ? id => useChat.getState().setActive(id) : undefined}
       onSend={live ? text => useChat.getState().say(chatActive, text) : undefined}
       onClose={live ? id => useChat.getState().close(id) : undefined}
-      onJoin={live ? name => useChat.getState().join(name) : undefined} />
+      onJoin={live ? name => useChat.getState().join(name) : undefined}
+      onUser={live ? openDm : undefined} />
   );
   else if (view === "queue") body = (
     <QueueScreen
@@ -242,7 +267,9 @@ export default function App() {
       joinedTime={live ? mmJoinedTime : undefined}
       bannedSeconds={live ? mmBanned : undefined}
       elo={live && me && liveUsers[me] ? Math.round(liveUsers[me].EffectiveMmElo) : undefined}
-      party={live ? undefined : D.channelUsers.slice(0, 2)}
+      party={live ? partyMembers.map(n => userToChip(liveUsers[n], n)) : D.channelUsers.slice(0, 2)}
+      onInvite={live ? name => useParty.getState().sendInvite(name) : undefined}
+      onLeaveParty={live ? () => useParty.getState().leave() : undefined}
       onQueue={live
         ? (on, picked) => useMatchmaker.getState().setQueues(on ? picked : [])
         : on => setQueued(on)}
@@ -331,6 +358,36 @@ export default function App() {
 
       <JoinPasswordDialog battle={locked} onClose={() => setLocked(null)}
         onJoin={password => useRoom.getState().join(locked.id, password)} />
+
+      <Dialog open={Boolean(partyInvite)} title="Party invite" width={360}
+        footer={<>
+          <Button variant="ghost" onClick={() => useParty.getState().respond(false)}>Decline</Button>
+          <Button variant="primary" onClick={() => useParty.getState().respond(true)}>Join party</Button>
+        </>}>
+        <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16 }}>
+          <span style={{ font: "var(--text-ui)", color: "var(--text-body)" }}>
+            {partyInvite ? partyInvite.members.filter(n => n !== me).join(", ") : ""} want you in their party.
+          </span>
+          <span style={{ font: "var(--text-num)", color: "var(--text-hi)", fontVariantNumeric: "tabular-nums" }}>
+            {inviteSecondsLeft(partyInvite, Date.now())}s
+          </span>
+        </div>
+      </Dialog>
+
+      {/* Sent after login when a game you were in is still running: the lobby
+          crashed, or you closed it mid-match. Purely an offer. */}
+      <Dialog open={rejoinOffer != null} title="You are still in a game" width={380}
+        footer={<>
+          <Button variant="ghost" onClick={() => useGame.getState().takeRejoin(false)}>Ignore</Button>
+          <Button variant="primary" icon="play"
+            onClick={() => useGame.getState().takeRejoin(true)}>Rejoin</Button>
+        </>}>
+        <span style={{ font: "var(--text-ui)", color: "var(--text-body)" }}>
+          {rejoinOffer != null && liveBattles[rejoinOffer]
+            ? liveBattles[rejoinOffer].Title + " is still running."
+            : "A battle you were in is still running."}
+        </span>
+      </Dialog>
     </>
   );
 

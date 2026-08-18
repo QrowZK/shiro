@@ -23,10 +23,21 @@
  */
 import { create } from "zustand";
 
-import type { Message } from "../protocol/registry.ts";
+import type { CommandName, Message, MessageMap } from "../protocol/registry.ts";
 import type * as T from "../protocol/types.ts";
 import { mergePatch } from "../protocol/wire.ts";
 import { registerSlice } from "./slices.ts";
+
+/**
+ * Send a command without dragging `net/session` (and therefore Tauri) into this
+ * module's import graph, so the reducer stays testable in plain Node. Failures
+ * are logged, never thrown: a dropped command must not take a store action down.
+ */
+function tx<K extends CommandName>(cmd: K, data: MessageMap[K]): void {
+  void import("../net/session")
+    .then(m => m.send(cmd, data))
+    .catch(err => console.error(`room: ${cmd} failed:`, err));
+}
 
 /** What the host dialog collects. Engine and game come from `Welcome`, so the
  *  room we open runs what everyone else is running. */
@@ -50,6 +61,12 @@ export interface RoomState {
   bots: Record<string, T.UpdateBotStatus>;
   modOptions: Record<string, string>;
   mapOptions: Record<string, string>;
+  /** Set when the join that is in flight was a request to spectate. */
+  pendingSpectate: boolean;
+  /** The vote in progress, if any. */
+  poll?: T.BattlePoll;
+  /** How the last vote ended, until the next one starts. */
+  pollOutcome?: T.BattlePollOutcome;
 
   applyBatch: (messages: Message[]) => void;
   applyMessage: (m: Message) => void;
@@ -57,11 +74,21 @@ export interface RoomState {
   /** Ask the server to put us in a battle. The roster arrives as
       `JoinBattleSuccess`; a wrong password comes back as a `Say` from the
       server rather than an error, so nothing is optimistically applied here. */
-  join: (battleID: number, password?: string) => void;
+  join: (battleID: number, password?: string, asSpectator?: boolean) => void;
   /** Leave the current room. There is no acknowledgement to wait for. */
   leave: () => void;
   /** Open a battle of our own. Success arrives as `JoinBattleSuccess`. */
   host: (opts: HostOptions) => void;
+  /**
+   * Vote in the current poll. There is no vote command in the protocol - the
+   * official client types it into battle chat and so do we, which is also why
+   * autohosts understand it.
+   */
+  vote: (option: number | boolean) => void;
+  /** Host controls. The server ignores these from anyone but the host. */
+  kick: (name: string, reason?: string) => void;
+  addBot: (aiLib: string, ally: number, name?: string) => void;
+  removeBot: (name: string) => void;
   /** We left, were kicked, or the room closed. */
   clear: () => void;
   reset: () => void;
@@ -73,6 +100,9 @@ const EMPTY = {
   bots: {} as Record<string, T.UpdateBotStatus>,
   modOptions: {} as Record<string, string>,
   mapOptions: {} as Record<string, string>,
+  pendingSpectate: false,
+  poll: undefined as T.BattlePoll | undefined,
+  pollOutcome: undefined as T.BattlePollOutcome | undefined,
 };
 
 export const useRoom = create<RoomState>((set, get) => ({
@@ -86,6 +116,9 @@ export const useRoom = create<RoomState>((set, get) => ({
     let bots = state.bots;
     let modOptions = state.modOptions;
     let mapOptions = state.mapOptions;
+    let pendingSpectate = state.pendingSpectate;
+    let poll = state.poll;
+    let pollOutcome = state.pollOutcome;
     let me = state.me;
 
     /* Copy-on-write: most batches touch none of this, and the screens
@@ -108,8 +141,16 @@ export const useRoom = create<RoomState>((set, get) => ({
           bots = {};
           modOptions = d.Options ?? {};
           mapOptions = d.MapOptions ?? {};
+          poll = undefined;
+          pollOutcome = undefined;
           for (const p of d.Players ?? []) if (p.Name) players[p.Name] = p;
           for (const b of d.Bots ?? []) if (b.Name) bots[b.Name] = b;
+          /* A join we asked to spectate: the status can only be set once the
+             server has actually put us in the room, so it waits until here. */
+          if (pendingSpectate && me) {
+            pendingSpectate = false;
+            tx("UpdateUserBattleStatus", { Name: me, IsSpectator: true });
+          }
           break;
         }
 
@@ -142,6 +183,19 @@ export const useRoom = create<RoomState>((set, get) => ({
           mapOptions = (m.data as T.SetMapOptions).Options ?? {};
           break;
 
+        /* Polls are how a Zero-K room decides anything - map, start, kick.
+           The server repeats the whole poll on every vote, so this is a
+           replace, not a merge. */
+        case "BattlePoll":
+          poll = m.data as T.BattlePoll;
+          pollOutcome = undefined;
+          break;
+
+        case "BattlePollOutcome":
+          poll = undefined;
+          pollOutcome = m.data as T.BattlePollOutcome;
+          break;
+
         case "BattleRemoved": {
           // The host closed the room out from under us.
           if ((m.data as T.BattleRemoved).BattleID === battleID) {
@@ -162,18 +216,20 @@ export const useRoom = create<RoomState>((set, get) => ({
       }
     }
 
-    return { battleID, players, bots, modOptions, mapOptions, me };
+    return { battleID, players, bots, modOptions, mapOptions, pendingSpectate, poll, pollOutcome, me };
   }),
 
   setMe: name => set({ me: name }),
 
-  join: (battleID, password) => {
-    void import("../net/session.ts").then(({ send }) =>
-      send("JoinBattle", { BattleID: battleID, Password: password }));
+  join: (battleID, password, asSpectator) => {
+    // Spectating is a status change, and status can only be set once the server
+    // has put us in the room - so it is remembered and applied on arrival.
+    set({ pendingSpectate: Boolean(asSpectator) });
+    tx("JoinBattle", { BattleID: battleID, Password: password });
   },
 
   host: opts => {
-    void import("../net/session.ts").then(({ send }) => send("OpenBattle", {
+    tx("OpenBattle", {
       Header: {
         Title: opts.title,
         Map: opts.map,
@@ -184,7 +240,7 @@ export const useRoom = create<RoomState>((set, get) => ({
         Engine: opts.engine,
         Game: opts.game,
       },
-    }));
+    });
   },
 
   leave: () => {
@@ -192,11 +248,36 @@ export const useRoom = create<RoomState>((set, get) => ({
     // Clear immediately: the server sends no acknowledgement, and leaving a
     // room we are no longer in is harmless.
     set(state => ({ ...EMPTY, me: state.me }));
-    if (id != null) {
-      void import("../net/session.ts").then(({ send }) => send("LeaveBattle", { BattleID: id }));
-    }
+    if (id != null) tx("LeaveBattle", { BattleID: id });
   },
   /** Leaving a room keeps the session; only `reset` forgets who we are. */
+  vote: option => {
+    const text = typeof option === "boolean" ? (option ? "!y" : "!n") : `!vote ${option}`;
+    void import("../net/session")
+      .then(m => m.say(text, 1))
+      .catch(err => console.error("room: vote failed:", err));
+  },
+
+  kick: (name, reason) => {
+    const id = get().battleID;
+    if (id == null) return;
+    tx("KickFromBattle", { BattleID: id, Name: name, Reason: reason });
+  },
+
+  addBot: (aiLib, ally, name) => {
+    tx("UpdateBotStatus", {
+      AiLib: aiLib,
+      AllyNumber: ally,
+      // The server names it if we do not, which is what the official client does.
+      Name: name,
+      Owner: get().me,
+    });
+  },
+
+  removeBot: name => {
+    tx("RemoveBot", { Name: name });
+  },
+
   clear: () => set(state => ({ ...EMPTY, me: state.me })),
   reset: () => set({ ...EMPTY, me: undefined }),
 }));

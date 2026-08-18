@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Meter, UserChip, EmptyState } from "../ds/shiro.js";
+import { Button, Meter, UserChip, EmptyState, Input, IconButton } from "../ds/shiro.js";
 
 /* Screen 6 - matchmaker queue. The ready-check itself is a Dialog rendered by
    App as a shell overlay, because it can interrupt any screen.
@@ -21,7 +21,7 @@ function elapsed(iso, now) {
 }
 
 export default function QueueScreen({ queued, onQueue, onFake, queues, joined, elo,
-  joinedTime, bannedSeconds, party }) {
+  joinedTime, bannedSeconds, party, onInvite, onLeaveParty }) {
   const live = Boolean(queues);
   const list = queues || QUEUES;
   const [picked, setPicked] = React.useState(live ? [] : ["teams"]);
@@ -38,7 +38,14 @@ export default function QueueScreen({ queued, onQueue, onFake, queues, joined, e
     return () => clearInterval(t);
   }, [inQueue]);
 
+  const [inviting, setInviting] = React.useState("");
   const toggle = id => setPicked(p => (p.includes(id) ? p.filter(x => x !== id) : [...p, id]));
+  const invite = () => {
+    const name = inviting.trim();
+    if (!name || !onInvite) return;
+    onInvite(name);
+    setInviting("");
+  };
   const waited = elapsed(joinedTime, now);
 
   return (
@@ -104,12 +111,29 @@ export default function QueueScreen({ queued, onQueue, onFake, queues, joined, e
           </>
         )}
         <span style={{ flex: 1 }} />
-        {party && party.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
             <span className="lab">PARTY</span>
-            {party.map(p => <UserChip key={p.name} {...p} size="sm" />)}
+            {onLeaveParty && party && party.length > 0 && (
+              <IconButton icon="log-out" size="sm" label="Leave party" onClick={onLeaveParty} />
+            )}
           </div>
-        )}
+          {party && party.length > 0
+            ? party.map(p => <UserChip key={p.name} {...p} size="sm" />)
+            : onInvite && (
+              <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)", color: "var(--text-faint)" }}>
+                Queue with friends - you are matched as one team.
+              </span>
+            )}
+          {onInvite && (
+            <div style={{ display: "flex", gap: "var(--sp-3)" }}>
+              <Input placeholder="Invite by name" size="sm" value={inviting} wrapStyle={{ flex: 1 }}
+                onChange={e => setInviting(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && invite()} />
+              <Button variant="quiet" size="sm" onClick={invite}>Invite</Button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

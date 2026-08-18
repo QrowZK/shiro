@@ -6,7 +6,7 @@ const DEMO_OCCUPANTS = ["hexed", "quantum", "tinman", "lorelei", "marrow", "nine
 
 /* Screen 3 - the default view and the highest-traffic surface.
    Left: filter strip. Centre: the list. Right: detail for the selected battle. */
-export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty, occupants, onHost }) {
+export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty, occupants, onHost, onSpectate }) {
   const [sel, setSel] = React.useState(battles[0] && battles[0].id);
   const [q, setQ] = React.useState("");
   const [mode, setMode] = React.useState("All modes");
@@ -107,7 +107,8 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
             <div style={{ padding: "var(--sp-5)", borderTop: "1px solid var(--w-12)", display: "flex", gap: "var(--sp-4)" }}>
               <Button variant="primary" size="lg" style={{ flex: 1 }} icon={current.running ? "eye" : "play"}
                 onClick={() => onJoin(current)}>{current.running ? "Watch" : "Join battle"}</Button>
-              <IconButton icon="eye" label="Spectate" variant="outline" size="lg" />
+              <IconButton icon="eye" label="Spectate" variant="outline" size="lg"
+                onClick={() => (onSpectate ? onSpectate(current) : onJoin(current))} />
             </div>
           </>
         ) : <EmptyState icon="swords" title="Nothing selected." body="Pick a battle to see its map and players." />}

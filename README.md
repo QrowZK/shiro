@@ -91,13 +91,15 @@ handoff.
 | Battle room membership | `src/store/room.ts` | live - roster, teams, spectators, bots, mod options |
 | Chat | `src/store/chat.ts` | live - channels, DMs, battle chat, unread and mention state |
 | Matchmaker | `src/store/matchmaker.ts` | live - queues, joining, the ready check |
+| Parties | `src/store/party.ts` | live - invite, accept, leave |
 | Friends | `src/store/friends.ts` | live - list, add, remove, ignore, profiles |
 | Match history | `src/store/history.ts` | live - debriefings, ratings, awards |
 | Engine launch | `src/store/game.ts`, `src-tauri/src/launch.rs` | built; **not yet run against a real engine** |
 | Install detection | `src-tauri/src/install.rs` | built; **not yet run against a real install** |
 | Rust TCP relay | `src-tauri/src/relay.rs` | builds clean |
 
-`npm test` runs 59 TypeScript tests; `cargo test` in `src-tauri/` runs 13 Rust tests.
+`npm test` runs 70 TypeScript tests; `cargo test` in `src-tauri/` runs 13 Rust tests;
+`npm run test:e2e` runs 60 end-to-end checks.
 
 ## Testing the live paths
 
@@ -105,9 +107,10 @@ Most of the client only runs inside Tauri, which makes the interesting half
 invisible to a browser and to unit tests. `npm run test:e2e` closes that gap: it
 replaces `window.__TAURI_INTERNALS__` with [a fake
 server](tools/e2e/fake-server.js) and drives the real UI through login, joining,
-hosting, a passworded join, chat, the matchmaker ready check, friends, launching
-an engine and a debriefing — 39 assertions against the same code the desktop
-build runs.
+hosting, a passworded join, spectating, ignoring, room votes, host controls,
+chat, the matchmaker ready check, parties, friends, launching an engine, a
+rejoin offer, a dropped socket and a debriefing — 60 assertions against the same
+code the desktop build runs.
 
 ```bash
 npm run dev          # in another shell
@@ -175,8 +178,10 @@ Tokens under `src/styles/tokens/` mirror the project's `tokens/*.css` one-to-one
    matchmaker, friends and debriefing all read live.
 8. ~~Passworded battles.~~ done — a locked battle prompts before joining.
 9. ~~Hosting.~~ done — `OpenBattle` with title, map, size and password.
-10. Not built: settings, downloads and Planet Wars (screens 9-11, deferred per
-    the handoff), parties, and kicking from a room you host.
+10. ~~Parties, room votes, host controls (kick, add AI), spectating, ignores,
+    rejoin offers and reconnect.~~ done.
+11. Not built: settings, downloads and Planet Wars — screens 9-11, deferred per
+    the handoff.
 
 ## Launching a game
 

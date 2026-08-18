@@ -44,10 +44,16 @@ interface LobbyState {
   /** Messages seen but not yet handled - useful while wiring the remaining screens. */
   unhandled: Record<string, number>;
 
+  /** How many reconnects we have tried since the last good connection. */
+  reconnect: number;
+
   setConnection: (c: ConnectionState) => void;
+  setReconnect: (n: number) => void;
   applyRelayStatus: (s: RelayStatus) => void;
   applyMessage: (m: Message) => void;
   applyBatch: (ms: Message[]) => void;
+  /** Forget who is online and what is open, keeping the session. */
+  resetDirectory: () => void;
   reset: () => void;
 }
 
@@ -57,6 +63,7 @@ const EMPTY = {
   channels: {} as Record<string, { name: string; users: string[] }>,
   chat: [] as ChatLine[],
   unhandled: {} as Record<string, number>,
+  reconnect: 0,
 };
 
 const MAX_CHAT = 500;
@@ -66,6 +73,7 @@ export const useLobby = create<LobbyState>((set, get) => ({
   ...EMPTY,
 
   setConnection: c => set({ connection: c }),
+  setReconnect: n => set({ reconnect: n }),
 
   applyRelayStatus: s => {
     if (s.kind === "connecting") set({ connection: { kind: "connecting" } });
@@ -186,6 +194,11 @@ export const useLobby = create<LobbyState>((set, get) => ({
 
     return { ...patch, users, battles, channels, chat, unhandled };
   }),
+
+  /* A reconnect replays the whole directory, so the old one has to go first -
+     otherwise battles that closed while we were away never disappear. Chat
+     scrollback is deliberately kept: it is the one thing a player would lose. */
+  resetDirectory: () => set({ users: {}, battles: {}, channels: {} }),
 
   reset: () => set({ connection: { kind: "idle" }, welcome: undefined, me: undefined,
     sessionToken: undefined, ...EMPTY }),

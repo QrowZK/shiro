@@ -170,3 +170,64 @@ test("a flag option renders bare, a valued option keeps its value", () => {
 test("no header means no room, rather than a half-rendered one", () => {
   assert.equal(roomModel(undefined, {}, {}, {}, {}), null);
 });
+
+// ----------------------------------------------------------------- polls ---
+
+test("a poll is replaced on every vote, not merged", () => {
+  fresh();
+  useRoom.getState().applyMessage(JOINED);
+  useRoom.getState().applyMessage(msg("BattlePoll", {
+    Topic: "Change map?", VotesToWin: 3, YesNoVote: true, MapSelection: false, NotifyPoll: true,
+    Options: [{ Id: 1, Name: "yes", Votes: 1 }],
+  }));
+  useRoom.getState().applyMessage(msg("BattlePoll", {
+    Topic: "Change map?", VotesToWin: 3, YesNoVote: true, MapSelection: false, NotifyPoll: true,
+    Options: [{ Id: 1, Name: "yes", Votes: 2 }],
+  }));
+  assert.equal(useRoom.getState().poll!.Options![0].Votes, 2);
+});
+
+test("an outcome closes the poll and stays until the next one", () => {
+  fresh();
+  useRoom.getState().applyMessage(JOINED);
+  useRoom.getState().applyMessage(msg("BattlePoll", {
+    Topic: "Change map?", VotesToWin: 3, YesNoVote: true, MapSelection: false, NotifyPoll: true,
+  }));
+  useRoom.getState().applyMessage(msg("BattlePollOutcome", {
+    Topic: "Change map?", Message: "Map changed", Success: true, YesNoVote: true, MapSelection: false,
+  }));
+  assert.equal(useRoom.getState().poll, undefined);
+  assert.equal(useRoom.getState().pollOutcome!.Message, "Map changed");
+
+  useRoom.getState().applyMessage(msg("BattlePoll", {
+    Topic: "Kick someone?", VotesToWin: 3, YesNoVote: true, MapSelection: false, NotifyPoll: true,
+  }));
+  assert.equal(useRoom.getState().pollOutcome, undefined, "a new vote clears the old result");
+});
+
+test("joining a different room drops the previous room's vote", () => {
+  fresh();
+  useRoom.getState().applyMessage(JOINED);
+  useRoom.getState().applyMessage(msg("BattlePoll", {
+    Topic: "Change map?", VotesToWin: 3, YesNoVote: true, MapSelection: false, NotifyPoll: true,
+  }));
+  useRoom.getState().applyMessage(msg("JoinBattleSuccess", { BattleID: 9, Players: [] }));
+  assert.equal(useRoom.getState().poll, undefined);
+});
+
+test("a join asked to spectate defers the status until the room exists", () => {
+  fresh();
+  useRoom.getState().setMe("Qrow");
+  useRoom.getState().join(7, undefined, true);
+  assert.equal(useRoom.getState().pendingSpectate, true,
+    "the status cannot be set before the server has put us in the room");
+  useRoom.getState().applyMessage(JOINED);
+  assert.equal(useRoom.getState().pendingSpectate, false, "and is spent on arrival");
+});
+
+test("an ordinary join does not silently spectate", () => {
+  fresh();
+  useRoom.getState().setMe("Qrow");
+  useRoom.getState().join(7);
+  assert.equal(useRoom.getState().pendingSpectate, false);
+});

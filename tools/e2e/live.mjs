@@ -52,10 +52,19 @@ async function launch() {
 
 const browser = await launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+process.on("uncaughtException", err => {
+  console.log("\nthe run stopped: " + err.message.split("\n")[0]);
+  if (errors.length) {
+    console.log("page errors:");
+    for (const e of errors) console.log("  " + e);
+  }
+  process.exit(1);
+});
+
 page.on("pageerror", e => errors.push("PAGEERROR: " + e.message));
 page.on("console", m => {
   const t = m.text();
-  if (m.type() === "error" && !/Failed to load resource/.test(t)) errors.push("CONSOLE: " + t);
+  if (m.type() === "error" && !/Failed to load resource/.test(t)) errors.push("CONSOLE: " + t.slice(0, 300));
 });
 
 await page.addInitScript({ path: join(HERE, "fake-server.js") });
@@ -65,6 +74,10 @@ const text = () => page.locator("body").innerText();
 const shot = async name => { if (SHOTS) await page.screenshot({ path: join(SHOTS, name + ".png") }); };
 const sent = () => page.evaluate(() => window.__ZKS.sent);
 const sentAny = async re => (await sent()).some(l => re.test(l));
+/* Assertions that look at the whole log can pass on something an earlier step
+   sent. `mark()` scopes them to one step. */
+const mark = async () => (await sent()).length;
+const sentSince = async (from, re) => (await sent()).slice(from).some(l => re.test(l));
 const clickText = async (re, opts) => page.getByRole("button", { name: re }).first().click(opts);
 /* Dialogs render after the screen, so the last match is the one on top - the
    battle list keeps its own "Join" buttons alive behind the scrim. */
@@ -206,6 +219,94 @@ if (launched) {
     JSON.stringify(req));
 }
 check("the room reports the game as running", await waitFor("running", () => seeing(/Game running/)));
+
+console.log("spectating and ignoring");
+await clickText(/^Leave$/);
+check("back on the battle list", await waitFor("list", () => seeing(/Host a battle/)));
+const specMark = await mark();
+await page.getByText(/^Teams 8v8 - all welcome$/).first().click();
+await page.getByRole("button", { name: /Spectate/ }).first().click();
+check("spectating joins first, then sets the status",
+  await waitFor("spec2", async () => (await sentSince(specMark, /^JoinBattle \{"BattleID":11/))
+    && (await sentSince(specMark, /^UpdateUserBattleStatus \{.*"IsSpectator":true/))));
+/* Wait for the roster: JoinBattleSuccess is a snapshot, so anything pushed
+   before it lands is wiped by it. */
+check("and lands in that room", await waitFor("room11", () => seeing(/CAI-Brutal/)));
+
+await page.evaluate(() => window.__ZKS.push('IgnoreList {"Ignores":["hexed"]}'));
+check("an ignored player's chat disappears", await waitFor("ign", async () => {
+  const room = (await text()).split("SPECTATORS")[0];
+  return !/^hi$/m.test(room);
+}));
+
+console.log("polls");
+await page.evaluate(() => window.__ZKS.push('BattlePoll ' + JSON.stringify({
+  Topic: "Change map to TartarusV7?", VotesToWin: 3, YesNoVote: true,
+  MapSelection: false, NotifyPoll: true })));
+check("an open vote is shown", await waitFor("poll", () => seeing(/Change map to TartarusV7/)));
+if (SHOTS) await shot("live-poll");
+await clickText(/^Yes$/);
+check("voting goes to battle chat, which is how autohosts hear it",
+  await waitFor("vote", () => sentAny(/^Say \{.*"Place":1.*"Text":"!y"/)));
+await page.evaluate(() => window.__ZKS.push('BattlePollOutcome ' + JSON.stringify({
+  Topic: "Change map", Message: "Map changed to TartarusV7", Success: true,
+  YesNoVote: true, MapSelection: false })));
+check("the outcome replaces the open vote", await waitFor("outcome", () => seeing(/Map changed to TartarusV7/)));
+
+console.log("host controls");
+await clickText(/Add AI/);
+check("adding an AI names us as the owner",
+  await waitFor("bot", () => sentAny(/^UpdateBotStatus \{.*"AiLib":"CAI".*"Owner":"Qrow"/)));
+await page.getByRole("button", { name: /Remove hexed/ }).first().click();
+check("kicking sends the battle and the name",
+  await waitFor("kick", () => sentAny(/^KickFromBattle \{.*"Name":"hexed"/)));
+/* hexed founded this battle, so the name stays in the header no matter what -
+   the roster is the thing that has to change. */
+check("the roster reflects the kick", await waitFor("gone", async () =>
+  (await page.getByRole("button", { name: /Remove hexed/ }).count()) === 0));
+
+console.log("party");
+await page.locator("nav button").nth(2).click();
+const inviteBox = page.getByPlaceholder("Invite by name");
+await inviteBox.fill("hexed");
+await inviteBox.press("Enter");
+check("the invite goes out", await waitFor("inv", () => sentAny(/^InviteToParty \{.*"hexed"/)));
+check("the party appears once the server confirms it",
+  await waitFor("party", () => seeing(/PARTY/) && seeing(/hexed/)));
+await page.evaluate(() => window.__ZKS.push('OnPartyInvite ' + JSON.stringify({
+  PartyID: 8, UserNames: ["lorelei", "Qrow"], TimeoutSeconds: 20 })));
+check("an incoming invite interrupts", await waitFor("pinv", () => seeing(/want you in their party/)));
+await clickDialog(/Join party/);
+check("the response carries the party id",
+  await waitFor("presp", () => sentAny(/^PartyInviteResponse \{"PartyID":8,"Accepted":true\}/)));
+
+console.log("rejoin offer");
+await page.evaluate(() => window.__ZKS.push('RejoinOption {"BattleID":13}'));
+check("a running game we were in is offered back",
+  await waitFor("rejoin", () => seeing(/still in a game/)));
+await clickDialog(/^Rejoin$/);
+check("taking it asks for connect details",
+  await waitFor("rj", () => sentAny(/^RequestConnectSpring \{"BattleID":13/)));
+
+console.log("reconnect");
+await page.locator("nav button").nth(0).click();
+// The kick test left us in a room; the battle list is behind it.
+const leave = page.getByRole("button", { name: /^Leave$/ });
+if (await leave.count()) await leave.first().click();
+check("back on the battle list before dropping the socket",
+  await waitFor("battles", () => seeing(/Host a battle/)));
+/* The title appears in the row and again in the detail panel, so the count is
+   two to begin with; what matters is that a replay does not add to it. */
+const rowsBefore = await page.getByText(/^Teams 8v8 - all welcome$/).count();
+await page.evaluate(() => window.__ZKS.drop("reset by peer"));
+check("a dropped socket is retried without asking",
+  await waitFor("dropped", () => seeing(/Reconnecting - attempt 1/)));
+check("and comes back on its own", await waitFor("recon", () => seeing(/Connected/), 15000));
+check("a reconnect leaves the room we are no longer in",
+  await waitFor("outofroom", () => seeing(/Host a battle/)));
+const rowsAfter = await page.getByText(/^Teams 8v8 - all welcome$/).count();
+check("and the directory is replayed, not doubled", rowsAfter === rowsBefore,
+  `before ${rowsBefore}, after ${rowsAfter}`);
 
 console.log("debriefing");
 await page.evaluate(() => window.__ZKS.push(JSON.stringify({

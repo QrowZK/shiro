@@ -29,6 +29,8 @@
     emitGame: status => emit("zks://game", status),
     /** Set by a test to intercept a command instead of the default reply. */
     onSend: null,
+    /** Pull the socket out from under the client. */
+    drop: reason => emit("zks://status", { kind: "disconnected", reason: reason || "reset by peer" }),
   };
   window.__ZKS = state;
 
@@ -117,8 +119,10 @@
           joined(99);
         });
         break;
+      /* LeaveBattle gets no reply: the real server tells the *room* you left
+         by re-sending User records, and says nothing to the leaver. Removing
+         the battle here would be wrong - it is still open without us. */
       case "LeaveBattle":
-        soon(() => state.push(line("BattleRemoved", { BattleID: data.BattleID })));
         break;
       case "MatchMakerQueueRequest":
         soon(() => state.push(line("MatchMakerStatus", { JoinedQueues: data.Queues,
@@ -133,6 +137,28 @@
         soon(() => state.push(line("ConnectSpring", { Engine: "2025.06.21", Game: "Zero-K v1.14.8.0",
           Ip: "128.0.0.1", Port: 8452, Map: "TartarusV7", ScriptPassword: "sp-9f2c", Mode: 6,
           Title: "running match", IsSpectator: false })));
+        break;
+      case "InviteToParty":
+        // The invitee accepts instantly; both sides hear the same status.
+        soon(() => state.push(line("OnPartyStatus", { PartyID: 7,
+          UserNames: ["Qrow", data.UserName] })));
+        break;
+      case "PartyInviteResponse":
+        soon(() => state.push(line("OnPartyStatus", {
+          PartyID: data.PartyID, UserNames: data.Accepted ? ["Qrow", "hexed"] : [] })));
+        break;
+      case "LeaveParty":
+        soon(() => state.push(line("OnPartyStatus", { PartyID: data.PartyID, UserNames: [] })));
+        break;
+      case "KickFromBattle":
+        soon(() => state.push(line("JoinBattleSuccess", { BattleID: data.BattleID,
+          Options: { commshare: "1", multiplier: "2.0" },
+          Players: [{ Name: "Qrow", AllyNumber: 0 }],
+          Bots: [{ Name: "CAI-Brutal", AllyNumber: 1, AiLib: "CAI", Owner: "hexed" }] })));
+        break;
+      case "UpdateBotStatus":
+        soon(() => state.push(line("UpdateBotStatus", { Name: data.Name || "CAI-2",
+          AiLib: data.AiLib, AllyNumber: data.AllyNumber, Owner: data.Owner })));
         break;
       case "UserProfile":
         soon(() => state.push(line("UserProfile", { Name: data.Name, Level: 33, Rank: 3,

@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import type * as T from "../protocol/types.ts";
-import { battleList, userToChip, chatLines, shortTime, describeFailure } from "./adapters.ts";
+import { battleList, userToChip, chatLines, shortTime, describeFailure, statusBarKind } from "./adapters.ts";
 
 const USERS: Record<string, T.User> = {
   hexed: { Name: "hexed", Clan: "ZKF", Country: "US", EffectiveElo: 1790.6, Level: 33 } as T.User,
@@ -73,4 +73,12 @@ test("login failures say what the official client says", () => {
   assert.match(describeFailure({ kind: "rejected", code: 4, message: "cheating" }), /^Banned: cheating$/);
   assert.match(describeFailure({ kind: "rejected", code: 9, message: "" }), /server is full/);
   assert.match(describeFailure({ kind: "disconnected", reason: "timeout" }), /timeout/);
+});
+
+test("a drop with a retry pending is reconnecting, not offline", () => {
+  const dropped = { kind: "disconnected" as const, reason: "reset by peer" };
+  assert.equal(statusBarKind(dropped, 0), "offline", "nothing pending is genuinely offline");
+  assert.equal(statusBarKind(dropped, 1), "reconnecting", "something is being done about it");
+  assert.equal(statusBarKind({ kind: "online" }, 3), "online");
+  assert.equal(statusBarKind({ kind: "loggingIn" }), "reconnecting");
 });

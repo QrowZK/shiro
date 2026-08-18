@@ -7,7 +7,7 @@ import { Tabs, ChatLine, Input, Button, UserChip, EmptyState, IconButton } from 
    in data.js: without `onSend` the composer echoes locally so the click-through
    still reads as a conversation. */
 export default function ChatScreen({ channels, users, messages, active, onTab, onSend,
-  onClose, onJoin, topic }) {
+  onClose, onJoin, onUser, topic }) {
   const [tab, setTab] = React.useState(active || (channels[0] && channels[0].id));
   const [msg, setMsg] = React.useState("");
   const [echo, setEcho] = React.useState([]);
@@ -72,8 +72,10 @@ export default function ChatScreen({ channels, users, messages, active, onTab, o
         </div>
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "var(--sp-2) 0" }}>
           {users.map(u => (
-            <div key={u.name} style={{ height: "var(--row-compact)", display: "flex", alignItems: "center",
-              padding: "0 var(--sp-4)" }}>
+            <div key={u.name} onClick={onUser ? () => onUser(u.name) : undefined}
+              title={onUser ? "Message " + u.name : undefined}
+              style={{ height: "var(--row-compact)", display: "flex", alignItems: "center",
+                padding: "0 var(--sp-4)", cursor: onUser ? "pointer" : "default" }}>
               <UserChip {...u} size="sm" style={{ minWidth: 0 }} />
             </div>
           ))}
