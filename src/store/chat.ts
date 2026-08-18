@@ -368,7 +368,12 @@ export const useChat = create<ChatState>((set, get) => ({
         }
       }
 
-      return { rooms, order, me, lastError, nextId };
+      /* Land on the first room that appears. Without this the chat screen has
+         tabs and no selection until you click one, which reads as a channel
+         you joined but that has no backlog. Later rooms do not steal focus. */
+      const active = state.active && rooms[state.active] ? state.active : order[0];
+
+      return { rooms, order, me, lastError, nextId, active };
     });
 
     for (const channel of autoJoin) get().join(channel);

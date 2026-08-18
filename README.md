@@ -20,7 +20,8 @@ Other scripts:
 
 | Command | What it does |
 |---|---|
-| `npm test` | Protocol wire + merge-semantics tests (Node's runner, no extra deps) |
+| `npm test` | Unit tests - protocol, stores, adapters (Node's runner, no extra deps) |
+| `npm run test:e2e` | Drives every live code path against a fake server in a real browser |
 | `npm run gen:protocol` | Regenerate `src/protocol/` from upstream C# |
 | `npm run tauri:dev` | Run inside the desktop shell — **blocked, see below** |
 | `npm run tauri:build` | Produce the NSIS installer — **blocked, see below** |
@@ -88,11 +89,39 @@ handoff.
 | Session + login handshake | `src/net/session.ts` | live |
 | Normalized store | `src/store/lobby.ts` | live - drives the status bar and battle list |
 | Battle room membership | `src/store/room.ts` | live - roster, teams, spectators, bots, mod options |
+| Chat | `src/store/chat.ts` | live - channels, DMs, battle chat, unread and mention state |
+| Matchmaker | `src/store/matchmaker.ts` | live - queues, joining, the ready check |
+| Friends | `src/store/friends.ts` | live - list, add, remove, ignore, profiles |
+| Match history | `src/store/history.ts` | live - debriefings, ratings, awards |
 | Engine launch | `src/store/game.ts`, `src-tauri/src/launch.rs` | built; **not yet run against a real engine** |
 | Install detection | `src-tauri/src/install.rs` | built; **not yet run against a real install** |
 | Rust TCP relay | `src-tauri/src/relay.rs` | builds clean |
 
-`npm test` runs 37 TypeScript tests; `cargo test` in `src-tauri/` runs 13 Rust tests.
+`npm test` runs 59 TypeScript tests; `cargo test` in `src-tauri/` runs 13 Rust tests.
+
+## Testing the live paths
+
+Most of the client only runs inside Tauri, which makes the interesting half
+invisible to a browser and to unit tests. `npm run test:e2e` closes that gap: it
+replaces `window.__TAURI_INTERNALS__` with [a fake
+server](tools/e2e/fake-server.js) and drives the real UI through login, joining,
+hosting, a passworded join, chat, the matchmaker ready check, friends, launching
+an engine and a debriefing — 39 assertions against the same code the desktop
+build runs.
+
+```bash
+npm run dev          # in another shell
+npm run test:e2e
+```
+
+It drives a browser you already have rather than downloading one — the app ships
+against WebView2, so any machine that can build it has Edge. Override with
+`CHROMIUM_PATH=/path/to/chrome`.
+
+The fake server is not a mock of our own code: it speaks the wire protocol, so
+the assertions are about what we *send* (`OpenBattle` carries the engine from
+`Welcome`; a locked battle sends its password with the join) rather than about
+which function was called.
 
 **The desktop app builds and packages.** `npm run tauri:build` produces:
 
@@ -108,8 +137,8 @@ Login against the live server is **verified working** out-of-band: account `Qrow
 `ResultCode: 0`, session token issued. The auth format is confirmed as base64 of the
 raw MD5 digest bytes.
 
-Login, the status bar, the battle list and the battle room read from the live
-store. Chat, matchmaker, friends and debriefing still render `src/data.js`.
+Every screen reads from the live store inside Tauri, and from `src/data.js` in a
+plain browser tab, so the click-through still works with no server.
 
 ## Layout
 
@@ -142,11 +171,12 @@ Tokens under `src/styles/tokens/` mirror the project's `tokens/*.css` one-to-one
    bots, mod options, room chat, team/spectate changes.
 6. ~~`RequestConnectSpring` → write `script.txt` → spawn the engine.~~ built —
    see below. **Needs one run on a machine with Zero-K installed.**
-7. Swap the remaining demo screens for the live store: chat (the store slice in
-   `src/store/chat.ts` is already written and tested, the screen is not wired to
-   it), matchmaker, friends, debriefing (`src/store/history.ts`, same situation).
-8. Passworded battles: `JoinBattle` is sent without a password, so joining a
-   locked room fails. Needs a prompt.
+7. ~~Swap the remaining demo screens for the live store.~~ done — chat,
+   matchmaker, friends and debriefing all read live.
+8. ~~Passworded battles.~~ done — a locked battle prompts before joining.
+9. ~~Hosting.~~ done — `OpenBattle` with title, map, size and password.
+10. Not built: settings, downloads and Planet Wars (screens 9-11, deferred per
+    the handoff), parties, and kicking from a room you host.
 
 ## Launching a game
 

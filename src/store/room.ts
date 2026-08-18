@@ -28,6 +28,17 @@ import type * as T from "../protocol/types.ts";
 import { mergePatch } from "../protocol/wire.ts";
 import { registerSlice } from "./slices.ts";
 
+/** What the host dialog collects. Engine and game come from `Welcome`, so the
+ *  room we open runs what everyone else is running. */
+export interface HostOptions {
+  title: string;
+  map: string;
+  maxPlayers: number;
+  password?: string;
+  engine?: string;
+  game?: string;
+}
+
 export interface RoomState {
   /** The battle we are in, or undefined when we are not in one. */
   battleID?: number;
@@ -49,6 +60,8 @@ export interface RoomState {
   join: (battleID: number, password?: string) => void;
   /** Leave the current room. There is no acknowledgement to wait for. */
   leave: () => void;
+  /** Open a battle of our own. Success arrives as `JoinBattleSuccess`. */
+  host: (opts: HostOptions) => void;
   /** We left, were kicked, or the room closed. */
   clear: () => void;
   reset: () => void;
@@ -157,6 +170,21 @@ export const useRoom = create<RoomState>((set, get) => ({
   join: (battleID, password) => {
     void import("../net/session.ts").then(({ send }) =>
       send("JoinBattle", { BattleID: battleID, Password: password }));
+  },
+
+  host: opts => {
+    void import("../net/session.ts").then(({ send }) => send("OpenBattle", {
+      Header: {
+        Title: opts.title,
+        Map: opts.map,
+        MaxPlayers: opts.maxPlayers,
+        // Omitted rather than sent empty: the server treats an empty string as
+        // a password and then refuses your own join.
+        Password: opts.password ? opts.password : undefined,
+        Engine: opts.engine,
+        Game: opts.game,
+      },
+    }));
   },
 
   leave: () => {

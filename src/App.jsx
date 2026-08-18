@@ -11,20 +11,28 @@ import ChatScreen from "./screens/ChatScreen.jsx";
 import QueueScreen from "./screens/QueueScreen.jsx";
 import DebriefingScreen from "./screens/DebriefingScreen.jsx";
 import FriendsScreen from "./screens/FriendsScreen.jsx";
+import HostBattleDialog from "./screens/HostBattleDialog.jsx";
+import JoinPasswordDialog from "./screens/JoinPasswordDialog.jsx";
 
 import { inTauri } from "./net/connection";
 import { login, teardown, send, say } from "./net/session";
 import { useLobby } from "./store/lobby";
 import { useRoom } from "./store/room";
 import { useGame } from "./store/game";
-import { useChat, BATTLE_ROOM } from "./store/chat";
-import { battleList, statusBarKind, describeFailure, roomModel } from "./store/adapters";
+import { useChat, BATTLE_ROOM, selectTabs } from "./store/chat";
+import { useMatchmaker, secondsLeft } from "./store/matchmaker";
+import { useFriends } from "./store/friends";
+import { useHistory, buildDebriefView } from "./store/history";
+import {
+  battleList, statusBarKind, describeFailure, roomModel, chatLines, userToChip,
+} from "./store/adapters";
 
 /* Click-through: login -> battle list -> battle room -> (launch) -> debriefing.
    The ready-check is a shell-level overlay because it interrupts any screen.
 
-   Inside Tauri the login, status bar and battle list are driven by the live
-   server. The remaining screens still render demo data - see README. */
+   Every screen has a live path and a demo path. Inside Tauri the stores drive
+   everything; in a plain browser tab the same components render src/data.js so
+   the click-through still works without a server. */
 export default function App() {
   const live = inTauri();
 
@@ -35,6 +43,10 @@ export default function App() {
   const [queued, setQueued] = React.useState(false);
   const [check, setCheck] = React.useState(0);
   const [launching, setLaunching] = React.useState(false);
+  const [hosting, setHosting] = React.useState(false);
+  const [locked, setLocked] = React.useState(null);
+  const [install, setInstall] = React.useState(null);
+  const [profileOf, setProfileOf] = React.useState(null);
 
   const connection = useLobby(s => s.connection);
   const welcome = useLobby(s => s.welcome);
@@ -48,9 +60,27 @@ export default function App() {
   const roomPlayers = useRoom(s => s.players);
   const roomBots = useRoom(s => s.bots);
   const roomOptions = useRoom(s => s.modOptions);
-  const roomChat = useChat(s => (s.rooms[BATTLE_ROOM] ? s.rooms[BATTLE_ROOM].messages : null));
+
+  const chatRooms = useChat(s => s.rooms);
+  const chatOrder = useChat(s => s.order);
+  const chatActive = useChat(s => s.active);
+
   const phase = useGame(s => s.phase);
-  const [install, setInstall] = React.useState(null);
+
+  const mmQueues = useMatchmaker(s => s.queues);
+  const mmJoined = useMatchmaker(s => s.joined);
+  const mmCounts = useMatchmaker(s => s.counts);
+  const mmIngame = useMatchmaker(s => s.ingame);
+  const mmJoinedTime = useMatchmaker(s => s.joinedTime);
+  const mmBanned = useMatchmaker(s => s.bannedSeconds);
+  const mmCheck = useMatchmaker(s => s.check);
+
+  const friendNames = useFriends(s => s.friends);
+  const records = useHistory(s => s.records);
+  const recordIndex = useHistory(s => s.index);
+  const profiles = useHistory(s => s.profiles);
+
+  React.useEffect(() => () => { if (live) void teardown(); }, [live]);
 
   /* Where Zero-K lives. Asked once: it is a disk scan, and the answer does not
      change while the lobby is open. */
@@ -65,13 +95,27 @@ export default function App() {
     return () => { cancelled = true; };
   }, [live]);
 
-  React.useEffect(() => () => { if (live) void teardown(); }, [live]);
-
+  /* The demo ready-check counts itself down; the live one runs against the
+     deadline the server gave us. */
   React.useEffect(() => {
     if (!check) return;
     const t = setInterval(() => setCheck(c => (c > 1 ? c - 1 : 0)), 1000);
     return () => clearInterval(t);
   }, [check]);
+
+  const [, forceTick] = React.useReducer(n => n + 1, 0);
+  React.useEffect(() => {
+    if (!mmCheck) return;
+    const t = setInterval(forceTick, 500);
+    return () => clearInterval(t);
+  }, [mmCheck]);
+
+  /* A finished match is the one thing that should pull you out of whatever you
+     were doing: the debriefing is the point of having played. */
+  const newest = records[0];
+  React.useEffect(() => {
+    if (newest) setView("debrief");
+  }, [newest && newest.serverBattleId]);
 
   const handleLogin = React.useCallback(async (name, password) => {
     if (!live) {
@@ -108,7 +152,6 @@ export default function App() {
   }
 
   const battles = live ? battleList(liveBattles) : D.battles;
-
   const liveRoom = live && liveRoomID != null
     ? roomModel(liveBattles[liveRoomID], roomPlayers, roomBots, liveUsers, roomOptions)
     : null;
@@ -126,38 +169,149 @@ export default function App() {
     if (me) void send("UpdateUserBattleStatus", { Name: me, ...patch });
   };
 
+  const joinBattle = b => {
+    if (!live) { setRoom(b); return; }
+    // A locked room needs its password before the join, not after a refusal.
+    if (b.locked) setLocked(b);
+    else useRoom.getState().join(b.id);
+  };
+
+  const openDm = name => {
+    useChat.getState().openDm(name);
+    setView("chat");
+  };
+
+  // ---------------------------------------------------------------- chat ---
+  const battleChat = chatRooms[BATTLE_ROOM];
+  const chatTabs = live
+    ? selectTabs({ rooms: chatRooms, order: chatOrder })
+    : D.channels;
+  const activeRoom = chatRooms[chatActive];
+  const chatUsers = live
+    ? (activeRoom ? activeRoom.users.map(n => userToChip(liveUsers[n], n)) : [])
+    : D.channelUsers;
+
+  // ----------------------------------------------------------- matchmaker ---
+  const queueRows = mmQueues.map(q => ({
+    id: q.Name,
+    label: q.Description || q.Name,
+    waiting: mmCounts[q.Name] ?? 0,
+    ingame: mmIngame[q.Name] ?? 0,
+  }));
+
+  // ---------------------------------------------------------------- view ---
   let body;
   // Being in a room does not pin you to it - the sidebar still navigates.
-  if (liveRoom && view === "battles") body = <BattleRoomScreen room={liveRoom} chat={roomChat || []}
-    onLeave={() => useRoom.getState().leave()}
-    onSay={text => void say(text, 1)}
-    onTeam={ally => setBattleStatus({ AllyNumber: ally, IsSpectator: false })}
-    onSpectate={() => setBattleStatus({ IsSpectator: true })}
-    sync={{ install, engine: welcome?.Engine }}
-    phase={phase}
-    onStart={startRoom} />;
+  if (liveRoom && view === "battles") body = (
+    <BattleRoomScreen room={liveRoom}
+      chat={battleChat ? chatLines(battleChat.messages, liveUsers) : []}
+      onLeave={() => useRoom.getState().leave()}
+      onSay={text => void say(text, 1)}
+      onTeam={ally => setBattleStatus({ AllyNumber: ally, IsSpectator: false })}
+      onSpectate={() => setBattleStatus({ IsSpectator: true })}
+      sync={{ install, engine: welcome?.Engine }}
+      phase={phase}
+      onStart={startRoom} />
+  );
   else if (room) body = <BattleRoomScreen room={D.room} onLeave={() => setRoom(null)}
     onStart={() => { setLaunching(true); setTimeout(() => { setLaunching(false); setRoom(null); setView("debrief"); }, 1600); }} />;
   else if (view === "battles") body = <BattleListScreen battles={battles} empty={empty}
     occupants={live ? occupantsOf : null}
     onToggleEmpty={e => setEmpty(e.target.checked)}
-    onJoin={b => (live ? useRoom.getState().join(b.id) : setRoom(b))} />;
-  else if (view === "chat") body = <ChatScreen channels={D.channels} users={D.channelUsers} messages={D.channelChat} />;
-  else if (view === "queue") body = <QueueScreen queued={queued} onQueue={setQueued} onFake={() => setCheck(9)} />;
-  else if (view === "friends") body = <FriendsScreen users={D.channelUsers} />;
-  else body = <DebriefingScreen d={D.debrief} onBack={() => setView("battles")} />;
+    onHost={() => setHosting(true)}
+    onJoin={joinBattle} />;
+  else if (view === "chat") body = (
+    <ChatScreen
+      channels={chatTabs}
+      users={chatUsers}
+      messages={live
+        ? (activeRoom ? chatLines(activeRoom.messages, liveUsers) : [])
+        : D.channelChat}
+      active={live ? chatActive : undefined}
+      topic={live && activeRoom && activeRoom.topic ? activeRoom.topic.Text : undefined}
+      onTab={live ? id => useChat.getState().setActive(id) : undefined}
+      onSend={live ? text => useChat.getState().say(chatActive, text) : undefined}
+      onClose={live ? id => useChat.getState().close(id) : undefined}
+      onJoin={live ? name => useChat.getState().join(name) : undefined} />
+  );
+  else if (view === "queue") body = (
+    <QueueScreen
+      queued={queued}
+      queues={live ? queueRows : undefined}
+      joined={live ? mmJoined : undefined}
+      joinedTime={live ? mmJoinedTime : undefined}
+      bannedSeconds={live ? mmBanned : undefined}
+      elo={live && me && liveUsers[me] ? Math.round(liveUsers[me].EffectiveMmElo) : undefined}
+      party={live ? undefined : D.channelUsers.slice(0, 2)}
+      onQueue={live
+        ? (on, picked) => useMatchmaker.getState().setQueues(on ? picked : [])
+        : on => setQueued(on)}
+      onFake={live ? undefined : () => setCheck(9)} />
+  );
+  else if (view === "friends") body = (
+    <FriendsScreen
+      users={live ? friendNames.map(n => userToChip(liveUsers[n], n)) : D.channelUsers}
+      profile={live && profileOf && profiles[profileOf] ? {
+        level: profiles[profileOf].Level,
+        rank: profiles[profileOf].Rank,
+        elo: Math.round(profiles[profileOf].EffectiveElo),
+        mmElo: Math.round(profiles[profileOf].EffectiveMmElo),
+        pwElo: Math.round(profiles[profileOf].EffectivePwElo),
+        badges: profiles[profileOf].Badges,
+      } : undefined}
+      onSelect={live ? name => {
+        setProfileOf(name);
+        if (!profiles[name]) useFriends.getState().requestProfile(name);
+      } : undefined}
+      onMessage={live ? openDm : undefined}
+      onIgnore={live ? name => useFriends.getState().ignore(name) : undefined}
+      onAdd={live ? name => useFriends.getState().add(name) : undefined}
+      onRemove={live ? name => useFriends.getState().remove(name) : undefined} />
+  );
+  else body = (
+    <DebriefingScreen
+      d={live
+        ? (records[recordIndex]
+          ? buildDebriefView(records[recordIndex], me, n => liveUsers[n], profiles)
+          : null)
+        : D.debrief}
+      onBack={() => setView("battles")} />
+  );
 
+  const mmSeconds = secondsLeft(mmCheck, Date.now());
   const overlay = (
     <>
-      <Dialog open={check > 0} title="Ready check" urgent width={380}
-        footer={<><Button variant="ghost" onClick={() => { setCheck(0); setQueued(false); }}>Decline</Button>
-          <Button variant="primary" onClick={() => { setCheck(0); setQueued(false); setRoom(D.room); }}>Ready</Button></>}>
+      <Dialog open={check > 0 || Boolean(mmCheck)} title="Ready check" urgent width={380}
+        footer={mmCheck
+          ? <>
+            <Button variant="ghost" onClick={() => useMatchmaker.getState().respond(false)}>Decline</Button>
+            <Button variant="primary" disabled={mmCheck.accepted}
+              onClick={() => useMatchmaker.getState().respond(true)}>
+              {mmCheck.accepted ? "Waiting for the others" : "Ready"}
+            </Button>
+          </>
+          : <>
+            <Button variant="ghost" onClick={() => { setCheck(0); setQueued(false); }}>Decline</Button>
+            <Button variant="primary" onClick={() => { setCheck(0); setQueued(false); setRoom(D.room); }}>Ready</Button>
+          </>}>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 16 }}>
           <span style={{ font: "var(--text-title)", color: "var(--text-hi)" }}>Match found. Ready?</span>
-          <span style={{ font: "var(--text-num-lg)", color: "var(--text-hi)", fontVariantNumeric: "tabular-nums" }}>{check}s</span>
+          <span style={{ font: "var(--text-num-lg)", color: "var(--text-hi)", fontVariantNumeric: "tabular-nums" }}>
+            {mmCheck ? mmSeconds : check}s
+          </span>
         </div>
-        <div style={{ marginTop: 14 }}><Meter value={check} max={9} height={2} /></div>
+        <div style={{ marginTop: 14 }}>
+          <Meter value={mmCheck ? mmSeconds : check} max={mmCheck ? 30 : 9} height={2} />
+        </div>
+        {mmCheck && mmCheck.battleSize ? (
+          <div style={{ marginTop: 12, font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
+            color: mmCheck.likelyToPlay ? "var(--text-low)" : "var(--signal-warn)" }}>
+            {(mmCheck.battleReady ?? 0)} of {mmCheck.battleSize} accepted
+            {mmCheck.likelyToPlay ? "" : " - this one may not happen"}
+          </div>
+        ) : null}
       </Dialog>
+
       <Dialog open={launching || phase.kind === "launching"} title="Launching" width={360}>
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-5)" }}>
           <span style={{ font: "var(--text-ui)", color: "var(--text-body)" }}>Handing off to the engine.</span>
@@ -167,6 +321,16 @@ export default function App() {
           </span>
         </div>
       </Dialog>
+
+      <HostBattleDialog open={hosting} onClose={() => setHosting(false)}
+        defaultTitle={me ? me + "'s battle" : "New battle"}
+        maps={[...new Set(battles.map(b => b.map).filter(Boolean))].sort()}
+        onHost={opts => (live
+          ? useRoom.getState().host({ ...opts, engine: welcome?.Engine, game: welcome?.Game })
+          : setRoom(D.room))} />
+
+      <JoinPasswordDialog battle={locked} onClose={() => setLocked(null)}
+        onJoin={password => useRoom.getState().join(locked.id, password)} />
     </>
   );
 

@@ -358,7 +358,7 @@ export interface PwAttackCharges {
 }
 
 export interface SetAccountRelation {
-  Relation?: unknown;
+  Relation: E.Relation;
   SteamID?: string;
   TargetName?: string;
 }

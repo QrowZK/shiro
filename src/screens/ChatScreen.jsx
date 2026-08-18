@@ -1,29 +1,64 @@
 import React from "react";
-import { Tabs, ChatLine, Input, Button, UserChip, EmptyState } from "../ds/shiro.js";
+import { Tabs, ChatLine, Input, Button, UserChip, EmptyState, IconButton } from "../ds/shiro.js";
 
-/* Screen 5 - channels and DMs. Tabs carry unread counts and mention (Ring) state. */
-export default function ChatScreen({ channels, users, messages }) {
-  const [tab, setTab] = React.useState(channels[0].id);
+/* Screen 5 - channels and DMs. Tabs carry unread counts and mention (Ring) state.
+
+   Driven either by the live chat store or, with no handlers, by the demo data
+   in data.js: without `onSend` the composer echoes locally so the click-through
+   still reads as a conversation. */
+export default function ChatScreen({ channels, users, messages, active, onTab, onSend,
+  onClose, onJoin, topic }) {
+  const [tab, setTab] = React.useState(active || (channels[0] && channels[0].id));
   const [msg, setMsg] = React.useState("");
-  const [lines, setLines] = React.useState(messages);
+  const [echo, setEcho] = React.useState([]);
+  const [joining, setJoining] = React.useState("");
+
+  const current = active != null ? active : tab;
+  React.useEffect(() => { setEcho([]); }, [current]);
+
+  const pick = id => { setTab(id); if (onTab) onTab(id); };
   const send = () => {
-    if (!msg.trim()) return;
-    setLines(l => [...l, { time: "21:07", user: { name: "Shadowfury", clan: "ZKF", country: "DE" }, text: msg }]);
+    const body = msg.trim();
+    if (!body) return;
     setMsg("");
+    if (onSend) onSend(body);
+    else setEcho(l => [...l, { time: "21:07", user: { name: "Shadowfury", clan: "ZKF", country: "DE" }, text: body }]);
   };
-  const isDm = (channels.find(c => c.id === tab) || {}).dm;
+  const join = () => {
+    const name = joining.trim().replace(/^#/, "");
+    if (!name || !onJoin) return;
+    onJoin(name);
+    setJoining("");
+  };
+
+  const lines = [...(messages || []), ...echo];
+  const meta = (channels || []).find(c => c.id === current) || {};
+  const label = meta.label || current || "";
+
   return (
     <div style={{ flex: 1, display: "grid", gridTemplateColumns: "minmax(0,1fr) 240px", minHeight: 0 }}>
       <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
-        <Tabs value={tab} onChange={setTab} items={channels} />
+        <div style={{ display: "flex", alignItems: "stretch", borderBottom: "1px solid var(--w-12)" }}>
+          <Tabs value={current} onChange={pick} items={channels} style={{ flex: 1, minWidth: 0, borderBottom: "none" }} />
+          {onClose && current && (
+            <IconButton icon="x" label={"Close " + label} onClick={() => onClose(current)}
+              style={{ alignSelf: "center", marginRight: "var(--sp-4)" }} />
+          )}
+        </div>
+        {topic && (
+          <div style={{ padding: "var(--sp-3) var(--sp-5)", borderBottom: "1px solid var(--w-06)",
+            font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)", color: "var(--text-low)" }}>
+            {topic}
+          </div>
+        )}
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingTop: "var(--sp-4)" }}>
-          {isDm
-            ? <EmptyState icon="message-square" title="Nothing in this conversation yet." body="Say something." />
-            : lines.map((l, i) => <ChatLine key={i} {...l} />)}
+          {lines.length === 0
+            ? <EmptyState icon="message-square" title={"Nothing in " + label + " yet."} body="Say something." />
+            : lines.map((l, i) => <ChatLine key={l.id != null ? l.id : i} {...l} />)}
         </div>
         <div style={{ display: "flex", gap: "var(--sp-4)", padding: "var(--sp-4) var(--sp-5)",
           borderTop: "1px solid var(--w-12)" }}>
-          <Input placeholder={"Message " + tab} value={msg} onChange={e => setMsg(e.target.value)}
+          <Input placeholder={"Message " + label} value={msg} onChange={e => setMsg(e.target.value)}
             onKeyDown={e => e.key === "Enter" && send()} wrapStyle={{ flex: 1 }} />
           <Button variant="quiet" onClick={send}>Send</Button>
         </div>
@@ -43,6 +78,15 @@ export default function ChatScreen({ channels, users, messages }) {
             </div>
           ))}
         </div>
+        {onJoin && (
+          <div style={{ display: "flex", gap: "var(--sp-3)", padding: "var(--sp-4)",
+            borderTop: "1px solid var(--w-06)" }}>
+            <Input placeholder="#channel" size="sm" value={joining} wrapStyle={{ flex: 1 }}
+              onChange={e => setJoining(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && join()} />
+            <Button variant="quiet" size="sm" onClick={join}>Join</Button>
+          </div>
+        )}
       </div>
     </div>
   );

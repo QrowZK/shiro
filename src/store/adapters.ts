@@ -172,7 +172,14 @@ export interface RoomModel {
   spectators: RoomPlayerModel[];
 }
 
-/** A `User` record as the design kit's chips want it. */
+/**
+ * A `User` record as the design kit's chips want it.
+ *
+ * Presence is derived, not sent: the protocol has no status field. `User` is
+ * only broadcast for people who are connected, so someone absent from the
+ * directory is offline - which is how a friend who logged off, or the author of
+ * a chat line from before we connected, renders correctly.
+ */
 export function userToChip(u: T.User | undefined, name: string): ChipModel {
   const faction = u?.Faction?.toLowerCase();
   return {
@@ -184,8 +191,66 @@ export function userToChip(u: T.User | undefined, name: string): ChipModel {
     elo: u?.EffectiveElo ? Math.round(u.EffectiveElo) : undefined,
     bot: u?.IsBot || undefined,
     admin: u?.IsAdmin || undefined,
-    presence: u?.InGameSince ? "ingame" : u?.AwaySince ? "away" : "room",
+    presence: !u ? "offline"
+      : u.InGameSince ? "ingame"
+      : u.AwaySince ? "away"
+      : u.BattleID != null ? "room"
+      : "online",
   };
+}
+
+/* ------------------------------------------------------------------ chat ---
+ * `ChatLine` spreads its `user` prop into a `UserChip`, so it wants the whole
+ * chip - clan, country, rating - not the bare name the store keeps. The store
+ * is right to keep a name: it is what the wire carries, and the chip is a
+ * snapshot that would go stale the moment the sender changed rooms. Joining
+ * the two is a render-time concern, so it happens here.
+ */
+export interface ChatLineModel {
+  id?: number;
+  time?: string;
+  text?: string;
+  user?: ChipModel;
+  emote: boolean;
+  ring: boolean;
+  system: boolean;
+}
+
+export interface StoredChatMessage {
+  id?: number;
+  time?: string;
+  user?: string;
+  text?: string;
+  emote: boolean;
+  ring: boolean;
+  system: boolean;
+}
+
+export function chatLines(
+  messages: readonly StoredChatMessage[],
+  users: Record<string, T.User>,
+): ChatLineModel[] {
+  return messages.map(m => ({
+    id: m.id,
+    time: shortTime(m.time),
+    text: m.text,
+    // A system notice has no sender, and must not get an empty chip.
+    user: m.user ? userToChip(users[m.user], m.user) : undefined,
+    emote: m.emote,
+    ring: m.ring,
+    system: m.system,
+  }));
+}
+
+/**
+ * `HH:MM` in local time. The server sends ISO-8601 UTC; a chat log stamped in
+ * another timezone is worse than no stamp at all.
+ */
+export function shortTime(iso: string | undefined): string | undefined {
+  if (!iso) return undefined;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return undefined;
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
 /**
