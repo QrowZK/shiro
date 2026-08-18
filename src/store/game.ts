@@ -24,6 +24,10 @@ import { registerSlice } from "./slices.ts";
 
 export type GamePhase =
   | { kind: "idle" }
+  /** Working out whether the game and map are even present. */
+  | { kind: "preflight"; title?: string }
+  /** Fetching what is missing before the engine is allowed to start. */
+  | { kind: "downloading"; title?: string; jobId: string; percent: number; what: string }
   | { kind: "launching"; title?: string }
   | { kind: "running"; pid: number; title?: string }
   | { kind: "failed"; reason: string };
@@ -36,6 +40,8 @@ export interface GameState {
   rejoin?: number;
   me?: string;
 
+  /** Preflight content, download what is missing, then launch. */
+  prepareAndLaunch: (c: T.ConnectSpring) => Promise<void>;
   applyBatch: (messages: Message[]) => void;
   applyMessage: (m: Message) => void;
   setMe: (name?: string) => void;
@@ -51,6 +57,37 @@ export interface GameState {
 
 /** Set once, the first time we launch; the engine outlives any one match. */
 let listening = false;
+
+/**
+ * Put the window back the way the player left it.
+ *
+ * We never minimize or resize on launch - the engine takes exclusive fullscreen
+ * and Windows hands the lobby back un-maximized on its own. So the maximized
+ * state is captured just before the spawn and restored once the engine exits.
+ * Restores the PRIOR state rather than always maximizing: someone who launched
+ * from a small window should get a small window back.
+ */
+let wasMaximized = false;
+
+async function rememberWindowState(): Promise<void> {
+  try {
+    const { isMaximized } = await import("../net/window.js");
+    wasMaximized = await isMaximized();
+  } catch {
+    wasMaximized = false;
+  }
+}
+
+async function restoreAfterGame(): Promise<void> {
+  try {
+    const { maximize, unminimize, setFocus } = await import("../net/window.js");
+    await unminimize();
+    if (wasMaximized) await maximize();
+    await setFocus();
+  } catch {
+    // A window that will not come back is not worth failing the match over.
+  }
+}
 
 export const useGame = create<GameState>((set, get) => ({
   phase: { kind: "idle" },
@@ -91,6 +128,64 @@ export const useGame = create<GameState>((set, get) => ({
       send("RequestConnectSpring", { BattleID: battleID, Password: password }));
   },
 
+  /**
+   * Acquire whatever is missing, then launch.
+   *
+   * Content has to be settled before the engine starts: an engine told to join a
+   * game whose archive it does not have sits on "waiting for connection" forever
+   * with nothing to explain why. That was the actual reported bug.
+   *
+   * Everything here degrades to a plain launch. A preflight that cannot run, a
+   * downloader that is missing, an unwritable install - none of those are worth
+   * blocking a player who probably already has the content. We only hard-stop
+   * when a download was genuinely needed and genuinely failed.
+   */
+  prepareAndLaunch: async c => {
+    const title = c.Title;
+    try {
+      const { contentPreflight } = await import("../net/content.ts");
+      const { useSettings } = await import("./settings.ts");
+      const root = useSettings.getState().installRoot;
+
+      const pre = await contentPreflight(c.Engine ?? "", c.Game, c.Map, root);
+
+      // Nothing missing, or nothing we could do about it: go.
+      if (!pre.items.length || !pre.downloader || !pre.writable) {
+        set({ phase: { kind: "launching", title } });
+        await get().launch(c);
+        return;
+      }
+
+      const { useContent } = await import("./content.ts");
+      const what = pre.items.map(i => i.name).join(", ");
+      const id = await useContent.getState().fetch(c.Engine ?? "", pre.items, root);
+
+      set({ phase: { kind: "downloading", title, jobId: id, percent: 0, what } });
+      const unsub = useContent.subscribe(s => {
+        const job = s.jobs[id];
+        const phase = get().phase;
+        if (job && phase.kind === "downloading" && phase.jobId === id) {
+          set({ phase: { ...phase, percent: job.percent } });
+        }
+      });
+
+      const job = await useContent.getState().settled(id);
+      unsub();
+
+      if (job.state !== "done") {
+        set({ phase: { kind: "failed", reason: job.reason ?? "Could not get the content." } });
+        return;
+      }
+      set({ phase: { kind: "launching", title } });
+      await get().launch(c);
+    } catch (e) {
+      // A broken preflight must not cost a match. Try the launch anyway; if the
+      // content really is missing the engine will say so soon enough.
+      set({ phase: { kind: "launching", title } });
+      await get().launch(c);
+    }
+  },
+
   launch: async c => {
     const me = get().me;
     if (!me) {
@@ -107,11 +202,13 @@ export const useGame = create<GameState>((set, get) => ({
           } else if (s.kind === "exited") {
             // The debriefing arrives separately, on its own store slice.
             set({ phase: { kind: "idle" } });
+            void restoreAfterGame();
           } else {
             set({ phase: { kind: "failed", reason: s.reason } });
           }
         });
       }
+      await rememberWindowState();
       const pid = await launchSpring({
         engine: c.Engine ?? "",
         ip: c.Ip ?? "",

@@ -2796,6 +2796,7 @@ dependencies = [
  "md5",
  "serde",
  "serde_json",
+ "socket2",
  "tauri",
  "tauri-build",
  "tokio",

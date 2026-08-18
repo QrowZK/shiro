@@ -45,8 +45,8 @@ export function NavRail({ view, onView }) {
       {/* Screens 9 and 10 were deferred, so both of these land on Settings -
           which is where the content policy and the install live. A button that
           does nothing is worse than one that explains itself. */}
-      <IconButton icon="download" label="Content and downloads" size="lg"
-        active={view === "settings"} onClick={() => onView("settings")} />
+      <IconButton icon="download" label="Downloads" size="lg"
+        active={view === "downloads"} onClick={() => onView("downloads")} />
       <IconButton icon="settings" label="Settings" size="lg"
         active={view === "settings"} onClick={() => onView("settings")} />
     </nav>

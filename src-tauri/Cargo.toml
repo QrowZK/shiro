@@ -18,6 +18,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 md5 = "0.7"
+# TCP keepalive: tokio does not expose the socket option itself.
+socket2 = { version = "0.6", features = ["all"] }
 base64 = "0.22"
 
 [profile.release]

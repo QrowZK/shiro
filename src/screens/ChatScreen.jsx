@@ -1,5 +1,6 @@
 import React from "react";
 import { Tabs, ChatLine, Input, Button, UserChip, EmptyState, IconButton } from "../ds/shiro.js";
+import { useStickyScroll } from "../hooks/useStickyScroll.js";
 
 /* Screen 5 - channels and DMs. Tabs carry unread counts and mention (Ring) state.
 
@@ -32,6 +33,8 @@ export default function ChatScreen({ channels, users, messages, active, onTab, o
   };
 
   const lines = [...(messages || []), ...echo];
+  // Follow new messages, but never yank the reader out of history.
+  const scroll = useStickyScroll({ count: lines.length, resetKey: current });
   const meta = (channels || []).find(c => c.id === current) || {};
   const label = meta.label || current || "";
 
@@ -51,10 +54,22 @@ export default function ChatScreen({ channels, users, messages, active, onTab, o
             {topic}
           </div>
         )}
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingTop: "var(--sp-4)" }}>
-          {lines.length === 0
-            ? <EmptyState icon="message-square" title={"Nothing in " + label + " yet."} body="Say something." />
-            : lines.map((l, i) => <ChatLine key={l.id != null ? l.id : i} {...l} />)}
+        <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex" }}>
+          <div ref={scroll.ref} onScroll={scroll.onScroll}
+            style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingTop: "var(--sp-4)" }}>
+            {lines.length === 0
+              ? <EmptyState icon="message-square" title={"Nothing in " + label + " yet."} body="Say something." />
+              : lines.map((l, i) => <ChatLine key={l.id != null ? l.id : i} {...l} />)}
+          </div>
+          {/* Only while the reader has scrolled away, so it never covers the
+              conversation they are actually looking at. */}
+          {!scroll.pinned && lines.length > 0 && (
+            <Button variant="secondary" size="sm" icon="arrow-down" onClick={scroll.jump}
+              style={{ position: "absolute", right: "var(--sp-6)", bottom: "var(--sp-5)",
+                boxShadow: "var(--elev-menu)" }}>
+              Newest
+            </Button>
+          )}
         </div>
         <div style={{ display: "flex", gap: "var(--sp-4)", padding: "var(--sp-4) var(--sp-5)",
           borderTop: "1px solid var(--w-12)" }}>

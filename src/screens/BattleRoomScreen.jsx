@@ -1,6 +1,7 @@
 import React from "react";
 import { Button, Badge, Tag, PlayerRow, ChatLine, MapImage, Input,
-  IconButton, Icon, UserChip } from "../ds/shiro.js";
+  IconButton, Icon, UserChip, Meter } from "../ds/shiro.js";
+import { useStickyScroll } from "../hooks/useStickyScroll.js";
 
 /* Screen 4 - the largest and densest screen. Teams, spectators, bots, map,
    options, chat, ready/start. Team columns are a grid so 1v1 and 16-way FFA
@@ -42,15 +43,103 @@ export function TeamColumn({ ally, players, max = 8, onJoin, onKick, onAddBot, o
   );
 }
 
+/* One option in a vote: name, tally, and a bar against the winning threshold.
+   Map votes get the map itself, because that is the thing being chosen. */
+function VoteOption({ option, target, isMap, onVote }) {
+  const [hover, setHover] = React.useState(false);
+  const name = option.DisplayName || option.Name || "";
+  const votes = option.Votes || 0;
+  return (
+    <div onClick={() => onVote && onVote(option.Id)}
+      onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      title={name}
+      style={{ display: "flex", gap: "var(--sp-4)", padding: "var(--sp-3)",
+        cursor: onVote ? "pointer" : "default",
+        border: "1px solid " + (hover ? "var(--w-20)" : "var(--w-06)"),
+        background: hover ? "var(--surface-hover)" : "transparent",
+        transition: "var(--transition-hover)" }}>
+      {isMap && (
+        <MapImage map={option.Name} kind="thumbnail" ratio="1"
+          style={{ width: 48, flex: "0 0 auto" }} />
+      )}
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column",
+        justifyContent: "center", gap: "var(--sp-3)" }}>
+        <div style={{ display: "flex", alignItems: "baseline", gap: "var(--sp-4)" }}>
+          <span style={{ flex: 1, minWidth: 0, font: "var(--text-ui-sm)", color: "var(--text-hi)",
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+          <span style={{ font: "var(--w-medium) var(--size-tiny)/1 var(--font-mono)",
+            color: "var(--text-mid)", fontVariantNumeric: "tabular-nums" }}>{votes}/{target}</span>
+        </div>
+        <Meter value={votes} max={target} height={2} />
+      </div>
+    </div>
+  );
+}
+
+/* A vote you can read at a glance.
+   Previously the tally was crammed into a button label ("Terraform  3/5") and
+   yes/no votes showed no counts at all, so there was no way to tell how close
+   anything was. Everything needed is already on the wire: PollOption.Votes and
+   BattlePoll.VotesToWin. */
+export function PollPanel({ poll, onVote }) {
+  const target = Math.max(1, poll.VotesToWin || 1);
+  const options = poll.Options || [];
+  const isMap = Boolean(poll.MapSelection);
+
+  // Yes/no tallies arrive as ordinary options when the server sends them, but
+  // the ids are not fixed, so match on the name and degrade quietly if absent.
+  const byName = re => options.find(o => re.test(o.DisplayName || o.Name || ""));
+  const yes = byName(/^y/i);
+  const no = byName(/^n/i);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
+      <span className="lab">{isMap ? "MAP VOTE" : "VOTE"}</span>
+      <span style={{ font: "var(--text-ui)", color: "var(--text-hi)" }}>{poll.Topic}</span>
+
+      {poll.YesNoVote ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
+          <div style={{ display: "flex", gap: "var(--sp-4)" }}>
+            <Button variant="primary" size="sm" style={{ flex: 1 }}
+              onClick={() => onVote && onVote(true)}>Yes</Button>
+            <Button variant="secondary" size="sm" style={{ flex: 1 }}
+              onClick={() => onVote && onVote(false)}>No</Button>
+          </div>
+          {yes && <Meter value={yes.Votes || 0} max={target} height={2}
+            label="Yes" right={(yes.Votes || 0) + "/" + target} />}
+          {no && <Meter value={no.Votes || 0} max={target} height={2}
+            label="No" right={(no.Votes || 0) + "/" + target} />}
+          {!yes && !no && (
+            <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
+              color: "var(--text-faint)" }}>{target} votes to pass.</span>
+          )}
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
+          {options.map(o => (
+            <VoteOption key={o.Id} option={o} target={target} isMap={isMap} onVote={onVote} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* `chat`, `onSay`, `onTeam`, `onSpectate`, `sync` and `phase` are supplied when
    the screen is driven by the live store; without them it renders the demo
    room from data.js and the interactive parts stand down. */
 export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
-  onTeam, onSpectate, sync, phase, poll, pollOutcome, onVote, onKick, onAddBot, onPlayer }) {
+  onTeam, onSpectate, sync, phase, poll, pollOutcome, onVote, onKick, onAddBot, onPlayer,
+  download }) {
   const [msg, setMsg] = React.useState("");
   const total = room.teams.reduce((n, t) => n + t.players.length, 0);
   const lines = chat || room.chat || [];
-  const busy = phase ? phase.kind === "launching" || phase.kind === "running" : false;
+  const scroll = useStickyScroll({ count: lines.length, resetKey: room.id });
+  // Anything between "start pressed" and "engine running" counts as busy: the
+  // content steps are part of starting, not a separate thing to interrupt.
+  const busy = phase
+    ? ["preflight", "downloading", "launching", "running"].includes(phase.kind)
+    : false;
   const send = () => { if (onSay && msg.trim()) onSay(msg); setMsg(""); };
   return (
     <div style={{ flex: 1, display: "grid", gridTemplateColumns: "minmax(0,1fr) 320px", minHeight: 0 }}>
@@ -80,8 +169,18 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
               <span className="lab">ROOM CHAT</span>
               <span className="lab">{total} PLAYERS - {room.spectators.length} SPECTATORS</span>
             </div>
-            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingTop: "var(--sp-2)" }}>
-              {lines.map((c, i) => <ChatLine key={c.id != null ? c.id : i} {...c} />)}
+            <div style={{ position: "relative", flex: 1, minHeight: 0, display: "flex" }}>
+              <div ref={scroll.ref} onScroll={scroll.onScroll}
+                style={{ flex: 1, minHeight: 0, overflowY: "auto", paddingTop: "var(--sp-2)" }}>
+                {lines.map((c, i) => <ChatLine key={c.id != null ? c.id : i} {...c} />)}
+              </div>
+              {!scroll.pinned && lines.length > 0 && (
+                <Button variant="secondary" size="sm" icon="arrow-down" onClick={scroll.jump}
+                  style={{ position: "absolute", right: "var(--sp-5)", bottom: "var(--sp-4)",
+                    boxShadow: "var(--elev-menu)" }}>
+                  Newest
+                </Button>
+              )}
             </div>
             <div style={{ display: "flex", gap: "var(--sp-4)", padding: "var(--sp-4) var(--sp-5)",
               borderTop: "1px solid var(--w-06)" }}>
@@ -110,29 +209,7 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
         <MapImage map={room.map} kind="minimap" ratio="1" caption link saturate={1} style={{ flex: "0 0 auto" }} />
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "var(--sp-5)",
           display: "flex", flexDirection: "column", gap: "var(--sp-6)" }}>
-          {poll && (
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
-              <span className="lab">VOTE</span>
-              <span style={{ font: "var(--text-ui)", color: "var(--text-hi)" }}>{poll.Topic}</span>
-              {poll.YesNoVote ? (
-                <div style={{ display: "flex", gap: "var(--sp-4)" }}>
-                  <Button variant="primary" size="sm" style={{ flex: 1 }}
-                    onClick={() => onVote && onVote(true)}>Yes</Button>
-                  <Button variant="secondary" size="sm" style={{ flex: 1 }}
-                    onClick={() => onVote && onVote(false)}>No</Button>
-                </div>
-              ) : (
-                <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
-                  {(poll.Options || []).map(o => (
-                    <Button key={o.Id} variant="quiet" size="sm" block
-                      onClick={() => onVote && onVote(o.Id)}>
-                      {(o.DisplayName || o.Name) + "  " + o.Votes + "/" + poll.VotesToWin}
-                    </Button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          {poll && <PollPanel poll={poll} onVote={onVote} />}
           {!poll && pollOutcome && (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
               <span className="lab">LAST VOTE</span>
@@ -150,9 +227,43 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
             <span className="lab">SYNC</span>
-            {/* What we can actually assert: whether a Zero-K install was found
-                and whether it has the engine this battle runs on. Per-map
-                content checks need pr-downloader - ARCHITECTURE.md section 7. */}
+
+            {/* Content for this battle, fetched on join rather than at the
+                whistle. This is where people look when a match will not start,
+                so it says what is happening rather than leaving it to the
+                Downloads screen. */}
+            {download && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
+                {download.state === "running" || download.state === "queued" ? (
+                  <>
+                    <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
+                      <Icon name="download" size={16} style={{ color: "var(--text-mid)" }} />
+                      <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)", flex: 1 }}>
+                        {download.state === "queued" ? "Waiting to download" : "Downloading content"}
+                      </span>
+                    </div>
+                    <Meter value={download.percent} max={100} right={download.percent + "%"} />
+                  </>
+                ) : download.state === "failed" ? (
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--sp-4)" }}>
+                    <Icon name="alert-triangle" size={16}
+                      style={{ color: "var(--signal-danger)", marginTop: 2 }} />
+                    <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
+                      color: "var(--signal-danger)" }}>{download.reason}</span>
+                  </div>
+                ) : download.state === "done" ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
+                    <Icon name="check" size={16} style={{ color: "var(--text-mid)" }} />
+                    <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)" }}>
+                      Content ready
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            )}
+
+            {/* What we can otherwise assert: whether a Zero-K install was found
+                and whether it has the engine this battle runs on. */}
             <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
               <Icon name={sync && !sync.install ? "alert-triangle" : "check"} size={16}
                 style={{ color: sync && !sync.install ? "var(--signal-warn)" : "var(--text-mid)" }} />
@@ -175,7 +286,9 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
         <div style={{ padding: "var(--sp-5)", borderTop: "1px solid var(--w-12)",
           display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
           <Button variant="primary" size="lg" block icon="play" disabled={busy} onClick={onStart}>
-            {phase && phase.kind === "launching" ? "Launching..."
+            {phase && phase.kind === "preflight" ? "Checking content..."
+              : phase && phase.kind === "downloading" ? "Downloading " + phase.percent + "%"
+              : phase && phase.kind === "launching" ? "Launching..."
               : phase && phase.kind === "running" ? "Game running"
               : room.running ? "Join game" : "Start game"}
           </Button>

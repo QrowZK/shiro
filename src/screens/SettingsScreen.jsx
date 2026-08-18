@@ -1,5 +1,6 @@
 import React from "react";
 import { Button, Input, Checkbox, Badge, Icon, IconButton } from "../ds/shiro.js";
+import { ENGINE_FIELDS, readEngineSettings, writeEngineSettings } from "../net/engineSettings.ts";
 
 /* Screen 9 was deferred in the handoff, so this is built from the same
    primitives rather than a design. It covers the three things that actually
@@ -28,6 +29,89 @@ function Row({ label, value }) {
       <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-mono)", color: "var(--text-body)",
         overflowWrap: "anywhere" }}>{value}</span>
     </div>
+  );
+}
+
+/* The engine's own settings, read straight out of springsettings.cfg.
+
+   Shiro never used to write this file, so a game booted with whatever the last
+   client left in it - most visibly interfaceScale, which is why the in-game UI
+   could come up at the wrong size. Self-contained: it loads on mount and writes
+   only the keys it shows, so the ~110 settings we do not model are untouched. */
+function EngineSection({ installRoot, disabled }) {
+  const [values, setValues] = React.useState(null);
+  const [error, setError] = React.useState("");
+  const [status, setStatus] = React.useState("");
+
+  React.useEffect(() => {
+    let live = true;
+    readEngineSettings(installRoot)
+      .then(s => { if (live) setValues(s); })
+      .catch(e => { if (live) setError(String(e)); });
+    return () => { live = false; };
+  }, [installRoot]);
+
+  const save = async () => {
+    setStatus("");
+    setError("");
+    const changes = {};
+    for (const f of ENGINE_FIELDS) {
+      const v = (values && values[f.key]) || "";
+      if (v !== "") changes[f.key] = String(v);
+    }
+    try {
+      await writeEngineSettings(changes, installRoot);
+      setStatus("Written to springsettings.cfg. Takes effect next time a game starts.");
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const hint = "Zero-K reads these when a game starts; Shiro only writes them. "
+    + "Anything not listed here is left exactly as it was.";
+
+  if (error && !values) {
+    return (
+      <Section title="In-game settings" hint={hint}>
+        <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
+          color: "var(--signal-danger)" }}>{error}</span>
+      </Section>
+    );
+  }
+
+  return (
+    <Section title="In-game settings" hint={hint}>
+      {values === null ? (
+        <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
+          color: "var(--text-low)" }}>Reading springsettings.cfg...</span>
+      ) : (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--sp-5)" }}>
+            {ENGINE_FIELDS.map(f => (
+              <Input key={f.key} label={f.label} size="sm" type="number"
+                min={f.min} max={f.max} disabled={disabled}
+                value={values[f.key] != null ? values[f.key] : ""}
+                onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))} />
+            ))}
+          </div>
+          <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
+            color: "var(--text-low)" }}>
+            Interface scale is a percentage - 100 is unscaled.
+          </span>
+          <div style={{ display: "flex", gap: "var(--sp-4)", alignItems: "center" }}>
+            <Button variant="quiet" size="sm" onClick={save} disabled={disabled}>Apply</Button>
+            {status && (
+              <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
+                color: "var(--text-low)" }}>{status}</span>
+            )}
+            {error && (
+              <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
+                color: "var(--signal-danger)" }}>{error}</span>
+            )}
+          </div>
+        </>
+      )}
+    </Section>
   );
 }
 
@@ -158,6 +242,16 @@ export default function SettingsScreen({ me, install, installError, engine, sett
             </span>
           )}
         </Section>
+
+        <Section title="After a match"
+          hint="Spectators are never taken to the results - there is no rating change or
+                award to show them - so this only affects matches you played.">
+          <Checkbox label="Open the results screen when a match ends"
+            checked={Boolean(settings && settings.autoOpenDebriefing)}
+            onChange={e => onSettings && onSettings({ autoOpenDebriefing: e.target.checked })} />
+        </Section>
+
+        <EngineSection installRoot={settings && settings.installRoot} disabled={!install} />
 
         <Section title="Content"
           hint="Shiro does not download games, maps or engines yet. It uses what your Zero-K

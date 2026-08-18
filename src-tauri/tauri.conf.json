@@ -29,7 +29,10 @@
   "bundle": {
     "active": true,
     "targets": [
-      "nsis"
+      "nsis",
+      "deb",
+      "rpm",
+      "appimage"
     ],
     "icon": [
       "icons/32x32.png",
@@ -43,6 +46,16 @@
       "webviewInstallMode": {
         "type": "downloadBootstrapper"
       }
-    }
+    },
+    "linux": {
+      "deb": {
+        "depends": [
+          "libwebkit2gtk-4.1-0",
+          "libgtk-3-0"
+        ]
+      }
+    },
+    "category": "Game",
+    "shortDescription": "A lobby client for Zero-K"
   }
 }
