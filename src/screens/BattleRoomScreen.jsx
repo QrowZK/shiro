@@ -129,12 +129,17 @@ export function PollPanel({ poll, onVote }) {
    the screen is driven by the live store; without them it renders the demo
    room from data.js and the interactive parts stand down. */
 export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
-  onTeam, onSpectate, sync, phase, poll, pollOutcome, onVote, onKick, onAddBot, onPlayer }) {
+  onTeam, onSpectate, sync, phase, poll, pollOutcome, onVote, onKick, onAddBot, onPlayer,
+  download }) {
   const [msg, setMsg] = React.useState("");
   const total = room.teams.reduce((n, t) => n + t.players.length, 0);
   const lines = chat || room.chat || [];
   const scroll = useStickyScroll({ count: lines.length, resetKey: room.id });
-  const busy = phase ? phase.kind === "launching" || phase.kind === "running" : false;
+  // Anything between "start pressed" and "engine running" counts as busy: the
+  // content steps are part of starting, not a separate thing to interrupt.
+  const busy = phase
+    ? ["preflight", "downloading", "launching", "running"].includes(phase.kind)
+    : false;
   const send = () => { if (onSay && msg.trim()) onSay(msg); setMsg(""); };
   return (
     <div style={{ flex: 1, display: "grid", gridTemplateColumns: "minmax(0,1fr) 320px", minHeight: 0 }}>
@@ -222,9 +227,43 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
             <span className="lab">SYNC</span>
-            {/* What we can actually assert: whether a Zero-K install was found
-                and whether it has the engine this battle runs on. Per-map
-                content checks need pr-downloader - ARCHITECTURE.md section 7. */}
+
+            {/* Content for this battle, fetched on join rather than at the
+                whistle. This is where people look when a match will not start,
+                so it says what is happening rather than leaving it to the
+                Downloads screen. */}
+            {download && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
+                {download.state === "running" || download.state === "queued" ? (
+                  <>
+                    <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
+                      <Icon name="download" size={16} style={{ color: "var(--text-mid)" }} />
+                      <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)", flex: 1 }}>
+                        {download.state === "queued" ? "Waiting to download" : "Downloading content"}
+                      </span>
+                    </div>
+                    <Meter value={download.percent} max={100} right={download.percent + "%"} />
+                  </>
+                ) : download.state === "failed" ? (
+                  <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--sp-4)" }}>
+                    <Icon name="alert-triangle" size={16}
+                      style={{ color: "var(--signal-danger)", marginTop: 2 }} />
+                    <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
+                      color: "var(--signal-danger)" }}>{download.reason}</span>
+                  </div>
+                ) : download.state === "done" ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
+                    <Icon name="check" size={16} style={{ color: "var(--text-mid)" }} />
+                    <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)" }}>
+                      Content ready
+                    </span>
+                  </div>
+                ) : null}
+              </div>
+            )}
+
+            {/* What we can otherwise assert: whether a Zero-K install was found
+                and whether it has the engine this battle runs on. */}
             <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
               <Icon name={sync && !sync.install ? "alert-triangle" : "check"} size={16}
                 style={{ color: sync && !sync.install ? "var(--signal-warn)" : "var(--text-mid)" }} />
@@ -247,7 +286,9 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
         <div style={{ padding: "var(--sp-5)", borderTop: "1px solid var(--w-12)",
           display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
           <Button variant="primary" size="lg" block icon="play" disabled={busy} onClick={onStart}>
-            {phase && phase.kind === "launching" ? "Launching..."
+            {phase && phase.kind === "preflight" ? "Checking content..."
+              : phase && phase.kind === "downloading" ? "Downloading " + phase.percent + "%"
+              : phase && phase.kind === "launching" ? "Launching..."
               : phase && phase.kind === "running" ? "Game running"
               : room.running ? "Join game" : "Start game"}
           </Button>
