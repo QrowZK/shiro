@@ -22,6 +22,9 @@ on:
       - ".gitattributes"
       - ".github/workflows/windows-installer.yml"
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -75,3 +78,30 @@ jobs:
             src-tauri/target/release/shiro.exe
           if-no-files-found: error
           retention-days: 30
+
+      # Artifacts expire and need a GitHub login to fetch. A rolling prerelease
+      # gives the same file a stable, public URL:
+      #   https://github.com/<repo>/releases/download/dev/Shiro_<version>_x64-setup.exe
+      - name: Publish the dev release
+        if: github.ref == 'refs/heads/main-u3zpp0' || github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $exe = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter *.exe |
+            Select-Object -First 1
+          $notes = @"
+          Unsigned development build of Shiro, from commit ${{ github.sha }}.
+
+          Per-user install, no admin prompt. Windows SmartScreen will warn about an
+          unknown publisher - that is the missing code signature, not a problem with
+          the download. Requires an existing Zero-K installation for the engine,
+          games and maps.
+          "@
+          gh release delete dev --yes 2>$null
+          gh release create dev $exe.FullName `
+            --title "Shiro - development build" `
+            --notes $notes `
+            --prerelease `
+            --target ${{ github.sha }}
+          "Published $($exe.Name)"
