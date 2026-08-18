@@ -13,10 +13,13 @@ on:
     paths:
       - "src/**"
       - "src-tauri/**"
+      # tools/ gates the build: `npm test` runs the icon check from here.
+      - "tools/**"
       - "index.html"
       - "package.json"
       - "package-lock.json"
       - "vite.config.js"
+      - ".gitattributes"
       - ".github/workflows/windows-installer.yml"
 
 jobs:
