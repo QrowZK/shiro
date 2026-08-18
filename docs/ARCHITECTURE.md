@@ -272,8 +272,39 @@ pr-downloader --filesystem-writepath <dir> --download-map "<MapName>"
 ```
 
 Note that Chobby does *not* do this — it uses `PlasmaDownloader`, a bespoke C#
-reimplementation of rapid. We should not copy that. Shelling out to the engine's own
-downloader is a fraction of the work and stays correct as rapid evolves.
+reimplementation of rapid. Shelling out to the engine's own downloader is a fraction
+of the work and stays correct as rapid evolves.
+
+### Correction: pr-downloader is not sufficient for mod support
+
+The paragraph above originally went on to say we should not copy what the official
+client does. That was wrong, and the reason matters.
+
+**pr-downloader only knows rapid and springfiles.** It cannot fetch Zero-K community
+content. Verified against springfiles: `Supreme-K 3.42`, `ZeroWars v2.1.9` and
+`Arena Mod v1.0.10` all return an empty result, while a control query for
+`Comet Catcher Redux` returns a real record — so this is genuine absence, not a
+malformed query. The same three are also missing from all 50 cached rapid repos.
+
+Yet two of them are installed locally, because the official client put them there. It
+resolves community content through `zero-k.info/ContentService`
+(`TorrentDownloader.cs` → `DownloadFileRequest{InternalName}` → `links[]`), a source
+pr-downloader has never heard of.
+
+So the split is:
+
+| Content | pr-downloader | Notes |
+|---|---|---|
+| `zk:stable`, the default game | ✅ rapid | |
+| Common maps | ✅ springfiles | coverage looks frozen around 2011–2017 |
+| Mods, custom game modes, their maps | ❌ | needs ContentService |
+
+pr-downloader still earns its place — it fixes the hung-engine problem for ordinary
+battles, which is the common case. It just does not deliver the mod support that
+motivated the work. **See [DOWNLOADS.md](DOWNLOADS.md)** for the full analysis, the
+verified CLI (note: progress output is carriage-return terminated, so a line reader
+sits silent for an entire download), and a spike to confirm the ContentService route
+before committing to a mod-support date.
 
 ---
 
