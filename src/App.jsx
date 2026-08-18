@@ -63,6 +63,7 @@ export default function App() {
   const liveUsers = useLobby(s => s.users);
   const reconnectAttempt = useLobby(s => s.reconnect);
   const kicked = useLobby(s => s.kicked);
+  const notices = useLobby(s => s.notices);
 
   /* The live battle room. `useRoom` holds membership; the header it decorates
      still comes from the public battle directory in `useLobby`. */
@@ -288,6 +289,7 @@ export default function App() {
       onVote={option => useRoom.getState().vote(option)}
       onKick={u => useRoom.getState().kick(u.name)}
       onAddBot={ally => useRoom.getState().addBot("CAI", ally)}
+      onPlayer={u => { if (u.name !== me && !u.bot) openDm(u.name); }}
       onStart={startRoom} />
   );
   else if (room) body = <BattleRoomScreen room={D.room} onLeave={() => setRoom(null)}
@@ -443,6 +445,15 @@ export default function App() {
             {inviteSecondsLeft(partyInvite, Date.now())}s
           </span>
         </div>
+      </Dialog>
+
+      {/* The server has something to say that is not chat: a mute, a ban, an
+          announcement. One at a time, oldest first. */}
+      <Dialog open={notices.length > 0} title="Message from the server" width={400}
+        footer={<Button variant="primary" onClick={() => useLobby.getState().clearNotice()}>OK</Button>}>
+        <span style={{ font: "var(--text-ui)", color: "var(--text-body)", whiteSpace: "pre-wrap" }}>
+          {notices[0] || ""}
+        </span>
       </Dialog>
 
       {/* An admin threw us off. There is nothing to retry, so the only way

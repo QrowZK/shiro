@@ -68,3 +68,34 @@ test("an unknown command is counted, not thrown away silently", () => {
   useLobby.getState().applyMessage(msg("PwStatus", { MinLevel: 1 }));
   assert.equal(useLobby.getState().unhandled.PwStatus, 1);
 });
+
+test("a server message box is not chat, and is not scrolled past", () => {
+  fresh();
+  useLobby.getState().applyMessage(msg("Say", {
+    Place: 5, Text: "You have been muted for 10 minutes.",
+    IsEmote: false, Ring: false, AllowRelay: true,
+  }));
+  assert.deepEqual(useLobby.getState().notices, ["You have been muted for 10 minutes."]);
+  assert.equal(useLobby.getState().chat.length, 0, "and does not land in the chat log");
+  useLobby.getState().clearNotice();
+  assert.deepEqual(useLobby.getState().notices, []);
+});
+
+test("notices queue rather than replace each other", () => {
+  fresh();
+  for (const text of ["first", "second"]) {
+    useLobby.getState().applyMessage(msg("Say", {
+      Place: 5, Text: text, IsEmote: false, Ring: false, AllowRelay: true,
+    }));
+  }
+  assert.deepEqual(useLobby.getState().notices, ["first", "second"]);
+});
+
+test("two notices in one batch both survive", () => {
+  fresh();
+  useLobby.getState().applyBatch([
+    msg("Say", { Place: 5, Text: "a", IsEmote: false, Ring: false, AllowRelay: true }),
+    msg("Say", { Place: 5, Text: "b", IsEmote: false, Ring: false, AllowRelay: true }),
+  ]);
+  assert.deepEqual(useLobby.getState().notices, ["a", "b"]);
+});

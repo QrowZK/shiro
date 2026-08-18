@@ -240,6 +240,16 @@ if (launched) {
 }
 check("the room reports the game as running", await waitFor("running", () => seeing(/Game running/)));
 
+console.log("server notices");
+await page.evaluate(() => window.__ZKS.push('Say ' + JSON.stringify({
+  Place: 5, Text: "Scheduled restart in 10 minutes.", IsEmote: false, Ring: false,
+  AllowRelay: true })));
+check("a server message box interrupts rather than scrolling past",
+  await waitFor("notice", () => seeing(/Scheduled restart in 10 minutes/)));
+await clickDialog(/^OK$/);
+check("and dismisses", await waitFor("dismissed", async () =>
+  !(await seeing(/Scheduled restart/))));
+
 console.log("spectating and ignoring");
 await clickText(/^Leave$/);
 check("back on the battle list", await waitFor("list", () => seeing(/Host a battle/)));

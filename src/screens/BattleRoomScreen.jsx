@@ -5,7 +5,7 @@ import { Button, Badge, Tag, PlayerRow, ChatLine, MapImage, Input,
 /* Screen 4 - the largest and densest screen. Teams, spectators, bots, map,
    options, chat, ready/start. Team columns are a grid so 1v1 and 16-way FFA
    use the same layout. */
-export function TeamColumn({ ally, players, max = 8, onJoin, onKick, onAddBot }) {
+export function TeamColumn({ ally, players, max = 8, onJoin, onKick, onAddBot, onPlayer }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", minWidth: 0,
       borderRight: "1px solid var(--w-06)" }}>
@@ -17,6 +17,7 @@ export function TeamColumn({ ally, players, max = 8, onJoin, onKick, onAddBot })
       </div>
       {players.map((p, i) => (
         <PlayerRow key={i} {...p} user={p.user}
+          onClick={onPlayer ? () => onPlayer(p.user) : undefined}
           /* Host controls are offered to everyone; the server ignores them from
              anyone else, which is the only authority that counts. The rating
              is not repeated here - UserChip already draws it, and the design
@@ -45,7 +46,7 @@ export function TeamColumn({ ally, players, max = 8, onJoin, onKick, onAddBot })
    the screen is driven by the live store; without them it renders the demo
    room from data.js and the interactive parts stand down. */
 export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
-  onTeam, onSpectate, sync, phase, poll, pollOutcome, onVote, onKick, onAddBot }) {
+  onTeam, onSpectate, sync, phase, poll, pollOutcome, onVote, onKick, onAddBot, onPlayer }) {
   const [msg, setMsg] = React.useState("");
   const total = room.teams.reduce((n, t) => n + t.players.length, 0);
   const lines = chat || room.chat || [];
@@ -69,7 +70,7 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
           gridTemplateColumns: "repeat(" + room.teams.length + ", minmax(0,1fr))", overflowY: "auto" }}>
           {room.teams.map(t => <TeamColumn key={t.ally} ally={t.ally} players={t.players} max={8}
             onJoin={onTeam ? () => onTeam(t.ally) : undefined}
-            onKick={onKick} onAddBot={onAddBot} />)}
+            onKick={onKick} onAddBot={onAddBot} onPlayer={onPlayer} />)}
         </div>
 
         <div style={{ flex: "0 0 auto", borderTop: "1px solid var(--w-12)", display: "flex", minHeight: 0 }}>
@@ -95,7 +96,10 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
             <div style={{ height: 26, display: "flex", alignItems: "center", padding: "0 var(--sp-4)",
               borderBottom: "1px solid var(--w-06)" }}><span className="lab">SPECTATORS</span></div>
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
-              {room.spectators.map((s, i) => <PlayerRow key={i} spectator {...s} />)}
+              {room.spectators.map((s, i) => (
+                <PlayerRow key={i} spectator {...s}
+                  onClick={onPlayer ? () => onPlayer(s.user) : undefined} />
+              ))}
             </div>
           </div>
         </div>

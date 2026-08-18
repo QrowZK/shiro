@@ -10,6 +10,14 @@ import type { Message } from "../protocol/registry.ts";
 import type * as T from "../protocol/types.ts";
 import { mergePatch } from "../protocol/wire.ts";
 import type { RelayStatus } from "../net/connection.ts";
+import type { SayPlace } from "../protocol/enums.ts";
+
+/**
+ * `SayPlace.MessageBox` restated as a literal - this module must not import a
+ * TS enum, which the test runner's type-stripping loader refuses. The
+ * annotation is checked against the generated enum at compile time.
+ */
+const PLACE_MESSAGE_BOX: SayPlace.MessageBox = 5;
 
 export type ConnectionState =
   | { kind: "idle" }
@@ -50,6 +58,13 @@ interface LobbyState {
   /** Set when an admin threw us off; retrying would be pointless and rude. */
   kicked?: { reason: string };
 
+  /**
+   * Server messages meant to be read, not scrolled past - mutes, bans,
+   * announcements. The official client shows these in a box, hence the name of
+   * the SayPlace they arrive on.
+   */
+  notices: string[];
+
   setConnection: (c: ConnectionState) => void;
   setReconnect: (n: number) => void;
   applyRelayStatus: (s: RelayStatus) => void;
@@ -58,6 +73,8 @@ interface LobbyState {
   /** Forget who is online and what is open, keeping the session. */
   resetDirectory: () => void;
   clearKick: () => void;
+  /** Dismiss the oldest notice. */
+  clearNotice: () => void;
   reset: () => void;
 }
 
@@ -69,6 +86,7 @@ const EMPTY = {
   unhandled: {} as Record<string, number>,
   reconnect: 0,
   kicked: undefined as { reason: string } | undefined,
+  notices: [] as string[],
 };
 
 const MAX_CHAT = 500;
@@ -192,6 +210,10 @@ export const useLobby = create<LobbyState>((set, get) => ({
 
         case "Say": {
           const d = m.data as T.Say;
+          if (d.Place === PLACE_MESSAGE_BOX) {
+            if (d.Text) patch.notices = [...(patch.notices ?? state.notices), d.Text];
+            break;
+          }
           if (chat === state.chat) chat = [...chat];
           chat.push({
             time: d.Time,
@@ -222,6 +244,8 @@ export const useLobby = create<LobbyState>((set, get) => ({
 
   /** Acknowledge the kick notice so the dialog can close. */
   clearKick: () => set({ kicked: undefined }),
+
+  clearNotice: () => set(state => ({ notices: state.notices.slice(1) })),
 
   reset: () => set({ connection: { kind: "idle" }, welcome: undefined, me: undefined,
     sessionToken: undefined, ...EMPTY }),

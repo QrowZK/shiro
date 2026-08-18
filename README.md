@@ -106,8 +106,8 @@ a button that does nothing is worse than one that explains itself.
 | Install detection | `src-tauri/src/install.rs` | built; **not yet run against a real install** |
 | Rust TCP relay | `src-tauri/src/relay.rs` | builds clean |
 
-`npm test` runs 81 TypeScript tests; `cargo test` in `src-tauri/` runs 15 Rust tests;
-`npm run test:e2e` runs 73 end-to-end checks.
+`npm test` runs 84 TypeScript tests; `cargo test` in `src-tauri/` runs 15 Rust tests;
+`npm run test:e2e` runs 75 end-to-end checks.
 
 ## Testing the live paths
 
@@ -117,9 +117,9 @@ replaces `window.__TAURI_INTERNALS__` with [a fake
 server](tools/e2e/fake-server.js) and drives the real UI through login, joining,
 hosting, a passworded join, spectating, ignoring, room votes, host controls,
 chat, the matchmaker ready check, parties, friends, launching an engine, a
-rejoin offer, a dropped socket, settings, the launch preflight, a debriefing,
-registering an account and logging out — 73 assertions against the same code the
-desktop build runs.
+rejoin offer, a dropped socket, a server notice, settings, the launch preflight,
+a debriefing, registering an account and logging out — 75 assertions against the
+same code the desktop build runs.
 
 ```bash
 npm run dev          # in another shell
