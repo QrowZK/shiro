@@ -50,6 +50,27 @@ const LOGIN_CODE_LABEL: Record<number, string> = {
   11: "RSA signature could not be verified (pub key not known)",
 };
 
+/** The upstream [Description] strings for registration outcomes. */
+const REGISTER_CODE_LABEL: Record<number, string> = {
+  1: "You are already connected.",
+  2: "That name is taken.",
+  3: "That password is not acceptable.",
+  4: "That account is banned.",
+  5: "That name has characters the server will not accept.",
+  6: "Invalid Steam token - are you in offline mode?",
+  7: "That Steam account is already registered.",
+  8: "Missing both password and token.",
+  9: "Too many attempts. Wait a while before trying again.",
+  10: "Already linked to Steam; log in instead.",
+  11: "Already registered - log in with your password.",
+};
+
+/** Turn a failed registration into something a person can act on. */
+export function describeRegisterFailure(code: number, message?: string): string {
+  if (code === 4 && message) return `Banned: ${message}`;
+  return REGISTER_CODE_LABEL[code] ?? `Registration failed (error ${code}).`;
+}
+
 function modeLabel(mode: number | undefined): string {
   return MODE_LABEL[mode ?? MODE_NONE] ?? "Custom";
 }

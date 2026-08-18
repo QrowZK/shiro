@@ -107,6 +107,12 @@
     const data = sp < 0 ? {} : JSON.parse(raw.slice(sp + 1));
 
     switch (cmd) {
+      case "Register":
+        // "shiro-taken" is the one name this server refuses, so a test can see
+        // both outcomes.
+        soon(() => state.push(line("RegisterResponse",
+          data.Name === "shiro-taken" ? { ResultCode: 2 } : { ResultCode: 0 })));
+        break;
       case "Login":
         soon(() => {
           state.push(line("LoginResponse", { ResultCode: 0, Name: data.Name, SessionToken: "t" }));

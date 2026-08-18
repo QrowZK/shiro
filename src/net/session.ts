@@ -8,6 +8,7 @@ import {
 import { parseLine, serialize } from "../protocol/wire";
 import type { CommandName, Message, MessageMap } from "../protocol/registry";
 import { useLobby } from "../store/lobby";
+import { describeRegisterFailure } from "../store/adapters";
 import { useRoom } from "../store/room";
 import { fanout } from "../store/slices";
 
@@ -144,6 +145,13 @@ export async function login(
     const m = parseLine(line);
     if (!m) return;
 
+    // An admin threw us off. Retrying would be pointless and rude, so the
+    // session is dropped before the disconnect that follows can schedule one.
+    if (m.cmd === "KickFromServer") {
+      session = null;
+      cancelRetry();
+    }
+
     // The server sends Welcome unprompted on connect; that is our cue to log in.
     if (m.cmd === "Welcome") {
       useLobby.getState().setConnection({ kind: "loggingIn" });
@@ -161,6 +169,66 @@ export async function login(
 
   await connect(host, port);
   await settled;
+}
+
+/**
+ * Create an account, then log into it.
+ *
+ * Registration runs on its own connection with its own listener: the normal
+ * session sends `Login` the moment `Welcome` arrives, which is exactly wrong
+ * for an account that does not exist yet.
+ *
+ * Rejections are final. The server counts failed attempts by IP and bans repeat
+ * offenders, so nothing here retries.
+ */
+export async function register(
+  creds: Credentials,
+  email?: string,
+  host: string = LIVE.host,
+  port: number = LIVE.port,
+): Promise<void> {
+  await teardown();
+  const hash = await passwordHash(creds.password);
+
+  const outcome = new Promise<void>((resolve, reject) => {
+    let stop: (() => void) | undefined;
+    const finish = (err?: Error) => {
+      stop?.();
+      void disconnect().catch(() => {});
+      if (err) reject(err); else resolve();
+    };
+
+    void onLine(line => {
+      const m = parseLine(line);
+      if (!m) return;
+      if (m.cmd === "Welcome") {
+        void sendLine(serialize("Register", {
+          Name: creds.name,
+          PasswordHash: hash,
+          Email: email,
+          UserID: 0,
+          InstallID: "",
+        } as never));
+      }
+      if (m.cmd === "RegisterResponse") {
+        const d = m.data as { ResultCode: number; BanReason?: string };
+        finish(d.ResultCode === 0
+          ? undefined
+          : new Error(describeRegisterFailure(d.ResultCode, d.BanReason)));
+      }
+    }).then(fn => { stop = fn; });
+
+    void onStatus(s => {
+      if (s.kind === "disconnected") finish(new Error(`Lost connection: ${s.reason}`));
+    }).then(fn => {
+      const inner = stop;
+      stop = () => { inner?.(); fn(); };
+    });
+  });
+
+  await connect(host, port);
+  await outcome;
+  await login(creds, host, port);
 }
 
 export async function teardown(): Promise<void> {

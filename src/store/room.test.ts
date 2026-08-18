@@ -231,3 +231,16 @@ test("an ordinary join does not silently spectate", () => {
   useRoom.getState().join(7);
   assert.equal(useRoom.getState().pendingSpectate, false);
 });
+
+test("a forced join is acted on, and only when it names us", () => {
+  fresh();
+  useRoom.getState().setMe("Qrow");
+  useRoom.getState().applyMessage(JOINED);
+  // Someone else being moved is not our business.
+  useRoom.getState().applyMessage(msg("ForceJoinBattle", { BattleID: 42, Name: "hexed" }));
+  assert.equal(useRoom.getState().battleID, 7, "we stay where we are");
+  // Ours clears any pending spectate request from an earlier join.
+  useRoom.getState().join(99, undefined, true);
+  useRoom.getState().applyMessage(msg("ForceJoinBattle", { BattleID: 42, Name: "Qrow" }));
+  assert.equal(useRoom.getState().pendingSpectate, false);
+});

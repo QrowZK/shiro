@@ -8,7 +8,7 @@ import logoMark from "../assets/logo-mark.svg";
    onLogin(name, password, remember) may be async and may reject; the rejection
    message is shown against the password field. It is never retried automatically - the
    server logs failed attempts by IP and bans repeat offenders. */
-export default function LoginScreen({ onLogin, live, defaultName, defaultPassword, defaultRemember }) {
+export default function LoginScreen({ onLogin, onRegister, live, defaultName, defaultPassword, defaultRemember }) {
   const [name, setName] = React.useState(defaultName || "");
   const [pw, setPw] = React.useState(defaultPassword || "");
   const [busy, setBusy] = React.useState(false);
@@ -67,7 +67,7 @@ export default function LoginScreen({ onLogin, live, defaultName, defaultPasswor
         <Button variant="primary" size="lg" block loading={busy} onClick={submit}>
           {busy ? "Connecting" : "Log in"}
         </Button>
-        <Button variant="ghost" size="sm" block>Create an account</Button>
+        <Button variant="ghost" size="sm" block onClick={onRegister}>Create an account</Button>
         <div style={{ display: "flex", gap: "var(--sp-4)", padding: "var(--sp-5)",
           background: "var(--surface-sunken)", border: "1px solid var(--w-06)" }}>
           <Icon name="info" size={14} style={{ color: "var(--text-low)", marginTop: 2 }} />

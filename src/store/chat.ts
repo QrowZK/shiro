@@ -277,6 +277,21 @@ export const useChat = create<ChatState>((set, get) => ({
             break;
           }
 
+          /* A topic change is broadcast on its own, and is worth a line in the
+             channel: it is usually why the channel suddenly went quiet. */
+          case "ChangeTopic": {
+            const d = m.data as T.ChangeTopic;
+            if (!d.ChannelName || !rooms[roomKey("channel", d.ChannelName)]) break;
+            const room = ensure("channel", d.ChannelName);
+            if (d.Topic) {
+              room.topic = mergePatch(room.topic, d.Topic);
+              if (d.Topic.Text) {
+                notice(room, `${d.Topic.SetBy ?? "somebody"} set the topic: ${d.Topic.Text}`);
+              }
+            }
+            break;
+          }
+
           case "ChannelHeader": {
             const d = m.data as T.ChannelHeader;
             if (!d.ChannelName) break;

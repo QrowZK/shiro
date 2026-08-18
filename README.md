@@ -67,7 +67,7 @@ implemented, rendering, and driven by fake data shaped like the real protocol pa
 
 | Screen | File | State |
 |---|---|---|
-| Login | `src/screens/LoginScreen.jsx` | done |
+| Login and registration | `src/screens/LoginScreen.jsx`, `RegisterDialog.jsx` | done |
 | Settings | `src/screens/SettingsScreen.jsx` | built from primitives - screen 9 was never designed |
 | App shell | `src/screens/AppShell.jsx` | done |
 | Battle list | `src/screens/BattleListScreen.jsx` | done |
@@ -103,8 +103,8 @@ a button that does nothing is worse than one that explains itself.
 | Install detection | `src-tauri/src/install.rs` | built; **not yet run against a real install** |
 | Rust TCP relay | `src-tauri/src/relay.rs` | builds clean |
 
-`npm test` runs 73 TypeScript tests; `cargo test` in `src-tauri/` runs 15 Rust tests;
-`npm run test:e2e` runs 68 end-to-end checks.
+`npm test` runs 81 TypeScript tests; `cargo test` in `src-tauri/` runs 15 Rust tests;
+`npm run test:e2e` runs 71 end-to-end checks.
 
 ## Testing the live paths
 
@@ -114,8 +114,8 @@ replaces `window.__TAURI_INTERNALS__` with [a fake
 server](tools/e2e/fake-server.js) and drives the real UI through login, joining,
 hosting, a passworded join, spectating, ignoring, room votes, host controls,
 chat, the matchmaker ready check, parties, friends, launching an engine, a
-rejoin offer, a dropped socket, settings, a debriefing and logging out — 68
-assertions against the same code the desktop build runs.
+rejoin offer, a dropped socket, settings, a debriefing, registering an account
+and logging out — 71 assertions against the same code the desktop build runs.
 
 ```bash
 npm run dev          # in another shell
@@ -186,8 +186,11 @@ Tokens under `src/styles/tokens/` mirror the project's `tokens/*.css` one-to-one
 10. ~~Parties, room votes, host controls (kick, add AI), spectating, ignores,
     rejoin offers and reconnect.~~ done.
 11. ~~Settings, install override, server override, stay-logged-in, away.~~ done.
-12. Not built: downloads and Planet Wars — screens 10 and 11, deferred per the
-    handoff.
+12. ~~Account registration, forced joins, admin kicks, topic changes, engine
+    and game changes.~~ done.
+13. Not built: downloads and Planet Wars — screens 10 and 11, deferred per the
+    handoff. Also unhandled, deliberately: the news, forum and ladder lists
+    (no screen asks for them) and custom game modes.
 
 ## Launching a game
 

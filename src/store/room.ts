@@ -204,6 +204,16 @@ export const useRoom = create<RoomState>((set, get) => ({
           break;
         }
 
+        /* The server moves us: a matchmaker game forming, an admin, or a
+           website command. Nothing to confirm - just go. */
+        case "ForceJoinBattle": {
+          const d = m.data as T.ForceJoinBattle;
+          if (d.Name && me && d.Name !== me) break;
+          pendingSpectate = false;
+          tx("JoinBattle", { BattleID: d.BattleID });
+          break;
+        }
+
         case "KickFromBattle": {
           // Broadcast to the whole room, so check it is aimed at us.
           const d = m.data as T.KickFromBattle;

@@ -6,10 +6,10 @@
  */
 import { create } from "zustand";
 
-import type { Message } from "../protocol/registry";
-import type * as T from "../protocol/types";
-import { mergePatch } from "../protocol/wire";
-import type { RelayStatus } from "../net/connection";
+import type { Message } from "../protocol/registry.ts";
+import type * as T from "../protocol/types.ts";
+import { mergePatch } from "../protocol/wire.ts";
+import type { RelayStatus } from "../net/connection.ts";
 
 export type ConnectionState =
   | { kind: "idle" }
@@ -47,6 +47,9 @@ interface LobbyState {
   /** How many reconnects we have tried since the last good connection. */
   reconnect: number;
 
+  /** Set when an admin threw us off; retrying would be pointless and rude. */
+  kicked?: { reason: string };
+
   setConnection: (c: ConnectionState) => void;
   setReconnect: (n: number) => void;
   applyRelayStatus: (s: RelayStatus) => void;
@@ -54,6 +57,7 @@ interface LobbyState {
   applyBatch: (ms: Message[]) => void;
   /** Forget who is online and what is open, keeping the session. */
   resetDirectory: () => void;
+  clearKick: () => void;
   reset: () => void;
 }
 
@@ -64,6 +68,7 @@ const EMPTY = {
   chat: [] as ChatLine[],
   unhandled: {} as Record<string, number>,
   reconnect: 0,
+  kicked: undefined as { reason: string } | undefined,
 };
 
 const MAX_CHAT = 500;
@@ -137,6 +142,21 @@ export const useLobby = create<LobbyState>((set, get) => ({
           break;
         }
 
+        case "DefaultEngineChanged":
+          // The status bar reads the engine from Welcome, so keep it current.
+          patch.welcome = { ...(state.welcome ?? {} as T.Welcome),
+            Engine: (m.data as T.DefaultEngineChanged).Engine };
+          break;
+
+        case "DefaultGameChanged":
+          patch.welcome = { ...(state.welcome ?? {} as T.Welcome),
+            Game: (m.data as T.DefaultGameChanged).Game };
+          break;
+
+        case "KickFromServer":
+          patch.kicked = { reason: (m.data as T.KickFromServer).Reason ?? "No reason given." };
+          break;
+
         case "BattleRemoved":
           delete battles[(m.data as T.BattleRemoved).BattleID];
           break;
@@ -199,6 +219,9 @@ export const useLobby = create<LobbyState>((set, get) => ({
      otherwise battles that closed while we were away never disappear. Chat
      scrollback is deliberately kept: it is the one thing a player would lose. */
   resetDirectory: () => set({ users: {}, battles: {}, channels: {} }),
+
+  /** Acknowledge the kick notice so the dialog can close. */
+  clearKick: () => set({ kicked: undefined }),
 
   reset: () => set({ connection: { kind: "idle" }, welcome: undefined, me: undefined,
     sessionToken: undefined, ...EMPTY }),

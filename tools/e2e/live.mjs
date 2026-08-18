@@ -54,6 +54,8 @@ const browser = await launch();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 process.on("uncaughtException", err => {
   console.log("\nthe run stopped: " + err.message.split("\n")[0]);
+  const where = (err.stack || "").split("\n").find(l => l.includes("live.mjs"));
+  if (where) console.log("  at" + where.split("at")[1]);
   if (errors.length) {
     console.log("page errors:");
     for (const e of errors) console.log("  " + e);
@@ -94,6 +96,24 @@ async function waitFor(label, fn, timeout = 6000) {
     await page.waitForTimeout(150);
   }
 }
+
+console.log("registering");
+await clickText(/Create an account/);
+check("the account dialog opens", await waitFor("reg", () => seeing(/Create an account/)));
+/* The login screen is still mounted behind the dialog, so its fields come
+   first; the dialog's are the last ones. */
+await page.getByLabel(/Account name/).last().fill("shiro-taken");
+const pwFields = page.locator("input[type=password]");
+const pwCount = await pwFields.count();
+await pwFields.nth(pwCount - 2).fill("hunter2");
+await pwFields.nth(pwCount - 1).fill("hunter2");
+await page.waitForTimeout(200);
+await clickDialog(/^Create account$/);
+check("a name the server refuses is reported, not swallowed",
+  await waitFor("taken", () => seeing(/name is taken/)));
+await clickDialog(/^Cancel$/);
+check("cancelling returns to the login screen",
+  await waitFor("backtologin", () => seeing(/Steam accounts need a lobby password/)));
 
 console.log("login");
 await page.locator("input").nth(0).fill("Qrow");

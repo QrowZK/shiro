@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import type * as T from "../protocol/types.ts";
-import { battleList, userToChip, chatLines, shortTime, describeFailure, statusBarKind } from "./adapters.ts";
+import { battleList, userToChip, chatLines, shortTime, describeFailure, statusBarKind, describeRegisterFailure } from "./adapters.ts";
 
 const USERS: Record<string, T.User> = {
   hexed: { Name: "hexed", Clan: "ZKF", Country: "US", EffectiveElo: 1790.6, Level: 33 } as T.User,
@@ -81,4 +81,11 @@ test("a drop with a retry pending is reconnecting, not offline", () => {
   assert.equal(statusBarKind(dropped, 1), "reconnecting", "something is being done about it");
   assert.equal(statusBarKind({ kind: "online" }, 3), "online");
   assert.equal(statusBarKind({ kind: "loggingIn" }), "reconnecting");
+});
+
+test("registration failures name the actual problem", () => {
+  assert.match(describeRegisterFailure(2), /name is taken/i);
+  assert.match(describeRegisterFailure(4, "cheating"), /^Banned: cheating$/);
+  assert.match(describeRegisterFailure(11), /log in with your password/i);
+  assert.match(describeRegisterFailure(99), /error 99/);
 });

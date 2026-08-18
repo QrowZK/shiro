@@ -14,9 +14,10 @@ import FriendsScreen from "./screens/FriendsScreen.jsx";
 import SettingsScreen from "./screens/SettingsScreen.jsx";
 import HostBattleDialog from "./screens/HostBattleDialog.jsx";
 import JoinPasswordDialog from "./screens/JoinPasswordDialog.jsx";
+import RegisterDialog from "./screens/RegisterDialog.jsx";
 
 import { inTauri } from "./net/connection";
-import { login, teardown, send, say, reconnectNow } from "./net/session";
+import { login, register, teardown, send, say, reconnectNow } from "./net/session";
 import { useLobby } from "./store/lobby";
 import { useRoom } from "./store/room";
 import { useGame } from "./store/game";
@@ -51,6 +52,7 @@ export default function App() {
   const [install, setInstall] = React.useState(null);
   const [profileOf, setProfileOf] = React.useState(null);
   const [away, setAway] = React.useState(false);
+  const [registering, setRegistering] = React.useState(false);
 
   const settings = useSettings();
 
@@ -60,6 +62,7 @@ export default function App() {
   const liveBattles = useLobby(s => s.battles);
   const liveUsers = useLobby(s => s.users);
   const reconnectAttempt = useLobby(s => s.reconnect);
+  const kicked = useLobby(s => s.kicked);
 
   /* The live battle room. `useRoom` holds membership; the header it decorates
      still comes from the public battle directory in `useLobby`. */
@@ -157,6 +160,21 @@ export default function App() {
     setLoggedIn(true);
   }, [live]);
 
+  const handleRegister = React.useCallback(async (name, password, email) => {
+    if (!live) {
+      await new Promise(r => setTimeout(r, 700));
+      setLoggedIn(true);
+      return;
+    }
+    const { host, port } = useSettings.getState();
+    await register({ name, password }, email, host || undefined, port || undefined);
+    // register() logs in on success, so anything left is a real failure.
+    const c = useLobby.getState().connection;
+    if (c.kind !== "online") throw new Error(describeFailure(c));
+    useSettings.getState().set({ name });
+    setLoggedIn(true);
+  }, [live]);
+
   const handleLogout = React.useCallback(() => {
     // Every store holds session state; leaving any of it behind would show the
     // next account the last one's friends.
@@ -195,9 +213,12 @@ export default function App() {
       <AppShell view={view} onView={setView} {...shell}>
         <ErrorBoundary>
           <LoginScreen onLogin={handleLogin} live={live}
+            onRegister={() => setRegistering(true)}
             defaultName={settings.name} defaultPassword={settings.password}
             defaultRemember={settings.remember} />
         </ErrorBoundary>
+        <RegisterDialog open={registering} onClose={() => setRegistering(false)}
+          onRegister={handleRegister} />
       </AppShell>
     );
   }
@@ -418,6 +439,17 @@ export default function App() {
             {inviteSecondsLeft(partyInvite, Date.now())}s
           </span>
         </div>
+      </Dialog>
+
+      {/* An admin threw us off. There is nothing to retry, so the only way
+          out is back to the login screen. */}
+      <Dialog open={Boolean(kicked)} title="Disconnected by an admin" width={380}
+        footer={<Button variant="primary" onClick={() => { useLobby.getState().clearKick(); handleLogout(); }}>
+          Back to login
+        </Button>}>
+        <span style={{ font: "var(--text-ui)", color: "var(--text-body)" }}>
+          {kicked ? kicked.reason : ""}
+        </span>
       </Dialog>
 
       {/* Sent after login when a game you were in is still running: the lobby
