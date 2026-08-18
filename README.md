@@ -102,12 +102,12 @@ a button that does nothing is worse than one that explains itself.
 | Local settings | `src/store/settings.ts` | account, install override, server, persisted |
 | Friends | `src/store/friends.ts` | live - list, add, remove, ignore, profiles |
 | Match history | `src/store/history.ts` | live - debriefings, ratings, awards |
-| Engine launch | `src/store/game.ts`, `src-tauri/src/launch.rs` | built; **not yet run against a real engine** |
+| Engine launch | `src/store/game.ts`, `src-tauri/src/launch.rs` | built; preflight-checkable; **not yet run against a real engine** |
 | Install detection | `src-tauri/src/install.rs` | built; **not yet run against a real install** |
 | Rust TCP relay | `src-tauri/src/relay.rs` | builds clean |
 
 `npm test` runs 81 TypeScript tests; `cargo test` in `src-tauri/` runs 15 Rust tests;
-`npm run test:e2e` runs 71 end-to-end checks.
+`npm run test:e2e` runs 73 end-to-end checks.
 
 ## Testing the live paths
 
@@ -117,8 +117,9 @@ replaces `window.__TAURI_INTERNALS__` with [a fake
 server](tools/e2e/fake-server.js) and drives the real UI through login, joining,
 hosting, a passworded join, spectating, ignoring, room votes, host controls,
 chat, the matchmaker ready check, parties, friends, launching an engine, a
-rejoin offer, a dropped socket, settings, a debriefing, registering an account
-and logging out — 71 assertions against the same code the desktop build runs.
+rejoin offer, a dropped socket, settings, the launch preflight, a debriefing,
+registering an account and logging out — 73 assertions against the same code the
+desktop build runs.
 
 ```bash
 npm run dev          # in another shell
@@ -214,10 +215,12 @@ unit-tested; the spawn itself has not run against a Zero-K install.
 3. The launch is driven by the *arrival* of `ConnectSpring`, not by the button
    that asks for it, so a matchmaker game starts correctly with nothing pressed.
 
-What to check on first run: that `engine/win64/<version>/spring.exe` is where we
-expect it, and that the engine finds the game and map rather than writing a fresh
-data dir under Documents. Both failure modes surface as a message in the room's
-SYNC panel or the engine's own error dialog.
+**Check it before you need it.** Settings has a "Check launch setup" button that
+resolves the install, the engine binary and the connect script and reports
+exactly what would be run — without starting anything. That turns the two likely
+first-run failures into a sentence: `engine/win64/<version>/spring.exe` not being
+where we expect, and the data dir not pointing at the Zero-K folder (which is how
+the engine ends up finding none of your maps).
 
 A local `ZkLobbyServer` is no longer a prerequisite — see ARCHITECTURE.md section 8
 for the revised guidance on developing against live.

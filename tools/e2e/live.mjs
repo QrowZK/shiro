@@ -342,6 +342,12 @@ await page.getByPlaceholder("Leave empty to detect automatically").fill("");
 await page.getByRole("button", { name: /^Apply$/ }).first().click();
 check("clearing the override goes back to detection",
   await waitFor("goodroot", () => seeing(/steamapps/)));
+await clickText(/Check launch setup/);
+check("the launch preflight resolves an engine without starting a game",
+  await waitFor("preview", () => seeing(/Ready to launch/) && seeing(/spring\.exe/)));
+check("and names the data dir, which is what a missing map is really about",
+  await seeing(/DATA DIR/));
+
 await page.locator("label", { hasText: "Away" }).first().click();
 check("away is a status the server is told about",
   await waitFor("afk", () => sentSince(badMark, /^ChangeUserStatus \{"IsAfk":true\}/)));

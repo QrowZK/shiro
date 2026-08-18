@@ -358,6 +358,10 @@ export default function App() {
       settings={settings}
       onSettings={patch => useSettings.getState().set(patch)}
       onRedetect={live ? redetect : undefined}
+      onPreview={live
+        ? () => import("./net/launch").then(({ launchPreview }) =>
+          launchPreview(welcome?.Engine ?? "", me ?? ""))
+        : undefined}
       onLogout={handleLogout}
       away={away}
       onAway={live ? next => { setAway(next); void send("ChangeUserStatus", { IsAfk: next }); } : undefined} />

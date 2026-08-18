@@ -13,6 +13,7 @@ pub fn run() {
             relay::zks_password_hash,
             launch::zks_locate_install,
             launch::zks_launch_spring,
+            launch::zks_launch_preview,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

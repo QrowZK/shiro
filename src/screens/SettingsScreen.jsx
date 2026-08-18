@@ -32,11 +32,23 @@ function Row({ label, value }) {
 }
 
 export default function SettingsScreen({ me, install, installError, engine, settings, onSettings,
-  onRedetect, onLogout, away, onAway, version = "0.1.0" }) {
+  onRedetect, onLogout, onPreview, away, onAway, version = "0.1.0" }) {
   const [host, setHost] = React.useState((settings && settings.host) || "");
   const [port, setPort] = React.useState((settings && settings.port) ? String(settings.port) : "");
   const [root, setRoot] = React.useState((settings && settings.installRoot) || "");
   const [saved, setSaved] = React.useState("");
+  const [preview, setPreview] = React.useState(null);
+  const [previewError, setPreviewError] = React.useState("");
+
+  const runPreview = async () => {
+    setPreview(null);
+    setPreviewError("");
+    try {
+      setPreview(await onPreview());
+    } catch (e) {
+      setPreviewError(e && e.message ? e.message : String(e));
+    }
+  };
 
   const applyServer = () => {
     if (!onSettings) return;
@@ -100,6 +112,35 @@ export default function SettingsScreen({ me, install, installError, engine, sett
                 if (onRedetect) onRedetect(); }}>Apply</Button>
             {onRedetect && <Button variant="ghost" size="sm" onClick={onRedetect}>Re-detect</Button>}
           </div>
+          {onPreview && (
+            <>
+              <div style={{ display: "flex", gap: "var(--sp-4)", alignItems: "center" }}>
+                <Button variant="secondary" size="sm" onClick={runPreview}>Check launch setup</Button>
+                <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)", color: "var(--text-low)" }}>
+                  Resolves the engine and the script without starting a game.
+                </span>
+              </div>
+              {previewError && (
+                <span style={{ font: "var(--w-regular) var(--size-tiny)/1.5 var(--font-mono)",
+                  color: "var(--signal-danger)", whiteSpace: "pre-wrap" }}>{previewError}</span>
+              )}
+              {preview && (
+                <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)",
+                  padding: "var(--sp-5)", background: "var(--surface-sunken)", border: "1px solid var(--w-06)" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
+                    <Icon name="check" size={16} style={{ color: "var(--text-mid)" }} />
+                    <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)" }}>
+                      Ready to launch.
+                    </span>
+                  </div>
+                  <Row label="Engine" value={preview.exe} />
+                  <Row label="Working dir" value={preview.cwd} />
+                  <Row label="Data dir" value={(preview.env.find(e => e[0] === "SPRING_DATADIR") || [])[1] || "-"} />
+                  <Row label="Script" value={preview.scriptPath} />
+                </div>
+              )}
+            </>
+          )}
         </Section>
 
         <Section title="Server"

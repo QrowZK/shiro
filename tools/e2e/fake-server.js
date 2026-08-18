@@ -227,6 +227,22 @@
             root: args.root || "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Zero-K",
             source: args.root ? "settings" : "Steam",
           };
+        case "zks_launch_preview": {
+          const root = state.installRoot
+            || "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Zero-K";
+          if (!args.engine) throw new Error("Zero-K is installed but engine  is not.");
+          const exe = root + "\\engine\\win64\\" + args.engine + "\\spring.exe";
+          return {
+            install: { root, source: state.installRoot ? "settings" : "Steam" },
+            exe,
+            cwd: root + "\\engine\\win64\\" + args.engine,
+            args: ["C:\\Users\\you\\AppData\\Local\\Temp\\shiro\\connect_script.txt"],
+            env: [["SPRING_DATADIR", root], ["SPRING_WRITEDIR", root]],
+            scriptPath: "C:\\Users\\you\\AppData\\Local\\Temp\\shiro\\connect_script.txt",
+            script: "[GAME]\n{\nHostIP=0.0.0.0;\nHostPort=0;\nIsHost=0;\nMyPlayerName="
+              + args.player + ";\nMyPasswd=preview;\n}\n",
+          };
+        }
         case "zks_launch_spring":
           state.launched = args.req;
           soon(() => emit("zks://game", { kind: "launched", pid: 4242 }));

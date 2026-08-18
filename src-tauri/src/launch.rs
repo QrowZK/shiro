@@ -124,6 +124,60 @@ pub struct Game {
     root: Arc<Mutex<Option<String>>>,
 }
 
+/// What a launch would do, resolved but not run.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchPreview {
+    pub install: Install,
+    pub exe: PathBuf,
+    pub cwd: PathBuf,
+    pub args: Vec<String>,
+    pub env: Vec<(String, String)>,
+    pub script_path: PathBuf,
+    pub script: String,
+}
+
+/// Resolve everything a launch needs and report it, without starting anything.
+///
+/// The launch is the one part of this client that cannot be exercised without a
+/// Zero-K install and a real match, so the first time it runs it had better not
+/// be a blank failure. This answers "would it work, and with what" from the
+/// settings screen, where the fix - a wrong install path, a missing engine - is
+/// two fields away.
+#[tauri::command]
+pub fn zks_launch_preview(
+    game: State<'_, Game>,
+    engine: String,
+    player: String,
+) -> Result<LaunchPreview, String> {
+    let root = game.root.lock().ok().and_then(|r| r.clone());
+    let install = install::detect_with(root.as_deref())?;
+    let exe = install::find_engine(&install.root, &engine)?;
+    let script_path = script_path();
+    // Placeholder connect details: the point is the paths and the shape of the
+    // script, not the address of a game that is not running.
+    let req = ConnectRequest {
+        engine,
+        ip: "0.0.0.0".into(),
+        port: 0,
+        my_player_name: player,
+        script_password: "preview".into(),
+    };
+    let script = connect_script(&req)?;
+    let plan = spawn_plan(&exe, &install.root, &script_path);
+    Ok(LaunchPreview {
+        install,
+        exe: plan.exe,
+        cwd: plan.cwd,
+        args: plan.args.iter().map(|a| a.to_string_lossy().into_owned()).collect(),
+        env: plan.env.iter()
+            .map(|(k, v)| (k.clone(), v.to_string_lossy().into_owned()))
+            .collect(),
+        script_path,
+        script,
+    })
+}
+
 #[tauri::command]
 pub fn zks_locate_install(game: State<'_, Game>, root: Option<String>) -> Result<Install, String> {
     // The override is remembered so a launch uses the same install the settings

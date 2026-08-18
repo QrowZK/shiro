@@ -41,6 +41,26 @@ export function launchSpring(req: ConnectRequest): Promise<number> {
   return invoke("zks_launch_spring", { req });
 }
 
+/** Everything a launch would do, resolved but not run. */
+export interface LaunchPreview {
+  install: Install;
+  exe: string;
+  cwd: string;
+  args: string[];
+  env: Array<[string, string]>;
+  scriptPath: string;
+  script: string;
+}
+
+/**
+ * Ask what a launch would do. The launch is the one path that needs a real
+ * install and a real match to exercise, so this answers "would it work, and
+ * with what" from the settings screen instead of from a failed game.
+ */
+export function launchPreview(engine: string, player: string): Promise<LaunchPreview> {
+  return invoke("zks_launch_preview", { engine, player });
+}
+
 export function onGame(cb: (s: GameStatus) => void): Promise<UnlistenFn> {
   return listen<GameStatus>("zks://game", e => cb(e.payload));
 }
