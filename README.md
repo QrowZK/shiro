@@ -6,6 +6,22 @@ existing client, dramatically better execution.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — stack, wire protocol, launch pipeline, Windows packaging
 - [docs/DESIGN_HANDOFF.md](docs/DESIGN_HANDOFF.md) — the designer-facing brief this UI was built against
 
+## Install it
+
+[**Download the Windows installer**](https://github.com/QrowZK/shiro/releases/download/dev/Shiro_0.1.0_x64-setup.exe)
+— 1.7 MB, per-user install, no admin prompt. Rebuilt from `main-u3zpp0` on every
+push by [the Windows workflow](.github/workflows/windows-installer.yml), which
+runs the tests first.
+
+Two things to expect:
+
+- **SmartScreen will warn about an unknown publisher.** The build is unsigned;
+  see ARCHITECTURE.md section 11 on code signing, which is the one item with real
+  lead time.
+- **You need Zero-K installed already.** Shiro plays through its engine, games and
+  maps and does not download content — Settings has a "Check launch setup" button
+  that says whether it found everything.
+
 ## Run it
 
 ```bash
