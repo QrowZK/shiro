@@ -83,7 +83,13 @@ const body = header
 if (process.argv.includes("--check")) {
   let current = "";
   try { current = readFileSync(OUT, "utf8"); } catch { /* missing counts as stale */ }
-  if (current !== body) {
+  // Compare content, not bytes. Git may have checked this file out with CRLF
+  // (core.autocrlf is on by default on Windows, including the CI runner) while
+  // the generator always writes LF, and a raw !== then fails for a file that is
+  // perfectly up to date. .gitattributes pins eol=lf too; this is the belt to
+  // that braces, because it holds whatever a contributor's git config says.
+  const normalize = s => s.replace(/\r\n/g, "\n");
+  if (normalize(current) !== normalize(body)) {
     console.error("src/ds/icons.js is out of date - run: node tools/gen-icons.mjs");
     process.exit(1);
   }
