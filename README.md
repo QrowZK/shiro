@@ -100,14 +100,15 @@ a button that does nothing is worse than one that explains itself.
 | Matchmaker | `src/store/matchmaker.ts` | live - queues, joining, the ready check |
 | Parties | `src/store/party.ts` | live - invite, accept, leave |
 | Local settings | `src/store/settings.ts` | account, install override, server, persisted |
+| Website commands | `src/store/site.ts` | live - join, add friend, open a channel from zero-k.info |
 | Friends | `src/store/friends.ts` | live - list, add, remove, ignore, profiles |
 | Match history | `src/store/history.ts` | live - debriefings, ratings, awards |
 | Engine launch | `src/store/game.ts`, `src-tauri/src/launch.rs` | built; preflight-checkable; **not yet run against a real engine** |
 | Install detection | `src-tauri/src/install.rs` | built; **not yet run against a real install** |
 | Rust TCP relay | `src-tauri/src/relay.rs` | builds clean |
 
-`npm test` runs 84 TypeScript tests; `cargo test` in `src-tauri/` runs 15 Rust tests;
-`npm run test:e2e` runs 75 end-to-end checks.
+`npm test` runs 92 TypeScript tests; `cargo test` in `src-tauri/` runs 15 Rust tests;
+`npm run test:e2e` runs 78 end-to-end checks.
 
 ## Testing the live paths
 
@@ -117,9 +118,9 @@ replaces `window.__TAURI_INTERNALS__` with [a fake
 server](tools/e2e/fake-server.js) and drives the real UI through login, joining,
 hosting, a passworded join, spectating, ignoring, room votes, host controls,
 chat, the matchmaker ready check, parties, friends, launching an engine, a
-rejoin offer, a dropped socket, a server notice, settings, the launch preflight,
-a debriefing, registering an account and logging out — 75 assertions against the
-same code the desktop build runs.
+rejoin offer, a dropped socket, a server notice, a command from the website,
+settings, the launch preflight, a debriefing, registering an account and logging
+out — 78 assertions against the same code the desktop build runs.
 
 ```bash
 npm run dev          # in another shell
@@ -192,9 +193,12 @@ Tokens under `src/styles/tokens/` mirror the project's `tokens/*.css` one-to-one
 11. ~~Settings, install override, server override, stay-logged-in, away.~~ done.
 12. ~~Account registration, forced joins, admin kicks, topic changes, engine
     and game changes.~~ done.
-13. Not built: downloads and Planet Wars — screens 10 and 11, deferred per the
-    handoff. Also unhandled, deliberately: the news, forum and ladder lists
-    (no screen asks for them) and custom game modes.
+13. ~~Commands from the website.~~ done — `SiteToLobbyCommand`, parsed against
+    upstream's grammar in `ZeroKLobby/ActionHandler.cs`.
+14. Not built: downloads and Planet Wars — screens 10 and 11, deferred per the
+    handoff. Also unhandled, deliberately: the news, forum and ladder lists (no
+    screen asks for them), custom game modes, player reports, and the site
+    actions that need content we do not have (missions, replays, benchmarks).
 
 ## Launching a game
 

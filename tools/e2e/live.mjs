@@ -240,6 +240,18 @@ if (launched) {
 }
 check("the room reports the game as running", await waitFor("running", () => seeing(/Game running/)));
 
+console.log("commands from the website");
+const siteMark = await mark();
+await page.evaluate(() => window.__ZKS.push('SiteToLobbyCommand ' + JSON.stringify({
+  Command: "zk://chat/channel/zk@add_friend:lorelei" })));
+check("an add-friend from the site goes to the server",
+  await waitFor("sitefriend", () => sentSince(siteMark, /^SetAccountRelation \{.*"TargetName":"lorelei".*"Relation":1/)));
+check("and the path it carries navigates", await waitFor("sitechan", () => seeing(/#zk/)));
+
+await page.evaluate(() => window.__ZKS.push('SiteToLobbyCommand {"Command":"@join_player:hexed"}'));
+check("join_player joins whatever battle that player is in",
+  await waitFor("sitejoin", () => sentSince(siteMark, /^JoinBattle \{"BattleID":11\}/)));
+
 console.log("server notices");
 await page.evaluate(() => window.__ZKS.push('Say ' + JSON.stringify({
   Place: 5, Text: "Scheduled restart in 10 minutes.", IsEmote: false, Ring: false,

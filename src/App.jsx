@@ -26,6 +26,7 @@ import { useMatchmaker, secondsLeft } from "./store/matchmaker";
 import { useFriends } from "./store/friends";
 import { useParty, inviteSecondsLeft } from "./store/party";
 import { useSettings } from "./store/settings";
+import { useSite, channelOf, isExternalUrl } from "./store/site";
 import { useHistory, buildDebriefView } from "./store/history";
 import {
   battleList, statusBarKind, describeFailure, roomModel, chatLines, userToChip,
@@ -55,6 +56,9 @@ export default function App() {
   const [registering, setRegistering] = React.useState(false);
 
   const settings = useSettings();
+  /* `logout` is one of the site's actions, but the handler is defined below;
+     a ref keeps the definition where it reads best. */
+  const handleLogoutRef = React.useRef(null);
 
   const connection = useLobby(s => s.connection);
   const welcome = useLobby(s => s.welcome);
@@ -64,6 +68,7 @@ export default function App() {
   const reconnectAttempt = useLobby(s => s.reconnect);
   const kicked = useLobby(s => s.kicked);
   const notices = useLobby(s => s.notices);
+  const siteCommand = useSite(s => s.pending);
 
   /* The live battle room. `useRoom` holds membership; the header it decorates
      still comes from the public battle directory in `useLobby`. */
@@ -161,6 +166,54 @@ export default function App() {
     setLoggedIn(true);
   }, [live]);
 
+  /* The website talks to the lobby you already have open: "join this player",
+     "add this friend", "open this channel". The grammar is upstream's - see
+     store/site.ts - and everything it asks for here is something the app can
+     already do. Anything unrecognised is ignored rather than guessed at. */
+  React.useEffect(() => {
+    if (!live || !siteCommand) return;
+    const command = useSite.getState().take();
+    if (!command) return;
+
+    for (const { command: action, arg } of command.actions) {
+      switch (action) {
+        case "join_battle":
+        case "join_player": {
+          // The argument is a player, not a battle: join whatever they are in.
+          const target = useLobby.getState().users[arg];
+          if (target?.BattleID != null) {
+            useRoom.getState().join(target.BattleID);
+            setView("battles");
+          }
+          break;
+        }
+        case "add_friend":
+          useFriends.getState().add(arg);
+          break;
+        case "select_map":
+          // In a room the host decides, and every autohost takes !map.
+          if (useRoom.getState().battleID != null) void say(`!map ${arg}`, 1);
+          else setHosting(true);
+          break;
+        case "logout":
+          handleLogoutRef.current?.();
+          break;
+        default:
+          break;
+      }
+    }
+
+    const channel = channelOf(command.path);
+    if (channel) {
+      useChat.getState().join(channel);
+      setView("chat");
+    } else if (command.path === "battles") setView("battles");
+    else if (isExternalUrl(command.path)) {
+      const url = command.path.startsWith("www.") ? `http://${command.path}` : command.path;
+      window.open(url, "_blank", "noreferrer");
+    }
+  }, [live, siteCommand]);
+
   const handleRegister = React.useCallback(async (name, password, email) => {
     if (!live) {
       await new Promise(r => setTimeout(r, 700));
@@ -199,6 +252,8 @@ export default function App() {
     id => Object.values(liveUsers).filter(u => u.BattleID === id && u.Name).map(u => u.Name).sort(),
     [liveUsers]
   );
+
+  handleLogoutRef.current = handleLogout;
 
   const shell = {
     connection: live ? statusBarKind(connection, reconnectAttempt) : "online",

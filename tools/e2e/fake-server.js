@@ -47,7 +47,10 @@
     state.push(line("User", { Name: "Qrow", AccountID: 1, Country: "GB", Clan: "ZKF",
       EffectiveElo: 1842.4, EffectiveMmElo: 1766, Level: 41, Rank: 4, IsAdmin: false, IsBot: false,
       BanMute: false, BanVotes: false, BanSpecChat: false, SyncVersion: 1, RawMmElo: 1766 }));
+    // hexed founded battle 11 and is sitting in it, which is what makes
+    // "join whatever that player is in" answerable.
     state.push(line("User", { Name: "hexed", AccountID: 2, Country: "US", Clan: "ZKF",
+      BattleID: 11,
       EffectiveElo: 1790, EffectiveMmElo: 1701, Level: 33, Rank: 3, IsAdmin: false, IsBot: false,
       BanMute: false, BanVotes: false, BanSpecChat: false, SyncVersion: 1, RawMmElo: 1701 }));
     state.push(line("User", { Name: "lorelei", AccountID: 3, Country: "FR",
