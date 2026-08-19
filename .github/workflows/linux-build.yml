@@ -17,11 +17,13 @@ name: Linux build
 
 on:
   workflow_dispatch:
+  # Every pull request into main, whatever the branch is called. The list
+  # below used to name feature branches, which meant CI silently stopped
+  # running whenever one was renamed or replaced.
+  pull_request:
+    branches: [main]
   push:
-    # The feature branch is listed so the first Linux packages can be produced
-    # before this merges — nothing in the app has ever been built for Linux, so
-    # waiting until after the merge would be finding out too late.
-    branches: [main, fix/keepalive-ci-and-chat-scroll]
+    branches: [main]
     paths:
       - "src/**"
       - "src-tauri/**"
@@ -30,6 +32,7 @@ on:
       - "package-lock.json"
       - "vite.config.js"
       - "tools/**"
+      - ".gitattributes"
       - ".github/workflows/linux-build.yml"
 
 jobs:
