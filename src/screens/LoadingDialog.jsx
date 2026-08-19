@@ -45,6 +45,8 @@ export default function LoadingDialog({ open, message = "Loading…" }) {
           position: "absolute", left: 0, bottom: 1,
           width: SPRITE_W, height: SPRITE_H,
           backgroundImage: `url(${walkSheet})`,
+          // Black ink, so a dark skin inverts it. See LoginScreen.
+          filter: "var(--art-filter, none)",
           backgroundRepeat: "no-repeat",
           backgroundSize: `${SPRITE_W * FRAMES}px ${SPRITE_H}px`,
           animation: "shiro-walk .55s steps(8) infinite, shiro-cross 4.4s linear infinite",

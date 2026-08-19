@@ -1,5 +1,6 @@
 import React from "react";
 import { Button, UserChip, IconButton, Badge, Input, EmptyState } from "../ds/shiro.js";
+import magpie from "../assets/art/magpie-banking.png";
 
 /* Screen 8 - friends list and the profile detail: badges, level, three ratings.
 
@@ -38,13 +39,44 @@ export default function FriendsScreen({ users, profile, onSelect, onMessage, onI
 
   return (
     <div style={{ flex: 1, display: "grid", gridTemplateColumns: "minmax(0,1fr) 320px", minHeight: 0 }}>
-      <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
-        <div style={{ height: 26, display: "flex", alignItems: "center", justifyContent: "space-between",
+      <div style={{ position: "relative", display: "flex", flexDirection: "column", minHeight: 0 }}>
+        {/* A Magpie banking away behind the roster, filling the dead space a
+            friends list leaves: the band between a name and its presence
+            label, and the block under the last row.
+
+            Three things about the placement are deliberate. It lives in the
+            column rather than inside the scroller, so it stays put while the
+            list scrolls over it. It is clipped to the column, so the bleed off
+            the bottom edge stays inside the panel instead of running under the
+            status bar. And it stops short of the right-hand column the
+            presence labels sit in - the wing crosses the rows, never the text.
+
+            It is dropped entirely when there is nobody to list: art behind an
+            empty state reads as a mistake rather than a flourish.
+
+            Rendered from the game's own bomberstrike.s3o. The ink is black, so
+            a dark skin has to invert it; --art-filter is that hook. */}
+        {users.length > 0 && (
+          <div aria-hidden="true" style={{
+            position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none",
+          }}>
+            <div style={{
+              position: "absolute", right: 70, bottom: -30, width: 820, height: 431,
+              backgroundImage: `url(${magpie})`,
+              backgroundRepeat: "no-repeat",
+              backgroundSize: "contain",
+              backgroundPosition: "right bottom",
+              filter: "var(--art-filter, none)",
+              opacity: 0.16,
+            }} />
+          </div>
+        )}
+        <div style={{ position: "relative", height: 26, display: "flex", alignItems: "center", justifyContent: "space-between",
           padding: "0 var(--sp-5)", borderBottom: "1px solid var(--w-12)" }}>
           <span className="lab">FRIENDS</span>
           <span className="lab">{users.length} TOTAL</span>
         </div>
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        <div style={{ position: "relative", flex: 1, minHeight: 0, overflowY: "auto" }}>
           {users.length === 0
             ? <EmptyState icon="users" title="No friends yet."
                 body="Add someone by name and they show up here whenever they are online." />
@@ -64,7 +96,8 @@ export default function FriendsScreen({ users, profile, onSelect, onMessage, onI
             ))}
         </div>
         {onAdd && (
-          <div style={{ display: "flex", gap: "var(--sp-3)", padding: "var(--sp-4) var(--sp-5)",
+          <div style={{ position: "relative", display: "flex", gap: "var(--sp-3)",
+            padding: "var(--sp-4) var(--sp-5)", background: "var(--surface-base)",
             borderTop: "1px solid var(--w-12)" }}>
             <Input placeholder="Add a friend by name" size="sm" value={adding} wrapStyle={{ flex: 1 }}
               onChange={e => setAdding(e.target.value)}

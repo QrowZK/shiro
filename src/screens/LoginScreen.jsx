@@ -39,9 +39,14 @@ export default function LoginScreen({ onLogin, onRegister, live, defaultName, de
         {/* A Glaive, rendered from the game's own model as hard two-tone ink.
             Anchored to the bottom-right and bled off both edges so it reads as
             a printed plate rather than a sticker, and sits behind the type
-            without competing with it. */}
+            without competing with it.
+
+            Black ink on transparent, so a dark skin has to invert it;
+            --art-filter is that hook and resolves to `none` in the light
+            system. Same on the friends screen and the loading dialog. */}
         <img src={glaive} alt="" aria-hidden="true"
-          style={{ position: "absolute", right: "3%", bottom: "0%", height: "82%", width: "auto", pointerEvents: "none", userSelect: "none" }} />
+          style={{ position: "absolute", right: "3%", bottom: "0%", height: "82%", width: "auto",
+            filter: "var(--art-filter, none)", pointerEvents: "none", userSelect: "none" }} />
 
         {/* The type sits above the art, on its own so long copy stays readable
             wherever the figure happens to fall. */}
