@@ -24,7 +24,6 @@ export default function DebriefingScreen({ d, onBack }) {
     return (
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
         <EmptyState icon="trophy" title="No matches yet this session."
-          body="Play a game and the result lands here - ratings, awards and the link to the full record."
           action={<Button variant="primary" onClick={onBack}>Find a battle</Button>} />
       </div>
     );

@@ -121,11 +121,7 @@ export default function QueueScreen({ queued, onQueue, onFake, queues, joined, e
           </div>
           {party && party.length > 0
             ? party.map(p => <UserChip key={p.name} {...p} size="sm" />)
-            : onInvite && (
-              <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)", color: "var(--text-faint)" }}>
-                Queue with friends - you are matched as one team.
-              </span>
-            )}
+            : null}
           {onInvite && (
             <div style={{ display: "flex", gap: "var(--sp-3)" }}>
               <Input placeholder="Invite by name" size="sm" value={inviting} wrapStyle={{ flex: 1 }}

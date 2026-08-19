@@ -77,34 +77,19 @@ export default function DownloadsScreen({ jobs, order, onCancel, onClear, onSett
 
         {list.length === 0 ? (
           <div style={{ padding: "var(--sp-8)" }}>
-            <EmptyState icon="download" title="Nothing downloading."
-              body="Shiro fetches the game and map on the way into a match, so this
-                    usually stays empty. Anything queued behind a running download,
-                    or anything that failed, shows up here." />
+            <EmptyState icon="download" title="Nothing downloading." />
           </div>
         ) : (
           list.map(j => <JobRow key={j.id} job={j} onCancel={onCancel} />)
         )}
 
-        {/* Being straight about this beats a mystery failure later: custom games
-            are distributed through a route pr-downloader cannot reach. */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)",
-          padding: "var(--sp-7) var(--sp-8)" }}>
-          <span className="lab">WHAT THIS CAN AND CANNOT GET</span>
-          <span style={{ font: "var(--w-regular) var(--size-tiny)/1.5 var(--font-core)",
-            color: "var(--text-low)" }}>
-            Zero-K itself and ordinary maps download fine. Custom games such as
-            Supreme-K or Zero Wars, and their maps, are distributed separately and
-            cannot be fetched this way — run the official lobby once for those.
-          </span>
-          {onSettings && (
-            <div>
-              <Button variant="ghost" size="sm" onClick={onSettings}>
-                Zero-K installation settings
-              </Button>
-            </div>
-          )}
-        </div>
+        {onSettings && (
+          <div style={{ padding: "var(--sp-7) var(--sp-8)" }}>
+            <Button variant="ghost" size="sm" onClick={onSettings}>
+              Zero-K installation settings
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

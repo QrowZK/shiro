@@ -62,9 +62,6 @@ export default function LoginScreen({ onLogin, onRegister, live, defaultName, de
           <span style={{ font: "var(--w-regular) var(--size-mid)/1.5 var(--font-core)", color: "var(--text-mid)" }}>
             A lobby client for Zero-K.
           </span>
-          <span style={{ font: "var(--w-regular) var(--size-small)/1.6 var(--font-core)", color: "var(--text-low)" }}>
-            Shiro reuses your existing Zero-K installation for the engine, game and maps.
-          </span>
           {!live && (
             <span style={{ font: "var(--w-regular) var(--size-tiny)/1.5 var(--font-core)", color: "var(--text-faint)" }}>
               Running in the browser, so this is the demo click-through. Launch the
@@ -82,8 +79,7 @@ export default function LoginScreen({ onLogin, onRegister, live, defaultName, de
         <Input label="Password" type="password" value={pw} onChange={e => setPw(e.target.value)}
           onKeyDown={e => e.key === "Enter" && submit()} error={error || undefined} />
         <Checkbox label="Stay logged in" checked={remember}
-          onChange={e => setRemember(e.target.checked)}
-          hint="Saves your password on this machine." />
+          onChange={e => setRemember(e.target.checked)} />
         <Button variant="primary" size="lg" block loading={busy} onClick={submit}>
           {busy ? "Connecting" : "Log in"}
         </Button>

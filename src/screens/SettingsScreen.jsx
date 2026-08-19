@@ -101,19 +101,16 @@ function GameSettingsSection({ installRoot, disabled }) {
     }
   };
 
-  const hint = "Zero-K reads these when a match starts. Only what you change is "
-    + "written; everything else in the file is left exactly as it was.";
-
   if (error && !loaded) {
     return (
-      <Section title="In-game settings" hint={hint}>
+      <Section title="In-game settings">
         <Note tone="danger">{error}</Note>
       </Section>
     );
   }
   if (!loaded || !chosen) {
     return (
-      <Section title="In-game settings" hint={hint}>
+      <Section title="In-game settings">
         <Note>Reading the Zero-K settings...</Note>
       </Section>
     );
@@ -122,7 +119,7 @@ function GameSettingsSection({ installRoot, disabled }) {
   const active = SETTINGS_TABS.find(t => t.name === tab) || SETTINGS_TABS[0];
 
   return (
-    <Section title="In-game settings" hint={hint}>
+    <Section title="In-game settings">
       <div style={{ display: "flex", gap: "var(--sp-3)" }}>
         {SETTINGS_TABS.map(t => (
           <Button key={t.name} size="sm" variant={t.name === tab ? "quiet" : "ghost"}
@@ -226,15 +223,12 @@ function EngineSection({ installRoot, disabled }) {
     }
   };
 
-  const hint = "Font and resolution, which Zero-K's own menu sets through a "
-    + "display mode control that Shiro has no equivalent for.";
-
   if (error && !values) {
-    return <Section title="Advanced" hint={hint}><Note tone="danger">{error}</Note></Section>;
+    return <Section title="Advanced"><Note tone="danger">{error}</Note></Section>;
   }
 
   return (
-    <Section title="Advanced" hint={hint}>
+    <Section title="Advanced">
       {values === null ? (
         <Note>Reading springsettings.cfg...</Note>
       ) : (
@@ -318,18 +312,14 @@ export default function SettingsScreen({ me, install, installError, engine, sett
             stylesheet is already loaded, so switching is a repaint. Anything
             that needed confirming would be a layout change, and skins do not
             make those. */}
-        <Section title="Appearance"
-          hint="Skins recolour the surfaces, the ink and the hairlines. None of them move
-                anything - the density is the design, and it stays where it is.">
+        <Section title="Appearance">
           <Select label="Skin" size="sm" wrapStyle={{ width: 220 }}
             options={SKINS.map(s => ({ value: s.id, label: s.name }))}
             value={skin}
             onChange={e => onSettings && onSettings({ skin: e.target.value })} />
-          <Note>{(SKINS.find(s => s.id === skin) || SKINS[0]).note}</Note>
         </Section>
 
-        <Section title="Zero-K installation"
-          hint="Shiro plays through the Zero-K you already have: its engine, games and maps.">
+        <Section title="Zero-K installation">
           {install ? (
             <>
               <Row label="Found via" value={install.source} />
@@ -385,8 +375,7 @@ export default function SettingsScreen({ me, install, installError, engine, sett
           )}
         </Section>
 
-        <Section title="Server"
-          hint="Empty means the live server, zero-k.info:8200. Change this only to point at a local ZkLobbyServer.">
+        <Section title="Server">
           <div style={{ display: "flex", gap: "var(--sp-4)", alignItems: "flex-end" }}>
             <Input label="Host" placeholder="zero-k.info" value={host} size="sm"
               onChange={e => setHost(e.target.value)} wrapStyle={{ flex: 1 }} />
@@ -401,9 +390,7 @@ export default function SettingsScreen({ me, install, installError, engine, sett
           )}
         </Section>
 
-        <Section title="After a match"
-          hint="Spectators are never taken to the results - there is no rating change or
-                award to show them - so this only affects matches you played.">
+        <Section title="After a match">
           <Checkbox label="Open the results screen when a match ends"
             checked={Boolean(settings && settings.autoOpenDebriefing)}
             onChange={e => onSettings && onSettings({ autoOpenDebriefing: e.target.checked })} />
@@ -413,11 +400,7 @@ export default function SettingsScreen({ me, install, installError, engine, sett
 
         <EngineSection installRoot={settings && settings.installRoot} disabled={!install} />
 
-        <Section title="Content"
-          hint="Shiro does not download games, maps or engines yet. It uses what your Zero-K
-                installation already has, which is why it needs one. Missing content shows up as
-                a failed launch rather than a download - run the official lobby once for anything
-                you are missing.">
+        <Section title="Content">
           <a href="https://zero-k.info" target="_blank" rel="noreferrer"
             style={{ font: "var(--text-ui-sm)", color: "var(--text-hi)" }}>zero-k.info &#8599;</a>
         </Section>

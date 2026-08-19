@@ -2,6 +2,25 @@ import React from "react";
 import { Button, UserChip, IconButton, Badge, Input, EmptyState } from "../ds/shiro.js";
 import magpie from "../assets/art/magpie-banking.png";
 
+/* What the server's badge ids mean, from Chobby's own table
+   (LuaMenu/configs/gameConfig/zk/badges.lua). The official client pairs each
+   with an icon bundled in its archive; we show the label, which carries the
+   meaning without vendoring 369 kB of PNG. An id we do not know is shown as
+   itself rather than dropped - the list grows server-side, not here. */
+const BADGE_LABELS = {
+  player_level: "Level 200",
+  player_elo: "Top 3 player",
+  donator_0: "Bronze donator",
+  donator_1: "Silver donator",
+  donator_2: "Gold donator",
+  donator_3: "Diamond donator",
+  dev_content: "External developer",
+  dev_game: "Game developer",
+  dev_adv: "Lead developer",
+};
+
+const badgeLabel = id => BADGE_LABELS[id] || id;
+
 /* Where the Magpie stops being drawn. Soft, so whatever the bottom of the
    panel turns out to be - the add-a-friend bar, a short window - it is a
    fade rather than a cut across the fuselage. */
@@ -144,14 +163,16 @@ export default function FriendsScreen({ users, profile, onSelect, onMessage, onI
                 </React.Fragment>
               ))}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
-              <span className="lab">BADGES</span>
-              <span style={{ font: "var(--w-regular) var(--size-tiny)/1.5 var(--font-core)", color: "var(--text-faint)" }}>
-                {profile && profile.badges && profile.badges.length
-                  ? profile.badges.join(", ")
-                  : "Badge image assets are unresolved - engineering will supply the URL scheme for Avatar, Icon and Badges[]."}
-              </span>
-            </div>
+            {profile && profile.badges && profile.badges.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
+                <span className="lab">BADGES</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-3)" }}>
+                  {profile.badges.map(b => (
+                    <Badge key={b} tone="outline">{badgeLabel(b)}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
             <span style={{ flex: 1 }} />
             <div style={{ display: "flex", gap: "var(--sp-4)" }}>
               <Button variant="secondary" style={{ flex: 1 }}
