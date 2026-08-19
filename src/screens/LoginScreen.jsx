@@ -52,7 +52,8 @@ export default function LoginScreen({ onLogin, onRegister, live, defaultName, de
             wherever the figure happens to fall. */}
         <div style={{ position: "relative", display: "flex", alignItems: "center",
           gap: "var(--sp-6)" }}>
-          <img src={logoMark} width="72" height="72" alt="" />
+          <img src={logoMark} width="72" height="72" alt=""
+            style={{ filter: "var(--logo-filter, none)" }} />
           <span style={{ font: "var(--w-bold) var(--size-4xl)/1 var(--font-core)", fontStretch: "100%",
             letterSpacing: "var(--track-wordmark)", color: "var(--text-hi)" }}>SHIRO</span>
         </div>

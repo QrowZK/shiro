@@ -1,6 +1,13 @@
 # Skins — design and scope
 
-Status: **scoped, not built.**
+Status: **partly built.** The four bundled skins ship and are described in §12,
+which also records where the built thing departs from the design below. Not
+built: the token allowlist, the value grammar, the validator, the contrast
+checker, user-authored skins and everything else in §9's "full feature" table.
+
+§12 is the one to read first if you are looking at the code. §1–§11 are the
+measurements the design was argued from and are unchanged apart from three
+marked amendments; where they disagree with §12, §12 is what the app does.
 
 Everything marked *verified* below was checked on 2026-08-18 against this
 working tree: the dev server (`npm run dev`, demo data path — no server
@@ -485,6 +492,22 @@ thumbnails load and on every 404, and the caption is illegible permanently.
 third-party dark skins exist, they will each have worked around this differently
 and a later fix breaks them.
 
+**Amendment (2026-08-19): the shipped skins took a fourth option, (d) — leave
+the base ramp alone.** The design project's answer to this section is that a
+skin overrides the *semantic* layer and never `--ink-000`, `--white`, `--fff-*`
+or `--k-*`. Those keep their light-system values on every skin, because they are
+the layer map art is composited against and map art is dark whatever the app's
+ground is. `MapImage` therefore renders correctly on all four skins with no
+change to `src/ds/shiro.js`: the letterbox stays `#0a0a0a` and the caption stays
+`#ffffff`, which is what both want. Verified on Graphite and Slate — the caption
+reads white over the dark letterbox.
+
+That closes the half of the overload §3.2 measured. It does not close the other
+half: the consumers of `--ink-000` that need to become *light* on a dark skin
+still cannot, because the token they read no longer moves. That is what task #20
+fixed for the files this repo owns, and what §12.3 lists as still outstanding in
+the vendored DS.
+
 ### 3.5 Everything else about dark, for the record
 
 - `--scrim` is `rgba(255,255,255,.82)` — a *white* scrim, the clearest tell that
@@ -927,3 +950,172 @@ behaviour of these mechanisms inside the real Tauri WebView2 shell as opposed to
 Edge with the same CSP — the CSP probe explicitly cannot test the `ipc:` scheme,
 per the note in `serve-csp.mjs`; and the hue-window rule proposed in §4.3, which
 is a design proposal and has not been prototyped against real faction marks.
+
+---
+
+## 12. What shipped
+
+Built on 2026-08-19 from the "Shiro Skins" design project, transcribed into
+`docs/design/SKINS-TOKENS.md`. Verified on the dev server at 1280×800 on the
+demo-data path, across the login, battle list, friends, matchmaker and settings
+screens, on all four skins.
+
+### 12.1 The mechanism, as built
+
+Four skins: **Paper** (the light system, the default), **Vellum** (warm light),
+**Graphite** (neutral dark), **Slate** (cool dark).
+
+A skin is a `[data-skin="…"]` block in `src/styles/tokens/skins.css`. The
+attribute goes on `<html>`; `applySkin()` in `src/store/settings.ts` puts it
+there, and `src/main.jsx` calls it before `createRoot` so the first paint is
+already skinned. Paper *clears* the attribute rather than setting it, so "no
+skin" and "the default skin" are the same state, and a stored id that no longer
+resolves lands on the light system rather than on nothing.
+
+Two things about this differ from the design in §1:
+
+- **It is not a JSON manifest and there is no loader.** §1.3's manifest, the
+  allowlist and the value grammar all exist to make *user-authored* skins safe.
+  These four are bundled, so none of that machinery is load-bearing yet and none
+  of it was built. The manifest design stands for when stage 2 of §7.4 happens;
+  nothing here forecloses it, because a loader emitting `:root{…}` and a
+  stylesheet emitting `[data-skin]{…}` set the same properties the same way.
+- **There is no flash to prevent, so §1.5's cached-CSS trick was not needed.**
+  The skins are in the bundled stylesheet, parsed before first paint; only the
+  attribute has to be set early, and that is one synchronous `localStorage` read.
+
+`skins.css` must stay the last `@import` in `styles.css`. `[data-skin="x"]` and
+`:root` have identical specificity — one attribute selector against one
+pseudo-class — so source order is the only thing making a skin win. There is a
+comment saying so at both ends.
+
+### 12.2 Task #20 — the token split
+
+Not a split in the end. The design resolved it by *narrowing* what a skin
+touches (§3.4 amendment) rather than by adding `--map-letterbox` and
+`--overlay-ink`, so no new tokens were introduced and `src/ds/shiro.js` was not
+edited. What remained was to stop this repo's own files reading a token that no
+longer moves.
+
+Census before, over the whole of `src/` including the vendored DS:
+
+| Token | Total uses | In `src/ds/shiro.js` | Elsewhere |
+|---|---|---|---|
+| `--ink-000` | 19 | 7 | 12 — 4 screens, 8 in token files |
+| `--white` | 9 | 3 | 6 — all in token files |
+
+The uses in token files are *definitions* of semantic tokens — `--text-hi:
+var(--ink-000)` and so on — and are correct as they stand: they are exactly the
+indirection that lets a skin move the semantic layer without moving the ramp.
+The four that were wrong were the direct reads in screens:
+
+| Was | Now | Why |
+|---|---|---|
+| `AppShell.jsx:40` nav active indicator, `--ink-000` | `--text-hi` | The DS pairs its own active indicators with the active label's ink — `Tabs` is `borderBottom: 2px solid var(--ink-000)` alongside `color: var(--text-hi)`. `--text-hi` is that ink, and it is semantic. |
+| `FriendsScreen.jsx:89` selected-row marker, `--ink-000` | `--text-hi` | Same mark, same reasoning. |
+| `QueueScreen.jsx:67` picked-row marker, `--ink-000` | `--text-hi` | Same, and the row's own label is already `--text-hi` when picked. |
+| `LoadingDialog.jsx:42` floor line, `--ink-000` at `opacity: .14` | `--w-12`, no opacity | It is a hairline, and `--w-12` *is* `rgba(0,0,0,.14)`. Identical on paper; the difference is that one follows a skin. |
+
+`--text-hi` and `--surface-inverse` resolve to the same value in all four skins,
+so the choice between them was semantic rather than visual. The indicator is the
+ink of the thing it marks, not a surface, which is why it is the text token.
+
+Two more of the same class turned up in the sweep and were fixed with it:
+
+- `app.css` scrollbar track, `--paper-100` → `--surface-panel`. Same colour on
+  Paper; it was a white gutter down a dark screen.
+- The logo mark — §12.4.
+
+After: **no direct reads of `--ink-000` or `--white` outside `src/ds/shiro.js`
+and the token files.**
+
+### 12.3 Still outstanding, in the vendored DS
+
+`src/ds/shiro.js` is vendored and was not edited. These are the lines a re-sync
+should change, and what they should become. None of them is a skin bug — they
+are the same overload as task #20, in the file this repo cannot fix.
+
+| Line | Reads | Should read | Effect on a dark skin |
+|---|---|---|---|
+| `:246`, `:247` | `--ink-100` | a semantic inverse-hover token | Primary button turns near-black on hover |
+| `:488` | `--ink-000` | `--text-hi` | Urgent dialog border invisible |
+| `:572` | `--ink-000` | `--text-hi` | Input focus border invisible |
+| `:656` | `--ink-000` | `--text-hi` | Meter fill invisible |
+| `:798`, `:804` | `--white` | `--surface-base` | Dropdown list white-on-white — worked around, §12.5 |
+| `:854` | `--ash-400` | `--text-low` | Unchecked switch knob sits mid-grey on both grounds; cosmetic |
+| `:899` | `--ink-000` | `--text-hi` | Active tab underline invisible |
+| `:1351`, `:1746` | `--ink-000` | `--text-hi` | Selection bar invisible — measured at `rgb(10,10,10)` on `rgb(32,32,32)` |
+
+`:1221` (`--ink-000`, the `MapImage` letterbox) and `:1273` (`--white`, the map
+caption) are **correct as they are and must not be touched** — see the §3.4
+amendment. `:1280`/`:1290` (`--fff-56`, `--fff-72`) likewise: they are text over
+map art and already do not follow a skin, deliberately.
+
+Of these, only `:798`/`:804` are worse than cosmetic. `:1351`/`:1746` lose the
+2px bar, but the selected row still reads, because `--surface-selected` moves
+with the skin.
+
+### 12.4 The art hooks
+
+Two filter tokens, because the page art is not part of the design system and has
+two different jobs.
+
+`--art-filter` is the hook the three ink plates carry — the login Glaive
+(`LoginScreen.jsx`), the friends Magpie (`FriendsScreen.jsx`) and the loading
+Dirtbag (`LoadingDialog.jsx`). All three are greyscale on transparent, checked by
+decoding them rather than assuming: the Dirtbag is pure black at varying alpha,
+the Glaive and the Magpie are full greyscale ranges with zero chromatic pixels.
+A negative is therefore the whole job — it maps every ink to its opposite and
+leaves the alpha, which is what carries the drawing. No second set of files.
+
+- Paper, Vellum: unset, so the `var(--art-filter, none)` fallback at each call
+  site applies.
+- Graphite, Slate: `invert(1) brightness(0.82)`.
+
+The `brightness` is not decoration. A straight `invert(1)` sends the Glaive's
+shadowed faces to pure `#fff`, which is brighter than `--text-hi` on both dark
+skins and makes the plate out-shout the wordmark in front of it. Trimming it
+keeps the art below the type in the reading order, which is where the light
+system has it.
+
+`--logo-filter` is separate, and is `invert(1)` with no trim on the dark skins.
+`logo-mark.svg` draws in `currentColor` but is loaded through `<img>`, which
+gives it its own document to resolve that in, so it renders black whatever the
+page around it is doing — nearly invisible in the titlebar on Graphite and
+Slate. It is type rather than art: it sits in a lockup with the SHIRO wordmark
+and has to match `--text-hi` exactly, which is why it does not share
+`--art-filter`.
+
+### 12.5 The one `!important` rule
+
+`app.css` gains `option{background:var(--surface-base) !important}`.
+
+The DS sets `background: var(--white)` inline on every `<option>`
+(`shiro.js:798,804`). No skin overrides `--white`, and the `<select>` passes
+`color: var(--text-hi)` down, so on a dark skin every dropdown list rendered
+white text on a white ground — measured, not inferred. That includes the skin
+picker, which makes it the way back out of a skin as well as a dropdown, so it
+is §7.3's denial-of-use case rather than a cosmetic one.
+
+This is §3.4(b)'s shape — a patch rule shipped by the app, not by a skin — and
+carries the same caveat: it is a stopgap, and it should go the moment
+`:798`/`:804` read a semantic token. It is narrower than the rule §3.4(b)
+proposed: a bare tag selector, no `:has()`, nothing keyed to the DS's inline
+strings, so it survives a re-sync either way. `--white` and `--surface-base` are
+the same colour in the light system, so Paper is unchanged — verified.
+
+### 12.6 What was deliberately not built
+
+Everything in §9's full-feature table, plus these from the MVP table: the
+allowlist and value grammar (§2), the contrast checker and the Tier D collision
+rules (§5), `tools/gen-tokens.mjs --check` (§6.2), and safe mode (§9). Safe mode
+matters less now that skins are bundled and the picker is readable on all four,
+but it is the first thing to build if skins ever come off disk.
+
+The open questions in §10 this answers: **(1)** the `MapImage` tokens do not need
+to go upstream, for these skins — see the §3.4 amendment. **(3)** faction and
+presence colours do move, and the design moves them: both dark skins lift the
+factions toward the in-game values, which is what §4.2 measured as correct.
+**(5)** the design project owns the dark palettes. Unanswered and unchanged:
+**(2)** raw CSS, **(4)** follow-the-OS, **(6)** Linux, **(7)** hard reject or
+warn, **(8)** folder watching.

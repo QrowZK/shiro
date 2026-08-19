@@ -64,7 +64,8 @@ export default function QueueScreen({ queued, onQueue, onFake, queues, joined, e
                   style={{ position: "relative", height: "var(--row-tall)", display: "flex", alignItems: "center",
                     gap: "var(--sp-5)", padding: "0 var(--sp-5)", cursor: "pointer",
                     background: on ? "var(--surface-selected)" : "transparent", boxShadow: "var(--rule-inset)" }}>
-                  {on && <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: "var(--ink-000)" }} />}
+                  {/* Same ink as the picked row's label below, so it follows a skin. */}
+                  {on && <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: "var(--text-hi)" }} />}
                   <span style={{ font: "var(--text-heading)", color: on ? "var(--text-hi)" : "var(--text-body)",
                     flex: 1 }}>{q.label}</span>
                   <span className="lab">WAITING</span>

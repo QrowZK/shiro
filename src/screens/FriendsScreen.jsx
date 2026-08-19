@@ -86,7 +86,8 @@ export default function FriendsScreen({ users, profile, onSelect, onMessage, onI
                   gap: "var(--sp-5)", padding: "0 var(--sp-5)", cursor: "pointer",
                   background: u && x.name === u.name ? "var(--surface-selected)" : "transparent",
                   boxShadow: "var(--rule-inset)" }}>
-                {u && x.name === u.name && <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: "var(--ink-000)" }} />}
+                {/* Same ink as the selected row's text, so it follows a skin. */}
+                {u && x.name === u.name && <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: "var(--text-hi)" }} />}
                 <UserChip {...x} style={{ flex: 1, minWidth: 0 }} />
                 <span className="lab">{x.presence === "ingame" ? "IN GAME" : x.presence === "room" ? "IN ROOM"
                   : x.presence === "away" ? "AWAY" : x.presence === "offline" ? "OFFLINE" : "ONLINE"}</span>

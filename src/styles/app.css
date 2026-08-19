@@ -3,11 +3,23 @@ body{font-family:var(--font-core);color:var(--text-body);display:flex;align-item
 #root{width:100%;height:100%;min-height:0}
 .lab{font:var(--text-label);letter-spacing:var(--track-label);text-transform:uppercase;color:var(--text-low);white-space:nowrap}
 ::-webkit-scrollbar{width:10px;height:10px}
-::-webkit-scrollbar-track{background:var(--paper-100)}
+/* --surface-panel, not --paper-100: identical on paper, but the base ramp does
+   not follow a skin and a white gutter down a dark screen is the tell. */
+::-webkit-scrollbar-track{background:var(--surface-panel)}
 ::-webkit-scrollbar-thumb{background:var(--w-20)}
 ::-webkit-scrollbar-thumb:hover{background:var(--w-32)}
 a{color:var(--text-hi)}
 a:hover{color:var(--text-mid)}
+
+/* Stopgap for the vendored DS, which sets `background: var(--white)` inline on
+   every <option> (src/ds/shiro.js:798,804). No skin overrides --white - it is
+   the "over map art" white - so on a dark skin every dropdown list renders
+   white-on-white and cannot be read. That includes the skin picker, so it is
+   also the way back out. --white and --surface-base are the same colour in the
+   light system, which is why this changes nothing on Paper.
+   `!important` is the only thing that beats an inline declaration; remove this
+   rule when the DS is re-synced with a semantic token there. */
+option{background:var(--surface-base) !important}
 button:focus-visible,input:focus-visible,select:focus-visible{outline:none;box-shadow:var(--focus-ring)}
 
 /* The Dirtbag that walks along the bottom of the loading dialog.

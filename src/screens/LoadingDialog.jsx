@@ -37,9 +37,11 @@ export default function LoadingDialog({ open, message = "Loading…" }) {
             color: "var(--text-hi)" }}>{message}</span>
         </div>
 
-        {/* The floor is the dialog's own bottom edge. */}
+        {/* The floor is the dialog's own bottom edge - a hairline like every
+            other edge here, so it is --w-12 rather than ink at .14 alpha. The
+            two render the same on paper; only the token follows a skin. */}
         <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, height: 1,
-          background: "var(--ink-000)", opacity: 0.14 }} />
+          background: "var(--w-12)" }} />
 
         <div aria-hidden="true" className="shiro-runner" style={{
           position: "absolute", left: 0, bottom: 1,
