@@ -137,13 +137,24 @@ export default function App() {
   }, [check]);
 
   /* Both countdowns run against a deadline the server set, so the UI only has
-     to re-render; there is no local clock to keep in step. */
+     to re-render; there is no local clock to keep in step.
+
+     The battle list's elapsed times need the same thing for a different reason.
+     `runningSince` is computed from `Date.now()` at render, so a row only
+     advances when something re-renders it - and a quiet battle gets no updates,
+     so its clock sat still and then jumped when an unrelated message arrived.
+     That is the "timers get stuck" report: they were never ticking, only being
+     recalculated whenever the store happened to change. */
+  const anyRunning = React.useMemo(
+    () => Object.values(liveBattles).some(b => b.IsRunning),
+    [liveBattles],
+  );
   const [, forceTick] = React.useReducer(n => n + 1, 0);
   React.useEffect(() => {
-    if (!mmCheck && !partyInvite) return;
+    if (!mmCheck && !partyInvite && !anyRunning) return;
     const t = setInterval(forceTick, 500);
     return () => clearInterval(t);
-  }, [mmCheck, partyInvite]);
+  }, [mmCheck, partyInvite, anyRunning]);
 
   /* A finished match is the one thing that should pull you out of whatever you
      were doing: the debriefing is the point of having played. */

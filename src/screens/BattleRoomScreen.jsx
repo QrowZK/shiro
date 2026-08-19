@@ -269,10 +269,24 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
                 style={{ color: sync && !sync.install ? "var(--signal-warn)" : "var(--text-mid)" }} />
               <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)" }}>
                 {sync
-                  ? (sync.install ? "Zero-K found via " + sync.install.source : "No Zero-K installation found")
+                  ? (sync.install
+                    ? "Zero-K installation found via " + sync.install.source
+                    : "No Zero-K installation found")
                   : "You have the map and game"}
               </span>
             </div>
+            {/* Which game this room runs. The line above is about your
+                installation - every game launches out of the same Zero-K
+                folder - and on its own it read as though the room were Zero-K,
+                which is wrong in a Supreme-K or Zero Wars room. */}
+            {room.game && (
+              <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
+                <Icon name="package" size={16} style={{ color: "var(--text-low)" }} />
+                <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)", color: "var(--text-low)" }}>
+                  {room.game}
+                </span>
+              </div>
+            )}
             {sync && sync.engine && (
               <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
                 <Icon name="cpu" size={16} style={{ color: "var(--text-low)" }} />

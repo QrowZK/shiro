@@ -25,6 +25,7 @@ import Lock from "lucide/dist/esm/icons/lock.js";
 import LogOut from "lucide/dist/esm/icons/log-out.js";
 import MessageSquare from "lucide/dist/esm/icons/message-square.js";
 import Minus from "lucide/dist/esm/icons/minus.js";
+import Package from "lucide/dist/esm/icons/package.js";
 import Play from "lucide/dist/esm/icons/play.js";
 import Plus from "lucide/dist/esm/icons/plus.js";
 import RotateCcw from "lucide/dist/esm/icons/rotate-ccw.js";
@@ -59,6 +60,7 @@ export const ICONS = {
   "log-out": LogOut,
   "message-square": MessageSquare,
   "minus": Minus,
+  "package": Package,
   "play": Play,
   "plus": Plus,
   "rotate-ccw": RotateCcw,
