@@ -217,7 +217,11 @@ export interface RoomModel {
 export function userToChip(u: T.User | undefined, name: string): ChipModel {
   const faction = u?.Faction?.toLowerCase();
   return {
-    name: u?.DisplayName || u?.Name || name,
+    /* The Zero-K account name, never DisplayName. For a Steam-linked account
+       DisplayName is the Steam persona, which is not the name anyone is known
+       by in the lobby, is not what you type to add a friend, and is not what
+       the server matches on. */
+    name: u?.Name || name,
     clan: u?.Clan || undefined,
     country: u?.Country || undefined,
     faction: faction && FACTION_MARKS.has(faction) ? faction : undefined,
