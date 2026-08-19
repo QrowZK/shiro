@@ -8,16 +8,29 @@ name: Windows installer
 
 on:
   workflow_dispatch:
+  # Every pull request into main, whatever the branch is called. The list
+  # below used to name feature branches, which meant CI silently stopped
+  # running whenever one was renamed or replaced.
+  pull_request:
+    branches: [main]
   push:
-    branches: [main, main-u3zpp0]
+    branches: [main]
     paths:
       - "src/**"
       - "src-tauri/**"
+      # tools/ gates the build: `npm test` runs the icon check from here, so a
+      # change in tools/ can break CI without touching anything else.
+      - "tools/**"
+      - ".gitattributes"
       - "index.html"
       - "package.json"
       - "package-lock.json"
       - "vite.config.js"
       - ".github/workflows/windows-installer.yml"
+
+# Only for the release step below. Everything else here reads.
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -72,3 +85,37 @@ jobs:
             src-tauri/target/release/shiro.exe
           if-no-files-found: error
           retention-days: 30
+
+      # An artifact expires in 30 days and needs a GitHub login to fetch, which
+      # makes it a poor thing to hand someone. The same file also goes to a
+      # prerelease tagged `dev`, so the URL is public and stable across builds:
+      #   https://github.com/<repo>/releases/download/dev/Shiro_<version>_x64-setup.exe
+      #
+      # Pushes only. A pull request from a fork gets a read-only token, so
+      # trying this there would fail the build for an outside contributor.
+      - name: Publish the dev release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $exe = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter *.exe |
+            Select-Object -First 1
+          $notes = @"
+          Unsigned development build of Shiro, from commit ${{ github.sha }}.
+
+          Per-user install, no admin prompt. Windows SmartScreen will warn about an
+          unknown publisher - that is the missing code signature, not a problem with
+          the download.
+
+          Needs an existing Zero-K installation for the engine. Shiro downloads
+          games and maps itself, including the community content pr-downloader
+          cannot reach.
+          "@
+          gh release delete dev --yes 2>$null
+          gh release create dev $exe.FullName `
+            --title "Shiro - development build" `
+            --notes $notes `
+            --prerelease `
+            --target ${{ github.sha }}
+          "Published $($exe.Name)"
