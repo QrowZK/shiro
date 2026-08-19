@@ -39,8 +39,9 @@ function tx<K extends CommandName>(cmd: K, data: MessageMap[K]): void {
     .catch(err => console.error(`room: ${cmd} failed:`, err));
 }
 
-/** What the host dialog collects. Engine and game come from `Welcome`, so the
- *  room we open runs what everyone else is running. */
+/** What the host dialog collects. Engine comes from `Welcome`, so the room we
+ *  open runs what everyone else is running; game and options come from the
+ *  chosen custom mode, when there is one. */
 export interface HostOptions {
   title: string;
   map: string;
@@ -48,6 +49,13 @@ export interface HostOptions {
   password?: string;
   engine?: string;
   game?: string;
+  /**
+   * Modoptions the chosen mode asks for. They cannot ride along with
+   * `OpenBattle` - there is no field for them - so they are held until the
+   * server puts us in the room. Tech-K is nothing but one of these, so a mode
+   * picker that ignored them would silently host a plain Zero-K room.
+   */
+  options?: Record<string, string>;
 }
 
 export interface RoomState {
@@ -63,6 +71,8 @@ export interface RoomState {
   mapOptions: Record<string, string>;
   /** Set when the join that is in flight was a request to spectate. */
   pendingSpectate: boolean;
+  /** Modoptions to apply as soon as we are in the room we just opened. */
+  pendingOptions?: Record<string, string>;
   /** The vote in progress, if any. */
   poll?: T.BattlePoll;
   /** How the last vote ended, until the next one starts. */
@@ -101,6 +111,7 @@ const EMPTY = {
   modOptions: {} as Record<string, string>,
   mapOptions: {} as Record<string, string>,
   pendingSpectate: false,
+  pendingOptions: undefined as Record<string, string> | undefined,
   poll: undefined as T.BattlePoll | undefined,
   pollOutcome: undefined as T.BattlePollOutcome | undefined,
 };
@@ -117,6 +128,7 @@ export const useRoom = create<RoomState>((set, get) => ({
     let modOptions = state.modOptions;
     let mapOptions = state.mapOptions;
     let pendingSpectate = state.pendingSpectate;
+    let pendingOptions = state.pendingOptions;
     let poll = state.poll;
     let pollOutcome = state.pollOutcome;
     let me = state.me;
@@ -150,6 +162,14 @@ export const useRoom = create<RoomState>((set, get) => ({
           if (pendingSpectate && me) {
             pendingSpectate = false;
             tx("UpdateUserBattleStatus", { Name: me, IsSpectator: true });
+          }
+          /* Same reason, same moment: a custom mode's modoptions can only be
+             set once the room exists. */
+          if (pendingOptions) {
+            tx("SetModOptions", { Options: pendingOptions });
+            // Show them immediately; the server echoes them back anyway.
+            modOptions = { ...modOptions, ...pendingOptions };
+            pendingOptions = undefined;
           }
           break;
         }
@@ -226,7 +246,8 @@ export const useRoom = create<RoomState>((set, get) => ({
       }
     }
 
-    return { battleID, players, bots, modOptions, mapOptions, pendingSpectate, poll, pollOutcome, me };
+    return { battleID, players, bots, modOptions, mapOptions, pendingSpectate,
+      pendingOptions, poll, pollOutcome, me };
   }),
 
   setMe: name => set({ me: name }),
@@ -239,6 +260,10 @@ export const useRoom = create<RoomState>((set, get) => ({
   },
 
   host: opts => {
+    // Applied on JoinBattleSuccess; see the note on HostOptions.
+    set({ pendingOptions: opts.options && Object.keys(opts.options).length
+      ? opts.options
+      : undefined });
     tx("OpenBattle", {
       Header: {
         Title: opts.title,

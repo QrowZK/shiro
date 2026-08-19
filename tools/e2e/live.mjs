@@ -102,6 +102,11 @@ const clickDialog = async (re, opts) => page.getByRole("button", { name: re }).l
    text, so every text assertion here is case-insensitive. */
 const seeing = async re => new RegExp(re.source, re.flags.includes("i") ? re.flags : re.flags + "i")
   .test(await text());
+/* The design kit wraps its <select> in the <label>, so the accessible name is
+   the label text *plus every option* - `getByLabel("Game")` never matches.
+   Find the select by an option only it has. */
+const selectWith = optionLabel => page.locator("select")
+  .filter({ has: page.locator(`option:text-is("${optionLabel}")`) });
 async function waitFor(label, fn, timeout = 6000) {
   const start = Date.now();
   for (;;) {
@@ -188,6 +193,31 @@ check("OpenBattle carries the title, map and engine",
   await waitFor("open", () => sentAny(/^OpenBattle \{.*"Title":"shiro test room".*"Map":"TartarusV7".*"Engine":"2025\.06\.21"/)));
 check("we land in the room we opened", await waitFor("hosted", () => seeing(/shiro test room/)));
 await shot("live-03-hosted");
+await clickText(/^Leave$/);
+await waitFor("back", () => seeing(/Host a battle/));
+
+/* A custom mode is not simply "a different game". Of the three the service
+   offers, one names a game, one names a map and runs on stock Zero-K, and one
+   is nothing but a modoption - so this covers a game-mode and a map-mode
+   without opening a second room for the second case. */
+console.log("hosting a custom game");
+await clickText(/Host a battle/);
+await page.getByPlaceholder("Teams 8v8 - all welcome").fill("arena room");
+
+await selectWith("Zero Wars").selectOption({ label: "Zero Wars" });
+check("a mode that is a map fills the map field for you",
+  await waitFor("zwmap", async () =>
+    (await page.getByPlaceholder("Type to search").inputValue()) === "ZeroWars v2.1.9"));
+
+await selectWith("Arena Mod").selectOption({ label: "Arena Mod" });
+await page.getByPlaceholder("Type to search").fill("TartarusV7");
+const fromHost = await mark();
+await clickText(/Open room/);
+check("OpenBattle carries the mode's game, not Welcome's",
+  await waitFor("arena", () => sentSince(fromHost, /^OpenBattle \{.*"Game":"Arena Mod v1\.0\.10"/)));
+check("and the mode's modoptions follow once the room exists",
+  await waitFor("opts", () => sentSince(fromHost, /^SetModOptions \{.*"terrarestoreonly":"1"/)));
+
 await clickText(/^Leave$/);
 await waitFor("back", () => seeing(/Host a battle/));
 
