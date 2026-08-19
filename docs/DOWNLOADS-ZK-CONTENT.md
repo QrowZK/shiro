@@ -1,5 +1,13 @@
 # Downloading the content pr-downloader cannot reach
 
+> **Built.** `src-tauri/src/zkcontent.rs`, wired into `content.rs` as the
+> fallback. Verified end to end through the built app against a throwaway
+> install root: `Hide and Seek 2.2.3` downloaded in 41 seconds, 90,857,347
+> bytes, MD5 `96a1985...` matching what the service advertised, `.part` renamed
+> into place, and `Red Comet` still coming down through pr-downloader with its
+> `.md5.gz` sidecar so the first tier is untouched. The estimate below said two
+> days; it took rather less, because the spike had already removed the risk.
+
 Scope for the second half of content acquisition. `docs/DOWNLOADS.md` covers
 pr-downloader and ends at §1.6 with an open question; this answers it and
 designs the fallback.

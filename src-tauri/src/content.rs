@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::install;
+use crate::zkcontent;
 
 /// The executable, which ships inside every engine directory next to `spring.exe`.
 #[cfg(windows)]
@@ -439,6 +440,87 @@ fn start_next(app: tauri::AppHandle, state: Content2) {
     }
 }
 
+/// What Zero-K's own content service could do for an item pr-downloader missed.
+enum Fallback {
+    /// Downloaded and put in place. Carries a line for the UI.
+    Installed(String),
+    /// The service does not have it either. Keep pr-downloader's own message.
+    NotThere,
+    /// It has it, but getting it went wrong. Worth saying out loud.
+    Failed(String),
+}
+
+/// Try the ContentService for one item, reporting progress under the same job.
+fn try_zk_content(
+    app: &tauri::AppHandle,
+    id: &str,
+    item: &ContentItem,
+    root: Option<&str>,
+) -> Fallback {
+    use tauri::Emitter;
+
+    let note = |level: Level, message: String| {
+        let _ = app.emit(
+            CONTENT_EVENT,
+            ContentStatus::Note { id: id.to_string(), level, message },
+        );
+    };
+
+    let resolved = match zkcontent::resolve(&item.name) {
+        Ok(Some(r)) => r,
+        // A nil result: the service has never heard of it either.
+        Ok(None) => return Fallback::NotThere,
+        Err(e) => {
+            note(Level::Warn, format!("Zero-K's content service: {e}"));
+            return Fallback::NotThere;
+        }
+    };
+
+    // It knows the name but does not serve the file - a real answer, and a
+    // different one from "no such thing".
+    let Some(url) = resolved.urls.first() else {
+        return Fallback::NotThere;
+    };
+
+    let install = match install::detect_with(root) {
+        Ok(i) => i,
+        Err(e) => return Fallback::Failed(e),
+    };
+    let name = match zkcontent::file_name_for(url) {
+        Ok(n) => n,
+        Err(e) => return Fallback::Failed(e),
+    };
+    let dest = install.root.join(resolved.kind.directory()).join(&name);
+
+    note(Level::Info, format!("Not in rapid or springfiles; trying zero-k.info for {}", item.name));
+
+    let app_p = app.clone();
+    let id_p = id.to_string();
+    let mut last = u8::MAX;
+    let progress = move |done: u64, total: u64| {
+        let percent = if total > 0 { ((done * 100) / total).min(100) as u8 } else { 0 };
+        // The engine's own downloader is chatty; one event per percent is
+        // plenty and keeps the bridge quiet.
+        if percent != last {
+            last = percent;
+            let _ = app_p.emit(
+                CONTENT_EVENT,
+                ContentStatus::Progress {
+                    id: id_p.clone(),
+                    percent,
+                    done: done as i64,
+                    total: total as i64,
+                },
+            );
+        }
+    };
+
+    match zkcontent::fetch_to(url, &dest, resolved.md5.as_deref(), progress) {
+        Ok(()) => Fallback::Installed(format!("Downloaded {name} from zero-k.info.")),
+        Err(e) => Fallback::Failed(e),
+    }
+}
+
 /// Resolve, spawn, and wire up the three threads.
 fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), String> {
     use tauri::Emitter;
@@ -487,6 +569,8 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
     let app_w = app.clone();
     let state_w = state.clone();
     let id = job.id.clone();
+    let items_w = job.items.clone();
+    let root_w = state.root.clone();
     std::thread::spawn(move || {
         let code = loop {
             std::thread::sleep(std::time::Duration::from_millis(120));
@@ -512,22 +596,44 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
             }
         };
 
-        let outcome = classify_exit(code);
-        let log = if matches!(outcome, Outcome::Ok) {
+        let mut outcome = classify_exit(code);
+        let mut message = outcome.message();
+        let mut log = if matches!(outcome, Outcome::Ok) {
             None
         } else {
             state_w
                 .tail_of(&tail)
                 .filter(|s: &String| !s.trim().is_empty())
         };
+
+        /* pr-downloader knows rapid and springfiles, and between them they do
+           not have recent community maps or any custom mod. Zero-K runs its own
+           service that does. Only reached when pr-downloader has actually
+           failed, because it is delta-based against the rapid pool and moves
+           far less data than pulling a whole archive.
+
+           This is only correct because each job now carries a single item: the
+           exit code used to be an OR over the batch, so there was no per-item
+           failure to fall back from. See docs/DOWNLOADS-ZK-CONTENT.md. */
+        if !matches!(outcome, Outcome::Ok | Outcome::Killed) {
+            if let Some(item) = items_w.first() {
+                match try_zk_content(&app_w, &id, item, root_w.as_deref()) {
+                    Fallback::Installed(what) => {
+                        outcome = Outcome::Ok;
+                        message = what;
+                        log = None;
+                    }
+                    Fallback::NotThere => {}
+                    Fallback::Failed(why) => {
+                        message = format!("{} {why}", outcome.message());
+                    }
+                }
+            }
+        }
+
         let _ = app_w.emit(
             CONTENT_EVENT,
-            ContentStatus::Finished {
-                id: id.clone(),
-                outcome,
-                message: outcome.message(),
-                log,
-            },
+            ContentStatus::Finished { id: id.clone(), outcome, message, log },
         );
         start_next(app_w, state_w);
     });

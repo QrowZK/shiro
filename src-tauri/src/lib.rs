@@ -4,6 +4,7 @@ mod game_files;
 mod install;
 mod launch;
 mod relay;
+mod zkcontent;
 
 pub fn run() {
     tauri::Builder::default()
