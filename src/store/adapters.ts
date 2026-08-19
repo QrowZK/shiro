@@ -195,6 +195,9 @@ export interface RoomModel {
   id: number;
   title: string;
   map: string;
+  /** What the room runs. Often Zero-K itself; sometimes Supreme-K or another
+      custom game, which is the case worth showing. */
+  game: string;
   founder: string;
   mode: string;
   running: boolean;
@@ -347,6 +350,7 @@ export function roomModel(
     id: battle.BattleID,
     title: battle.Title ?? "(untitled)",
     map: battle.Map ?? "",
+    game: battle.Game ?? "",
     founder: battle.Founder ?? "",
     mode: modeLabel(battle.Mode),
     running: Boolean(battle.IsRunning),

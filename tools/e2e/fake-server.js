@@ -57,8 +57,11 @@
       EffectiveElo: 1588, EffectiveMmElo: 1550, Level: 19, Rank: 2, IsAdmin: false, IsBot: false,
       AwaySince: "2026-08-18T09:00:00Z",
       BanMute: false, BanVotes: false, BanSpecChat: false, SyncVersion: 1, RawMmElo: 1550 }));
+    // A custom game on purpose: the room panel has to name what it runs, and a
+    // room that is not Zero-K is the case that gets it wrong.
     state.push(line("BattleAdded", { Header: { BattleID: 11, Title: "Teams 8v8 - all welcome",
       Map: "Comet Catcher Redux", Founder: "hexed", PlayerCount: 9, MaxPlayers: 16,
+      Game: "Supreme-K 3.42",
       SpectatorCount: 2, Mode: 6, IsRunning: false } }));
     state.push(line("BattleAdded", { Header: { BattleID: 12, Title: "private - do not join",
       Map: "Barren v3", Founder: "lorelei", PlayerCount: 4, MaxPlayers: 8, Password: "x",

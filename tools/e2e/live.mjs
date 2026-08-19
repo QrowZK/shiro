@@ -146,7 +146,11 @@ check("JoinBattle went out", await waitFor("join", () => sentAny(/^JoinBattle /)
 check("the roster arrives", await waitFor("roster", () => seeing(/CAI-Brutal/)));
 check("spectators are separated from players", await seeing(/SPECTATORS/) && await seeing(/lorelei/));
 check("mod options render", await seeing(/commshare/));
-check("the install we found is named", await seeing(/Zero-K found via Steam/));
+check("the install we found is named, as an install",
+  await seeing(/Zero-K installation found via Steam/));
+/* The panel used to say only "Zero-K found via Steam", which in a room
+   running something else read as though the room were Zero-K. */
+check("the room names the game it actually runs", await seeing(/Supreme-K 3\.42/));
 check("room chat renders the sender as a chip, not a string",
   await seeing(/hexed/) && !(await seeing(/\{"0":/)));
 await shot("live-02-room");
@@ -176,7 +180,9 @@ check("we are back on the battle list", await waitFor("back", () => seeing(/Host
 console.log("hosting");
 await clickText(/Host a battle/);
 await page.getByPlaceholder("Teams 8v8 - all welcome").fill("shiro test room");
-await page.getByPlaceholder("Comet Catcher Redux").fill("TartarusV7");
+/* The map field searches Zero-K's catalogue now, so its placeholder is a
+   prompt rather than an example map. */
+await page.getByPlaceholder("Type to search").fill("TartarusV7");
 await clickText(/Open room/);
 check("OpenBattle carries the title, map and engine",
   await waitFor("open", () => sentAny(/^OpenBattle \{.*"Title":"shiro test room".*"Map":"TartarusV7".*"Engine":"2025\.06\.21"/)));
@@ -231,8 +237,12 @@ check("the dialog closes when the match starts",
 console.log("friends");
 await page.locator("nav button").nth(3).click();
 check("the friend list is the server's", await waitFor("friends", () => seeing(/FRIENDS/) && seeing(/hexed/)));
-check("a profile is requested for the selection",
-  await waitFor("prof", () => sentAny(/^UserProfile \{.*"Name":"hexed"/)));
+/* Deliberately the opposite of what this used to assert. `UserProfile` is
+   server-to-client only; sending it threw a RuntimeBinderException on the real
+   server, so requestProfile is a no-op and the detail comes from the `User`
+   record we already hold. See src/store/friends.ts. */
+check("no UserProfile is sent, because the server cannot receive one",
+  !(await sentAny(/^UserProfile /)));
 check("real ratings replace the derived placeholders",
   await waitFor("ratings", () => seeing(/PLANETWARS/)));
 await shot("live-06-friends");
