@@ -221,6 +221,20 @@
           return;
         case "zks_password_hash":
           return "aGFzaA==";
+        /* Zero-K's featured custom modes. Three shapes on purpose, because
+           that is what the live service returns: one that names a game, one
+           that names a map and runs on stock Zero-K, and one that is nothing
+           but a modoption. */
+        case "zks_game_modes":
+          return [
+            { shortName: "zkarena", displayName: "Arena Mod",
+              game: "Arena Mod v1.0.10", options: { terrarestoreonly: "1" } },
+            { shortName: "zeroWars", displayName: "Zero Wars",
+              map: "ZeroWars v2.1.9", options: {} },
+            { shortName: "techk", displayName: "Tech-K", options: { techk: "1" } },
+          ];
+        case "zks_find_maps":
+          return [{ name: "Comet Catcher Redux v3.1", support: "MatchMaker" }];
         case "zks_disconnect":
           return;
         case "zks_locate_install":
