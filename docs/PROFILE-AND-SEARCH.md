@@ -130,27 +130,57 @@ Sketch:
 
 ---
 
-## 4. The offline case — decide before building
+## 4. The offline case — measured, and it is all behind a login
 
-Everything above works only for someone currently connected. Looking up a
-player who is not online needs zero-k.info.
+Everything in §1–3 works only for someone currently connected. Two things are
+wanted beyond that: **match history with elo charts**, and **search that finds
+players who are not online**. Both were probed against the live site and the
+content service on 2026-08-19. Neither is publicly reachable.
 
-What was checked:
+### 4.1 The content service does not have it
 
-- `https://zero-k.info/Users/Detail/<accountID>` answers 200 and is
-  **server-rendered** — the account name is in the returned HTML, not fetched by
-  script afterwards. So it is scrapeable.
-- Scraping a page nobody promised to keep stable is a maintenance liability, and
-  it would be the only place in Shiro doing it. The content service has a
-  `GetPublicCommunityInfo` operation nobody has looked at, which may be a better
-  answer.
+| operation | what it actually returns |
+|---|---|
+| `GetPublicCommunityInfo` | news, forum threads, featured maps, and a **top-10 ladder**. No directory, no history. |
+| `GetSpringBattleInfo(gameid)` | **nil** for a site battle id. `gameid` is the engine's game GUID, so you can only look up a match you already played and kept the GUID for. Useless for browsing. |
+| `FindResourceData` | maps and mods only. |
 
-**Recommendation:** ship online-only search first. It covers the common case
-("is X on?") without a new dependency. If offline lookup is wanted afterwards,
-ask the Zero-K developers for an endpoint before scraping — the same
-conversation ARCHITECTURE §9 already says we owe them.
+### 4.2 The website does not expose it anonymously either
 
----
+| request | result |
+|---|---|
+| `/Users/Detail/<id>` | 16 kB, almost all nav chrome and a "Loading…" |
+| `/Users?Name=…` | no form fields, **zero** user links for any query |
+| `/Battles?PlayerName=X&sa=Search` | 200 with 40 results — **the same 40 for every name** |
+| `/Ladders` | real data, but the top 50 only |
+
+The `PlayerName` one is worth dwelling on: it looks like it works. A real
+player, another real player, and `zzzznosuchplayerzzzz` all returned a
+byte-identical set of battle ids, which is the unfiltered recent list. Anything
+built on it would have shipped looking correct and been wrong for everyone.
+
+Both pages carry a login form. The data exists; it is gated.
+
+### 4.3 So the options are
+
+1. **Ask the Zero-K developers for an endpoint.** `ContentService` already
+   exists and already serves us maps, mods and game modes. Two more operations -
+   find a player, and a rating series - would remove the whole problem. This is
+   the same conversation ARCHITECTURE §9 says we owe them, and it is the only
+   option that does not age badly.
+2. **Authenticate as the user and scrape the HTML.** It would work today. Two
+   costs: it makes Shiro's stored lobby password into a website credential as
+   well - the same secret, now used for more - and it makes us dependent on the
+   markup of pages nobody promised to keep stable. It would be the only such
+   dependency in the codebase.
+3. **Link out, which is what we do now.** The profile screen already has a
+   zero-k.info button. One click reaches the real thing, with their own session,
+   and Shiro holds and parses nothing.
+
+**Recommendation: 1, with 3 standing in the meantime.** Do not start on 2 before
+asking; a week of waiting for an answer is cheaper than a parser that breaks on
+someone else's redesign, and cheaper still than widening what the saved password
+is used for.
 
 ## 5. What not to do
 
