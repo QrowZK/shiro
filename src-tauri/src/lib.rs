@@ -1,5 +1,6 @@
 mod content;
 mod engine_settings;
+mod game_files;
 mod install;
 mod launch;
 mod relay;
@@ -20,6 +21,10 @@ pub fn run() {
             launch::zks_launch_preview,
             engine_settings::zks_read_engine_settings,
             engine_settings::zks_write_engine_settings,
+            game_files::zks_read_infolog,
+            game_files::zks_read_lups,
+            game_files::zks_write_lups,
+            game_files::zks_write_cmdcolors,
             content::zks_content_fetch,
             content::zks_content_cancel,
             content::zks_content_preflight,

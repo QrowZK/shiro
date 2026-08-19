@@ -11,6 +11,11 @@
  */
 import { invoke } from "@tauri-apps/api/core";
 import { inTauri } from "./connection";
+import {
+  inferChoices, changedSpringSettings, changedSettingNames, notNvidiaFromInfolog,
+  lupsTemplate, lupsSubstitutions, cmdcolorSubstitutions, isLupsSetting,
+  type Chosen, type Environment,
+} from "./gameSettings.ts";
 
 export type EngineSettings = Record<string, string>;
 
@@ -23,14 +28,15 @@ export interface EngineSettingField {
   max?: number;
 }
 
+/**
+ * Keys Zero-K's own settings menu does not offer, kept as plain numbers.
+ *
+ * The interface scale is no longer here: it is a proper slider now, the same
+ * one the official client has. Resolution is: upstream sets it through a
+ * "Display Mode" control that also drives Chobby's own window, which Shiro has
+ * no equivalent for, so the underlying keys stay reachable directly.
+ */
 export const ENGINE_FIELDS: EngineSettingField[] = [
-  {
-    key: "interfaceScale",
-    label: "Interface scale",
-    hint: "Percent. The in-game UI, not this window.",
-    min: 50,
-    max: 300,
-  },
   { key: "FontSize", label: "Font size", min: 8, max: 48 },
   { key: "XResolution", label: "Fullscreen width", min: 640, max: 7680 },
   { key: "YResolution", label: "Fullscreen height", min: 480, max: 4320 },
@@ -49,4 +55,87 @@ export async function writeEngineSettings(
 ): Promise<void> {
   if (!inTauri()) return;
   return invoke("zks_write_engine_settings", { installRoot, changes });
+}
+
+// ------------------------------------------------------- the whole menu ----
+
+/* Zero-K's settings menu writes three files, not one. The other two are
+   regenerated whole from a template rather than patched, so they get their own
+   commands; see src-tauri/src/game_files.rs. */
+
+async function readInfolog(installRoot?: string): Promise<string | null> {
+  if (!inTauri()) return null;
+  return invoke<string | null>("zks_read_infolog", { installRoot });
+}
+
+async function readLups(installRoot?: string): Promise<string | null> {
+  if (!inTauri()) return null;
+  return invoke<string | null>("zks_read_lups", { installRoot });
+}
+
+export interface LoadedGameSettings {
+  /** springsettings.cfg as it stands. */
+  current: EngineSettings;
+  /** What the files add up to, in the menu's own terms. */
+  chosen: Chosen;
+  /** Settings whose values on disk match no option upstream offers. */
+  custom: string[];
+  env: Environment;
+}
+
+/**
+ * Read every file the settings menu owns and work out what they add up to.
+ *
+ * The screen size comes from this window, which is the same display the game
+ * will open on; upstream reads it from the engine for the same purpose.
+ */
+export async function loadGameSettings(installRoot?: string): Promise<LoadedGameSettings> {
+  const [current, lups, infolog] = await Promise.all([
+    readEngineSettings(installRoot),
+    readLups(installRoot),
+    readInfolog(installRoot),
+  ]);
+  const env: Environment = {
+    screen: {
+      width: globalThis.screen?.width || 1920,
+      height: globalThis.screen?.height || 1080,
+    },
+    notNvidia: notNvidiaFromInfolog(infolog),
+    current,
+  };
+  const { chosen, custom } = inferChoices(current, lups, env);
+  return { current, chosen, custom, env };
+}
+
+/**
+ * Write back what changed, and only what changed.
+ *
+ * `before` is what the files said when the screen opened. Settings the user
+ * did not touch are not rewritten - see changedSpringSettings for why that
+ * matters - and the two generated files are regenerated only if something that
+ * feeds them moved.
+ */
+export async function saveGameSettings(
+  before: Chosen,
+  after: Chosen,
+  env: Environment,
+  installRoot?: string,
+): Promise<void> {
+  const changed = changedSettingNames(before, after);
+  if (!changed.length) return;
+
+  const spring = changedSpringSettings(before, after, env);
+  if (Object.keys(spring).length) await writeEngineSettings(spring, installRoot);
+
+  if (changed.some(isLupsSetting) && inTauri()) {
+    await invoke("zks_write_lups", {
+      installRoot,
+      upstreamPath: lupsTemplate(after),
+      subs: lupsSubstitutions(after),
+    });
+  }
+
+  if (changed.some(n => n === "CommandAlpha" || n === "QueueIconAlpha") && inTauri()) {
+    await invoke("zks_write_cmdcolors", { installRoot, subs: cmdcolorSubstitutions(after) });
+  }
 }
