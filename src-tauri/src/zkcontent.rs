@@ -91,12 +91,42 @@ pub fn xml_escape(s: &str) -> String {
 }
 
 fn xml_unescape(s: &str) -> String {
-    s.replace("&lt;", "<")
+    let named = s
+        .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&quot;", "\"")
         .replace("&apos;", "'")
         // Last, so an escaped ampersand cannot re-form one of the above.
-        .replace("&amp;", "&")
+        .replace("&amp;", "&");
+    if !named.contains("&#") {
+        return named;
+    }
+    // Numeric entities. The game-mode payloads are JSON with `&#xD;` at every
+    // line end, and a JSON parser will not accept that as whitespace.
+    let mut out = String::with_capacity(named.len());
+    let mut rest = named.as_str();
+    while let Some(at) = rest.find("&#") {
+        out.push_str(&rest[..at]);
+        let after = &rest[at + 2..];
+        let Some(end) = after.find(';') else {
+            out.push_str(&rest[at..]);
+            return out;
+        };
+        let body = &after[..end];
+        let parsed = body
+            .strip_prefix(['x', 'X'])
+            .and_then(|hex| u32::from_str_radix(hex, 16).ok())
+            .or_else(|| body.parse::<u32>().ok())
+            .and_then(char::from_u32);
+        match parsed {
+            Some(c) => out.push(c),
+            // Not a number we understand: leave it exactly as it was.
+            None => out.push_str(&rest[at..at + 2 + end + 1]),
+        }
+        rest = &after[end + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// Reject anything that cannot be a sane content name before it reaches the
@@ -358,6 +388,111 @@ pub fn zks_find_maps(query: String) -> Result<Vec<MapHit>, String> {
     parse_search(&res.text().map_err(|e| format!("unreadable response: {e}"))?)
 }
 
+// ------------------------------------------------------------ game modes ----
+
+/// One of Zero-K's featured custom game modes.
+///
+/// A mode is not simply "a different game". Measured against the live service,
+/// the seven featured modes divide three ways: most name a `game` archive,
+/// Zero Wars names a `map` instead and runs on stock Zero-K, and Tech-K names
+/// neither and is nothing but a modoption. Anything that assumed mode implies
+/// game would host a plain Zero-K room for two of the seven.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GameMode {
+    pub short_name: String,
+    pub display_name: String,
+    /// Goes to `BattleHeader.Game`, when the mode has one.
+    pub game: Option<String>,
+    /// Goes to `BattleHeader.Map`. Only Zero Wars uses this today.
+    pub map: Option<String>,
+    /// Modoptions, applied once the server has put us in the room.
+    pub options: std::collections::BTreeMap<String, String>,
+}
+
+/// Read a `GetFeaturedCustomGameModes` response.
+///
+/// `FileContent` is JSON, despite sitting beside a genuinely base64 field in
+/// the same service - it arrives XML-escaped, `&#xD;` and all.
+pub fn parse_game_modes(xml: &str) -> Result<Vec<GameMode>, String> {
+    if let Some(fault) = element_text(xml, "faultstring") {
+        return Err(format!("the content service refused: {}", xml_unescape(fault).trim()));
+    }
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some((start, _, _)) = find_element(rest, "CustomGameModeInfo") {
+        let end = rest[start..]
+            .find("</a:CustomGameModeInfo>")
+            .map(|i| start + i)
+            .unwrap_or(rest.len());
+        let block = &rest[start..end];
+        let display = element_text(block, "DisplayName").map(xml_unescape).unwrap_or_default();
+        let file = element_text(block, "FileName").map(xml_unescape).unwrap_or_default();
+
+        let mut mode = GameMode {
+            short_name: file.clone(),
+            display_name: display,
+            ..Default::default()
+        };
+        if let Some(content) = element_text(block, "FileContent") {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&xml_unescape(content)) {
+                let text = |k: &str| {
+                    v.get(k).and_then(|x| x.as_str()).map(str::to_string).filter(|s| !s.is_empty())
+                };
+                // Upstream spells it both ways - `shortName` on six of them and
+                // `shortname` on Stiofan's - so fall back to the file name.
+                if let Some(sn) = text("shortName").or_else(|| text("shortname")) {
+                    mode.short_name = sn;
+                }
+                mode.game = text("game");
+                mode.map = text("map");
+                if let Some(opts) = v.get("options").and_then(|o| o.as_object()) {
+                    for (k, val) in opts {
+                        let as_text = match val {
+                            serde_json::Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        mode.options.insert(k.clone(), as_text);
+                    }
+                }
+            }
+        }
+        if !mode.short_name.is_empty() {
+            out.push(mode);
+        }
+        rest = &rest[end.min(rest.len())..];
+        if rest.is_empty() {
+            break;
+        }
+    }
+    Ok(out)
+}
+
+/// The featured custom game modes, for the host dialog.
+#[tauri::command]
+pub fn zks_game_modes() -> Result<Vec<GameMode>, String> {
+    let body = concat!(
+        r#"<?xml version="1.0" encoding="utf-8"?>"#,
+        r#"<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>"#,
+        r#"<GetFeaturedCustomGameModes xmlns="http://tempuri.org/"/>"#,
+        r#"</s:Body></s:Envelope>"#,
+    );
+    let res = client()?
+        .post(ENDPOINT)
+        .header("Content-Type", "text/xml; charset=utf-8")
+        .header(
+            "SOAPAction",
+            "\"http://tempuri.org/IContentService/GetFeaturedCustomGameModes\"",
+        )
+        .body(body)
+        .send()
+        .map_err(|e| format!("could not reach the Zero-K content service: {e}"))?;
+    if !res.status().is_success() {
+        return Err(format!("the content service answered {}", res.status()));
+    }
+    parse_game_modes(&res.text().map_err(|e| format!("unreadable response: {e}"))?)
+}
+
 // ------------------------------------------------------------- filenames ----
 
 /// The file name a URL implies, refused if it could escape the target folder.
@@ -588,6 +723,56 @@ mod tests {
         assert!(r.contains("a &amp; b"), "{r}");
         assert!(search_request(&["bad
 word".into()], "Map").is_err());
+    }
+
+    const MODES: &str = include_str!("fixtures/gamemodes.xml");
+
+    /// The three shapes a mode comes in, all present in one live response.
+    #[test]
+    fn a_mode_may_set_a_game_a_map_or_only_options() {
+        let modes = parse_game_modes(MODES).unwrap();
+        assert_eq!(modes.len(), 7, "{:?}", modes.iter().map(|m| &m.short_name).collect::<Vec<_>>());
+        let by = |n: &str| modes.iter().find(|m| m.short_name == n).cloned().expect(n);
+
+        // The common case: a different game archive.
+        let arena = by("zkarena");
+        assert_eq!(arena.game.as_deref(), Some("Arena Mod v1.0.10"));
+        assert_eq!(arena.map, None);
+        assert_eq!(arena.options.get("terrarestoreonly").map(String::as_str), Some("1"));
+
+        // Zero Wars is a MAP on stock Zero-K. Treating a mode as a game would
+        // host a plain Zero-K room here.
+        let zw = by("zeroWars");
+        assert_eq!(zw.game, None);
+        assert_eq!(zw.map.as_deref(), Some("ZeroWars v2.1.9"));
+
+        // Tech-K is neither - it is one modoption.
+        let techk = by("techk");
+        assert_eq!(techk.game, None);
+        assert_eq!(techk.map, None);
+        assert_eq!(techk.options.get("techk").map(String::as_str), Some("1"));
+    }
+
+    /// Six of the seven spell it `shortName`; Stiofan's spells it `shortname`.
+    #[test]
+    fn the_short_name_survives_upstreams_inconsistent_casing() {
+        let modes = parse_game_modes(MODES).unwrap();
+        assert!(modes.iter().all(|m| !m.short_name.is_empty()));
+        assert!(modes.iter().any(|m| m.display_name == "Stiofan's Balance Refumble"));
+    }
+
+    /// FileContent is JSON, not base64 - despite sitting beside a genuinely
+    /// base64 field in the same service - and arrives with `&#xD;` at every
+    /// line end, which serde_json will not accept as whitespace.
+    #[test]
+    fn numeric_entities_are_decoded_or_the_json_will_not_parse() {
+        assert_eq!(xml_unescape("a&#xD;&#xA;b"), "a\r\nb");
+        assert_eq!(xml_unescape("&#65;&#x42;"), "AB");
+        // Nonsense is left alone rather than eaten.
+        assert_eq!(xml_unescape("&#zz;"), "&#zz;");
+        assert_eq!(xml_unescape("&#123"), "&#123");
+        // The named path still works.
+        assert_eq!(xml_unescape("&amp;lt;"), "&lt;");
     }
 
     #[test]

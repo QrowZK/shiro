@@ -30,6 +30,7 @@ pub fn run() {
             content::zks_content_cancel,
             content::zks_content_preflight,
             zkcontent::zks_find_maps,
+            zkcontent::zks_game_modes,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

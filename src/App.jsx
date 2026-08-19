@@ -613,7 +613,14 @@ export default function App() {
         defaultTitle={me ? me + "'s battle" : "New battle"}
         maps={[...new Set(battles.map(b => b.map).filter(Boolean))].sort()}
         onHost={opts => (live
-          ? useRoom.getState().host({ ...opts, engine: welcome?.Engine, game: welcome?.Game })
+          ? useRoom.getState().host({
+            ...opts,
+            engine: welcome?.Engine,
+            /* Welcome's game is the fallback, not the answer: a chosen custom
+               mode names its own, and spreading Welcome over the top would
+               have quietly hosted plain Zero-K every time. */
+            game: opts.game || welcome?.Game,
+          })
           : setRoom(D.room))} />
 
       <JoinPasswordDialog battle={locked} onClose={() => setLocked(null)}

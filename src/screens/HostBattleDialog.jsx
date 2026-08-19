@@ -1,6 +1,6 @@
 import React from "react";
 import { Dialog, Button, Input, Select } from "../ds/shiro.js";
-import { findMaps } from "../net/zkcatalogue.ts";
+import { findMaps, gameModes } from "../net/zkcatalogue.ts";
 
 /* Opening a room. `OpenBattle` takes a whole BattleHeader, but the server
    fills in most of it; these are the five fields a host actually chooses.
@@ -14,6 +14,8 @@ export default function HostBattleDialog({ open, onClose, onHost, defaultTitle, 
   const [size, setSize] = React.useState("16");
   const [password, setPassword] = React.useState("");
   const [found, setFound] = React.useState([]);
+  const [modes, setModes] = React.useState([]);
+  const [modeName, setModeName] = React.useState("");
 
   /* Reset each time it opens: a dialog that remembers the last attempt is a
      dialog that hosts the wrong room when you reopen it by accident.
@@ -29,7 +31,31 @@ export default function HostBattleDialog({ open, onClose, onHost, defaultTitle, 
     setSize("16");
     setPassword("");
     setFound([]);
+    setModeName("");
   }, [open, defaultTitle]);
+
+  /* Zero-K's featured custom modes, from the same service the map search and
+     the downloader use. Fetched once per open; a mode list that fails to load
+     just means the picker offers Zero-K only. */
+  React.useEffect(() => {
+    if (!open) return;
+    let live = true;
+    gameModes().then(
+      m => { if (live) setModes(m); },
+      () => { if (live) setModes([]); },
+    );
+    return () => { live = false; };
+  }, [open]);
+
+  const mode = modes.find(m => m.shortName === modeName);
+
+  /* Zero Wars is a map, not a game, so choosing it has to fill the map field.
+     Left editable: it is a default, not a lock. */
+  const chooseMode = shortName => {
+    setModeName(shortName);
+    const picked = modes.find(m => m.shortName === shortName);
+    if (picked && picked.map) setMap(picked.map);
+  };
 
   /* Search Zero-K's own catalogue as you type. The lobby protocol has no way to
      list maps, so without this the only names on offer are the handful the
@@ -62,7 +88,15 @@ export default function HostBattleDialog({ open, onClose, onHost, defaultTitle, 
   const ready = title.trim() !== "" && map.trim() !== "";
   const submit = () => {
     if (!ready) return;
-    onHost({ title: title.trim(), map: map.trim(), maxPlayers: Number(size), password: password.trim() });
+    onHost({
+      title: title.trim(),
+      map: map.trim(),
+      maxPlayers: Number(size),
+      password: password.trim(),
+      // Only when the mode names one; otherwise the caller's default stands.
+      game: mode && mode.game ? mode.game : undefined,
+      options: mode ? mode.options : undefined,
+    });
     onClose();
   };
 
@@ -84,6 +118,12 @@ export default function HostBattleDialog({ open, onClose, onHost, defaultTitle, 
         <datalist id="shiro-maps">
           {suggestions.map(m => <option key={m} value={m} />)}
         </datalist>
+        {/* A mode may bring a game, a map, modoptions, or a combination -
+            Zero Wars is a map on stock Zero-K and Tech-K is one modoption - so
+            what this sets depends on the mode rather than being "the game". */}
+        <Select label="Game" value={modeName} onChange={e => chooseMode(e.target.value)}
+          options={[{ value: "", label: "Zero-K" },
+            ...modes.map(m => ({ value: m.shortName, label: m.displayName }))]} />
         <Select label="Player slots" value={size} onChange={e => setSize(e.target.value)} options={SIZES} />
         <Input label="Password" placeholder="Leave empty for an open room" value={password}
           onChange={e => setPassword(e.target.value)}
