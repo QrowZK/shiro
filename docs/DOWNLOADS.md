@@ -314,6 +314,11 @@ years.
   base game and the common map case, which is still most of the "engine hangs on
   a black screen" problem, but it is not the mod story.
 
+**This spike has since been done — see `docs/DOWNLOADS-ZK-CONTENT.md`.** The
+answer: SOAP only, over plain HTTP only (HTTPS 404s on POST), and it resolves
+both a map and a custom mod that nothing else can reach. The paragraph below is
+the original question, kept because the reasoning still holds.
+
 **Open work (unverified, needs a spike).** Is `ContentService` reachable as
 anything other than WCF/SOAP? A plain JSON or REST route on zero-k.info would
 turn the fallback into thirty lines of Rust plus a file download. If it is only
