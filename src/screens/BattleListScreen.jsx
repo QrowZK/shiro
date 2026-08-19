@@ -46,7 +46,6 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           {list.length === 0
             ? <EmptyState numeral={100} title="No battles open right now."
-                body="Off-peak hours are quiet. 100 players are online - start one and they will come."
                 action={<Button variant="primary" icon="plus" onClick={onHost}>Host a battle</Button>} />
             : list.map((b, i) => (
               <BattleRow key={b.id} {...b} selected={current && current.id === b.id}
@@ -111,7 +110,7 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
                 onClick={() => (onSpectate ? onSpectate(current) : onJoin(current))} />
             </div>
           </>
-        ) : <EmptyState icon="swords" title="Nothing selected." body="Pick a battle to see its map and players." />}
+        ) : <EmptyState icon="swords" title="Nothing selected." />}
       </div>
     </div>
   );

@@ -1,5 +1,30 @@
 import React from "react";
 import { Button, UserChip, IconButton, Badge, Input, EmptyState } from "../ds/shiro.js";
+import magpie from "../assets/art/magpie-banking.png";
+
+/* What the server's badge ids mean, from Chobby's own table
+   (LuaMenu/configs/gameConfig/zk/badges.lua). The official client pairs each
+   with an icon bundled in its archive; we show the label, which carries the
+   meaning without vendoring 369 kB of PNG. An id we do not know is shown as
+   itself rather than dropped - the list grows server-side, not here. */
+const BADGE_LABELS = {
+  player_level: "Level 200",
+  player_elo: "Top 3 player",
+  donator_0: "Bronze donator",
+  donator_1: "Silver donator",
+  donator_2: "Gold donator",
+  donator_3: "Diamond donator",
+  dev_content: "External developer",
+  dev_game: "Game developer",
+  dev_adv: "Lead developer",
+};
+
+const badgeLabel = id => BADGE_LABELS[id] || id;
+
+/* Where the Magpie stops being drawn. Soft, so whatever the bottom of the
+   panel turns out to be - the add-a-friend bar, a short window - it is a
+   fade rather than a cut across the fuselage. */
+const FADE = "linear-gradient(to bottom, #000 62%, transparent 96%)";
 
 /* Screen 8 - friends list and the profile detail: badges, level, three ratings.
 
@@ -38,13 +63,53 @@ export default function FriendsScreen({ users, profile, onSelect, onMessage, onI
 
   return (
     <div style={{ flex: 1, display: "grid", gridTemplateColumns: "minmax(0,1fr) 320px", minHeight: 0 }}>
-      <div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
-        <div style={{ height: 26, display: "flex", alignItems: "center", justifyContent: "space-between",
+      <div style={{ position: "relative", display: "flex", flexDirection: "column", minHeight: 0 }}>
+        {/* A Magpie banking away behind the roster, filling the dead space a
+            friends list leaves: the band between a name and its presence
+            label, and the block under the last row.
+
+            Four things about the placement are deliberate. It lives in the
+            column rather than inside the scroller, so it stays put while the
+            list scrolls over it. It is clipped to the column, so the bleed off
+            the bottom edge stays inside the panel instead of running under the
+            status bar. It stops short of the right-hand column the presence
+            labels sit in - the wing crosses the rows, never the text.
+
+            And it fades out at the bottom rather than simply ending. The
+            add-a-friend bar is opaque and only exists when you are logged in,
+            so on the live path the plane met a hard horizontal edge across the
+            fuselage that looked like a rendering fault. The mask makes the
+            crop soft wherever it lands, which also covers window heights
+            nobody has tried yet.
+
+            It is dropped entirely when there is nobody to list: art behind an
+            empty state reads as a mistake rather than a flourish.
+
+            Rendered from the game's own bomberstrike.s3o. The ink is black, so
+            a dark skin has to invert it; --art-filter is that hook. */}
+        {users.length > 0 && (
+          <div aria-hidden="true" style={{
+            position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none",
+          }}>
+            <div style={{
+              position: "absolute", right: 70, bottom: -30, width: 820, height: 431,
+              backgroundImage: `url(${magpie})`,
+              backgroundRepeat: "no-repeat",
+              backgroundSize: "contain",
+              backgroundPosition: "right bottom",
+              filter: "var(--art-filter, none)",
+              maskImage: FADE,
+              WebkitMaskImage: FADE,
+              opacity: 0.16,
+            }} />
+          </div>
+        )}
+        <div style={{ position: "relative", height: 26, display: "flex", alignItems: "center", justifyContent: "space-between",
           padding: "0 var(--sp-5)", borderBottom: "1px solid var(--w-12)" }}>
           <span className="lab">FRIENDS</span>
           <span className="lab">{users.length} TOTAL</span>
         </div>
-        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+        <div style={{ position: "relative", flex: 1, minHeight: 0, overflowY: "auto" }}>
           {users.length === 0
             ? <EmptyState icon="users" title="No friends yet."
                 body="Add someone by name and they show up here whenever they are online." />
@@ -54,7 +119,8 @@ export default function FriendsScreen({ users, profile, onSelect, onMessage, onI
                   gap: "var(--sp-5)", padding: "0 var(--sp-5)", cursor: "pointer",
                   background: u && x.name === u.name ? "var(--surface-selected)" : "transparent",
                   boxShadow: "var(--rule-inset)" }}>
-                {u && x.name === u.name && <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: "var(--ink-000)" }} />}
+                {/* Same ink as the selected row's text, so it follows a skin. */}
+                {u && x.name === u.name && <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: "var(--text-hi)" }} />}
                 <UserChip {...x} style={{ flex: 1, minWidth: 0 }} />
                 <span className="lab">{x.presence === "ingame" ? "IN GAME" : x.presence === "room" ? "IN ROOM"
                   : x.presence === "away" ? "AWAY" : x.presence === "offline" ? "OFFLINE" : "ONLINE"}</span>
@@ -64,7 +130,8 @@ export default function FriendsScreen({ users, profile, onSelect, onMessage, onI
             ))}
         </div>
         {onAdd && (
-          <div style={{ display: "flex", gap: "var(--sp-3)", padding: "var(--sp-4) var(--sp-5)",
+          <div style={{ position: "relative", display: "flex", gap: "var(--sp-3)",
+            padding: "var(--sp-4) var(--sp-5)", background: "var(--surface-base)",
             borderTop: "1px solid var(--w-12)" }}>
             <Input placeholder="Add a friend by name" size="sm" value={adding} wrapStyle={{ flex: 1 }}
               onChange={e => setAdding(e.target.value)}
@@ -96,14 +163,16 @@ export default function FriendsScreen({ users, profile, onSelect, onMessage, onI
                 </React.Fragment>
               ))}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
-              <span className="lab">BADGES</span>
-              <span style={{ font: "var(--w-regular) var(--size-tiny)/1.5 var(--font-core)", color: "var(--text-faint)" }}>
-                {profile && profile.badges && profile.badges.length
-                  ? profile.badges.join(", ")
-                  : "Badge image assets are unresolved - engineering will supply the URL scheme for Avatar, Icon and Badges[]."}
-              </span>
-            </div>
+            {profile && profile.badges && profile.badges.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
+                <span className="lab">BADGES</span>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-3)" }}>
+                  {profile.badges.map(b => (
+                    <Badge key={b} tone="outline">{badgeLabel(b)}</Badge>
+                  ))}
+                </div>
+              </div>
+            )}
             <span style={{ flex: 1 }} />
             <div style={{ display: "flex", gap: "var(--sp-4)" }}>
               <Button variant="secondary" style={{ flex: 1 }}

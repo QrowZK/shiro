@@ -100,7 +100,19 @@ export const useFriends = create<FriendsState>((set, get) => ({
   ignore: name => tx("SetAccountRelation", { TargetName: name, Relation: RELATION_IGNORE }),
   unignore: name => tx("SetAccountRelation", { TargetName: name, Relation: RELATION_NONE }),
 
-  requestProfile: name => tx("UserProfile", { Name: name } as MessageMap["UserProfile"]),
+  /**
+   * There is no way to ask for someone else's profile.
+   *
+   * `UserProfile` is server-to-client ONLY - it is absent from ConnectedUser's
+   * Process() overloads, so sending it made the server throw
+   * `RuntimeBinderException ... Process(MatchMakerQueueRequest)` on every
+   * profile open, in their logs, against this account.
+   *
+   * The server pushes your OWN profile via PublishUserProfileUpdate, which
+   * looks up ConnectedUsers[acc.Name] and sends only to that user. Everyone
+   * else's detail has to come from their `User` record, which we already hold.
+   */
+  requestProfile: () => {},
 
   reset: () => set({ ...EMPTY }),
 }));

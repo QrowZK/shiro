@@ -16,6 +16,34 @@ import { create } from "zustand";
 
 const KEY = "shiro.settings";
 
+export type SkinId = "paper" | "vellum" | "graphite" | "slate";
+
+/**
+ * The skins the app ships with, in the order the picker offers them. The
+ * values themselves live in src/styles/tokens/skins.css; this is only the
+ * roster, so adding a skin is a stylesheet block plus a line here.
+ */
+export const SKINS: { id: SkinId; name: string; note: string }[] = [
+  { id: "paper", name: "Paper", note: "The default. Ink on white." },
+  { id: "vellum", name: "Vellum", note: "Warm paper, brown-black ink." },
+  { id: "graphite", name: "Graphite", note: "Neutral dark." },
+  { id: "slate", name: "Slate", note: "Cool dark, closest to the game." },
+];
+
+/**
+ * Put the skin on the document root, where skins.css is scoped to find it.
+ *
+ * Paper clears the attribute rather than setting it: it is the token set in
+ * colors.css, so "no skin" and "the default skin" are deliberately the same
+ * state, and a skin file that fails to load leaves the app on it.
+ */
+export function applySkin(skin: SkinId): void {
+  const root = globalThis.document?.documentElement;
+  if (!root) return;
+  if (skin === "paper") delete root.dataset.skin;
+  else root.dataset.skin = skin;
+}
+
 export interface Settings {
   /** Last account name, remembered whether or not the password is. */
   name: string;
@@ -32,6 +60,8 @@ export interface Settings {
    * there regardless - they have no progression to look at.
    */
   autoOpenDebriefing: boolean;
+  /** Which of SKINS is on. Cosmetic only - nothing else reads it. */
+  skin: SkinId;
 }
 
 export interface SettingsState extends Settings {
@@ -40,14 +70,19 @@ export interface SettingsState extends Settings {
   forgetPassword: () => void;
 }
 
-const DEFAULTS: Settings = { name: "", remember: false, autoOpenDebriefing: true };
+const DEFAULTS: Settings = { name: "", remember: false, autoOpenDebriefing: true, skin: "paper" };
 
 function load(): Settings {
   try {
     const raw = globalThis.localStorage?.getItem(KEY);
     if (!raw) return { ...DEFAULTS };
     // Merged over the defaults so an older stored shape cannot leave a hole.
-    return { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Settings>) };
+    const s = { ...DEFAULTS, ...(JSON.parse(raw) as Partial<Settings>) };
+    // A skin removed since it was chosen - or a hand-edited profile - would
+    // otherwise leave the app on an attribute no stylesheet matches, which
+    // looks like the default but is not reachable from the picker.
+    if (!SKINS.some(x => x.id === s.skin)) s.skin = "paper";
+    return s;
   } catch {
     return { ...DEFAULTS };
   }
@@ -55,9 +90,10 @@ function load(): Settings {
 
 function save(s: Settings): void {
   try {
-    const { name, password, remember, host, port, installRoot } = s;
+    const { name, password, remember, host, port, installRoot, skin,
+            autoOpenDebriefing } = s;
     globalThis.localStorage?.setItem(KEY, JSON.stringify({
-      name, remember, host, port, installRoot,
+      name, remember, host, port, installRoot, skin, autoOpenDebriefing,
       password: remember ? password : undefined,
     }));
   } catch {
@@ -71,6 +107,7 @@ export const useSettings = create<SettingsState>((setState, get) => ({
   set: patch => {
     setState(patch);
     save(get());
+    if (patch.skin) applySkin(patch.skin);
   },
 
   forgetPassword: () => {

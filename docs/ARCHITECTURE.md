@@ -113,6 +113,41 @@ C# to TS mapping: `string` to `string`, `int`/`float`/`double` to `number`, `boo
 `boolean`, `DateTime` to `string`, `T?` to `field?: T`, `List<T>` to `T[]`,
 `Dictionary<K,V>` to `Record<K,V>`.
 
+### The in-game settings menu
+
+The same argument applies to Zero-K's settings. The official client's settings
+window - two tabs, six presets, 39 controls and the several hundred key/value
+pairs behind them - is declared in one Lua table in Chobby
+(`LuaMenu/configs/gameConfig/zk/settingsMenu.lua`). `npm run gen:settings` parses
+it into `src/protocol/settings.ts`, pinned the same way.
+
+Three things do not survive a generator, and each is handled explicitly rather
+than dropped:
+
+- **Fourteen settings upstream applies with a Lua function**, not a table. Those
+  are ported by hand in `src/net/gameSettings.ts`, and a test fails if upstream
+  grows one that has no port. A settings screen whose switches silently do
+  nothing is worse than one that does not offer them.
+- **Two of the three files it writes.** Only `springsettings.cfg` is patched key
+  by key. `lups.cfg` and `cmdcolors.txt` are regenerated whole by substituting
+  placeholders into a template that ships inside the Chobby archive; the seven
+  small templates are vendored in `src-tauri/src/templates/` at the same pin,
+  with a test asserting every placeholder we substitute still exists.
+- **Four entries that configure Chobby, not the game** - two display-mode
+  controls, a driver label and lobby text-to-speech. They are emitted as
+  unsupported with a reason, and the screen skips them. Resolution stays
+  reachable through the raw keys under Advanced.
+
+Two rules make the screen safe to open on someone's tuned install:
+
+- It opens showing what the files actually say, by running the menu backwards
+  and finding the option each setting's keys agree with. A real file is missing
+  keys all the time, so an option matches on the keys that are present and the
+  best agreement wins. Whatever matches nothing is labelled Custom.
+- **Apply writes the diff, not the picture.** A Custom setting - or any of the
+  ~110 keys this menu does not model - is never rewritten, because rewriting the
+  whole picture would push a default over a value the player chose.
+
 ---
 
 ## 4. Process architecture
@@ -307,6 +342,29 @@ sits silent for an entire download), and a spike to confirm the ContentService r
 before committing to a mod-support date.
 
 ---
+
+### The exit code is not per-item
+
+`--download-game` and `--download-map` are repeatable, so one invocation can
+carry everything a battle needs. Do not do that. Measured against a real
+install, June 2026 engine:
+
+| invocation | exit |
+|---|---|
+| `--download-game zk:stable` (already present) | 0 |
+| `--download-map "Hide and Seek 2.2.3"` (does not exist) | 1 |
+| **both of the above together** | **0** |
+| two missing maps | 1 |
+
+pr-downloader exits 0 if **any** item in the batch succeeded. Batching a map
+with the game - which is nearly always already present - therefore reports
+success no matter what happens to the map, and the first anyone hears of it is
+the engine's own "Dependent archive ... not found" at launch.
+
+So Shiro queues **one job per item**. The Rust queue runs them one at a time
+anyway, so this costs a process spawn per item and buys an exit code that means
+something. See `fetch` in src/store/content.ts.
+
 
 ## 8. Endpoints and constants
 

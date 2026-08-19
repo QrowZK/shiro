@@ -32,10 +32,24 @@ interface ContentState {
   active?: string;
 
   apply: (s: ContentStatus) => void;
-  fetch: (engine: string, items: ContentItem[], installRoot?: string) => Promise<string>;
+  /**
+   * Queue one job PER ITEM, and return their ids.
+   *
+   * Not one job carrying every item, which is what this used to do.
+   * pr-downloader's `--download-*` flags are repeatable, but its exit code is
+   * not per-item: it exits 0 if ANY item in the batch succeeded. Measured
+   * against a real install - `--download-map "Hide and Seek 2.2.3"` alone exits
+   * 1, and the same flag alongside an already-present `--download-game
+   * zk:stable` exits 0. So a batch reported success while the map was never
+   * fetched, and the engine threw "Dependent archive not found" at launch.
+   * One item per process is the only way the code means anything.
+   */
+  fetch: (engine: string, items: ContentItem[], installRoot?: string) => Promise<string[]>;
   cancel: (id: string) => Promise<void>;
-  /** Resolves when the job leaves a running state. What the launch blocks on. */
+  /** Resolves when the job leaves a running state. */
   settled: (id: string) => Promise<Job>;
+  /** Every job, resolving to the first failure if there is one. */
+  settledAll: (ids: string[]) => Promise<Job>;
   clearFinished: () => void;
   reset: () => void;
 }
@@ -119,7 +133,19 @@ export const useContent = create<ContentState>((set, get) => ({
   fetch: async (engine, items, installRoot) => {
     await ensureListening();
     const { contentFetch } = await import("../net/content");
-    return contentFetch(engine, items, installRoot);
+    const ids: string[] = [];
+    // Sequential rather than concurrent: the Rust side runs one job at a time
+    // anyway, and this keeps the ids in the order the caller listed them.
+    for (const item of items) {
+      ids.push(await contentFetch(engine, [item], installRoot));
+    }
+    return ids;
+  },
+
+  settledAll: async (ids: string[]): Promise<Job> => {
+    const jobs = await Promise.all(ids.map(id => get().settled(id)));
+    // The first thing that went wrong is the one worth reporting.
+    return jobs.find(j => j.state !== "done") ?? jobs[jobs.length - 1];
   },
 
   cancel: async id => {
@@ -182,7 +208,7 @@ export async function prefetchForBattle(
     const { contentPreflight } = await import("../net/content");
     const pre = await contentPreflight(engine, game, map, installRoot);
     if (!pre.items.length || !pre.downloader || !pre.writable) return;
-    await useContent.getState().fetch(engine, pre.items, installRoot);
+    await useContent.getState().fetch(engine, pre.items, installRoot);   // one job per item
   } catch {
     // Nothing to say here: the launch preflight will report it properly if it
     // still matters by then.

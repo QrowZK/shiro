@@ -1,6 +1,12 @@
 import React from "react";
-import { Button, Input, Checkbox, Badge, Icon, IconButton } from "../ds/shiro.js";
-import { ENGINE_FIELDS, readEngineSettings, writeEngineSettings } from "../net/engineSettings.ts";
+import { Button, Input, Select, Checkbox, Badge, Icon, IconButton } from "../ds/shiro.js";
+import {
+  ENGINE_FIELDS, readEngineSettings, writeEngineSettings,
+  loadGameSettings, saveGameSettings,
+} from "../net/engineSettings.ts";
+import { applyPreset, resolveRef, changedSettingNames } from "../net/gameSettings.ts";
+import { SETTINGS_TABS } from "../protocol/settings.ts";
+import { SKINS } from "../store/settings.ts";
 
 /* Screen 9 was deferred in the handoff, so this is built from the same
    primitives rather than a design. It covers the three things that actually
@@ -22,6 +28,16 @@ function Section({ title, children, hint }) {
   );
 }
 
+/* Status, hints and errors all read the same size; only the colour changes. */
+function Note({ children, tone }) {
+  return (
+    <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
+      color: tone === "danger" ? "var(--signal-danger)" : "var(--text-low)" }}>
+      {children}
+    </span>
+  );
+}
+
 function Row({ label, value }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "var(--sp-5)", alignItems: "baseline" }}>
@@ -32,12 +48,152 @@ function Row({ label, value }) {
   );
 }
 
-/* The engine's own settings, read straight out of springsettings.cfg.
+/* Zero-K's own settings menu, ported.
+ *
+ * These are the game's settings, not the lobby's: the engine reads them out of
+ * the Zero-K data dir when a match starts, and until Shiro wrote them a game
+ * booted with whatever the last client left behind - most visibly at the wrong
+ * interface scale.
+ *
+ * The menu itself is generated from upstream (src/protocol/settings.ts) so the
+ * options, their groupings and the values behind them are the official
+ * client's, not a re-interpretation. Three rules hold the whole thing together:
+ *
+ *   - It opens showing what the files on disk actually say, worked out by
+ *     running the menu backwards. Anything that matches no option is labelled
+ *     Custom rather than shown as a default it is not set to.
+ *   - Apply writes only what changed, so a Custom setting - or any of the ~110
+ *     keys this menu does not model - is never rewritten.
+ *   - Presets set the same settings upstream's do, and are just a shortcut for
+ *     moving several dropdowns at once; nothing is written until Apply.
+ */
+function GameSettingsSection({ installRoot, disabled }) {
+  const [loaded, setLoaded] = React.useState(null);   // what disk said
+  const [chosen, setChosen] = React.useState(null);   // what the user has picked
+  const [error, setError] = React.useState("");
+  const [status, setStatus] = React.useState("");
+  const [tab, setTab] = React.useState(SETTINGS_TABS[0].name);
 
-   Shiro never used to write this file, so a game booted with whatever the last
-   client left in it - most visibly interfaceScale, which is why the in-game UI
-   could come up at the wrong size. Self-contained: it loads on mount and writes
-   only the keys it shows, so the ~110 settings we do not model are untouched. */
+  React.useEffect(() => {
+    let live = true;
+    setLoaded(null);
+    loadGameSettings(installRoot).then(
+      l => { if (live) { setLoaded(l); setChosen(l.chosen); } },
+      e => { if (live) setError(String(e)); },
+    );
+    return () => { live = false; };
+  }, [installRoot]);
+
+  const dirty = loaded && chosen
+    ? changedSettingNames(loaded.chosen, chosen)
+    : [];
+
+  const save = async () => {
+    setStatus("");
+    setError("");
+    try {
+      await saveGameSettings(loaded.chosen, chosen, loaded.env, installRoot);
+      // The new baseline: what we just wrote is now what disk says.
+      setLoaded({ ...loaded, chosen });
+      setStatus("Written. Takes effect the next time a game starts.");
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  if (error && !loaded) {
+    return (
+      <Section title="In-game settings">
+        <Note tone="danger">{error}</Note>
+      </Section>
+    );
+  }
+  if (!loaded || !chosen) {
+    return (
+      <Section title="In-game settings">
+        <Note>Reading the Zero-K settings...</Note>
+      </Section>
+    );
+  }
+
+  const active = SETTINGS_TABS.find(t => t.name === tab) || SETTINGS_TABS[0];
+
+  return (
+    <Section title="In-game settings">
+      <div style={{ display: "flex", gap: "var(--sp-3)" }}>
+        {SETTINGS_TABS.map(t => (
+          <Button key={t.name} size="sm" variant={t.name === tab ? "quiet" : "ghost"}
+            onClick={() => setTab(t.name)}>{t.name}</Button>
+        ))}
+      </div>
+
+      {/* Upstream's presets. They move several settings at once and are worth
+          nothing until Apply, same as any other change here. */}
+      {active.presets.length > 0 && (
+        <div style={{ display: "flex", gap: "var(--sp-3)", alignItems: "center", flexWrap: "wrap" }}>
+          <span className="lab">Preset</span>
+          {active.presets.map(p => (
+            <Button key={p.name} size="sm" variant="ghost" disabled={disabled}
+              onClick={() => setChosen(c => applyPreset(c, p, loaded.env))}>{p.name}</Button>
+          ))}
+        </div>
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--sp-5)" }}>
+        {active.settings.map(setting => (
+          <SettingControl key={setting.name} setting={setting} disabled={disabled}
+            env={loaded.env} value={chosen[setting.name]}
+            custom={loaded.custom.includes(setting.name)
+              && chosen[setting.name] === loaded.chosen[setting.name]}
+            onChange={v => setChosen(c => ({ ...c, [setting.name]: v }))} />
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: "var(--sp-4)", alignItems: "center", flexWrap: "wrap" }}>
+        <Button variant="quiet" size="sm" onClick={save}
+          disabled={disabled || dirty.length === 0}>Apply</Button>
+        <Button variant="ghost" size="sm" disabled={disabled || dirty.length === 0}
+          onClick={() => setChosen(loaded.chosen)}>Revert</Button>
+        {dirty.length > 0 && <Note>{dirty.length} changed</Note>}
+        {status && <Note>{status}</Note>}
+        {error && <Note tone="danger">{error}</Note>}
+      </div>
+    </Section>
+  );
+}
+
+/** One dropdown or number box, under the name the official client gives it. */
+function SettingControl({ setting, value, onChange, disabled, env, custom }) {
+  if (setting.kind === "unsupported") return null;
+
+  if (setting.kind === "number") {
+    const bound = b => (b && typeof b === "object" ? resolveRef(b.ref, env) : b);
+    const min = bound(setting.min);
+    const max = bound(setting.max);
+    return (
+      <Input label={setting.humanName} size="sm" type="number" disabled={disabled}
+        min={min != null ? Math.round(min) : undefined}
+        max={max != null ? Math.round(max) : undefined}
+        value={value != null ? String(value) : ""}
+        onChange={e => onChange(e.target.value === "" ? "" : Number(e.target.value))} />
+    );
+  }
+
+  const options = (setting.options || []).map(o => o.name);
+  return (
+    <Select label={custom ? `${setting.humanName} (custom)` : setting.humanName}
+      size="sm" disabled={disabled}
+      // A value the file produced but no option carries would otherwise select
+      // the first entry silently, which is a lie about what the game is set to.
+      options={custom ? ["Custom", ...options] : options}
+      value={custom ? "Custom" : (value != null ? String(value) : "")}
+      onChange={e => onChange(e.target.value)} />
+  );
+}
+
+/* The engine keys Zero-K's menu has no control for. Resolution is upstream's
+   "Display Mode", which also drives Chobby's own window and so has no Shiro
+   equivalent; the keys behind it are still worth reaching. */
 function EngineSection({ installRoot, disabled }) {
   const [values, setValues] = React.useState(null);
   const [error, setError] = React.useState("");
@@ -61,29 +217,20 @@ function EngineSection({ installRoot, disabled }) {
     }
     try {
       await writeEngineSettings(changes, installRoot);
-      setStatus("Written to springsettings.cfg. Takes effect next time a game starts.");
+      setStatus("Written to springsettings.cfg.");
     } catch (e) {
       setError(String(e));
     }
   };
 
-  const hint = "Zero-K reads these when a game starts; Shiro only writes them. "
-    + "Anything not listed here is left exactly as it was.";
-
   if (error && !values) {
-    return (
-      <Section title="In-game settings" hint={hint}>
-        <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
-          color: "var(--signal-danger)" }}>{error}</span>
-      </Section>
-    );
+    return <Section title="Advanced"><Note tone="danger">{error}</Note></Section>;
   }
 
   return (
-    <Section title="In-game settings" hint={hint}>
+    <Section title="Advanced">
       {values === null ? (
-        <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
-          color: "var(--text-low)" }}>Reading springsettings.cfg...</span>
+        <Note>Reading springsettings.cfg...</Note>
       ) : (
         <>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "var(--sp-5)" }}>
@@ -94,20 +241,10 @@ function EngineSection({ installRoot, disabled }) {
                 onChange={e => setValues(v => ({ ...v, [f.key]: e.target.value }))} />
             ))}
           </div>
-          <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
-            color: "var(--text-low)" }}>
-            Interface scale is a percentage - 100 is unscaled.
-          </span>
           <div style={{ display: "flex", gap: "var(--sp-4)", alignItems: "center" }}>
             <Button variant="quiet" size="sm" onClick={save} disabled={disabled}>Apply</Button>
-            {status && (
-              <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
-                color: "var(--text-low)" }}>{status}</span>
-            )}
-            {error && (
-              <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
-                color: "var(--signal-danger)" }}>{error}</span>
-            )}
+            {status && <Note>{status}</Note>}
+            {error && <Note tone="danger">{error}</Note>}
           </div>
         </>
       )}
@@ -123,6 +260,7 @@ export default function SettingsScreen({ me, install, installError, engine, sett
   const [saved, setSaved] = React.useState("");
   const [preview, setPreview] = React.useState(null);
   const [previewError, setPreviewError] = React.useState("");
+  const skin = (settings && settings.skin) || "paper";
 
   const runPreview = async () => {
     setPreview(null);
@@ -170,8 +308,18 @@ export default function SettingsScreen({ me, install, installError, engine, sett
           </div>
         </Section>
 
-        <Section title="Zero-K installation"
-          hint="Shiro plays through the Zero-K you already have: its engine, games and maps.">
+        {/* No Apply button: the skin is an attribute on <html> and the
+            stylesheet is already loaded, so switching is a repaint. Anything
+            that needed confirming would be a layout change, and skins do not
+            make those. */}
+        <Section title="Appearance">
+          <Select label="Skin" size="sm" wrapStyle={{ width: 220 }}
+            options={SKINS.map(s => ({ value: s.id, label: s.name }))}
+            value={skin}
+            onChange={e => onSettings && onSettings({ skin: e.target.value })} />
+        </Section>
+
+        <Section title="Zero-K installation">
           {install ? (
             <>
               <Row label="Found via" value={install.source} />
@@ -227,8 +375,7 @@ export default function SettingsScreen({ me, install, installError, engine, sett
           )}
         </Section>
 
-        <Section title="Server"
-          hint="Empty means the live server, zero-k.info:8200. Change this only to point at a local ZkLobbyServer.">
+        <Section title="Server">
           <div style={{ display: "flex", gap: "var(--sp-4)", alignItems: "flex-end" }}>
             <Input label="Host" placeholder="zero-k.info" value={host} size="sm"
               onChange={e => setHost(e.target.value)} wrapStyle={{ flex: 1 }} />
@@ -243,21 +390,17 @@ export default function SettingsScreen({ me, install, installError, engine, sett
           )}
         </Section>
 
-        <Section title="After a match"
-          hint="Spectators are never taken to the results - there is no rating change or
-                award to show them - so this only affects matches you played.">
+        <Section title="After a match">
           <Checkbox label="Open the results screen when a match ends"
             checked={Boolean(settings && settings.autoOpenDebriefing)}
             onChange={e => onSettings && onSettings({ autoOpenDebriefing: e.target.checked })} />
         </Section>
 
+        <GameSettingsSection installRoot={settings && settings.installRoot} disabled={!install} />
+
         <EngineSection installRoot={settings && settings.installRoot} disabled={!install} />
 
-        <Section title="Content"
-          hint="Shiro does not download games, maps or engines yet. It uses what your Zero-K
-                installation already has, which is why it needs one. Missing content shows up as
-                a failed launch rather than a download - run the official lobby once for anything
-                you are missing.">
+        <Section title="Content">
           <a href="https://zero-k.info" target="_blank" rel="noreferrer"
             style={{ font: "var(--text-ui-sm)", color: "var(--text-hi)" }}>zero-k.info &#8599;</a>
         </Section>

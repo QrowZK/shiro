@@ -16,7 +16,8 @@ export function TitleBar() {
     <div data-tauri-drag-region style={{ height: "var(--shell-titlebar)", flex: "0 0 auto", display: "flex", alignItems: "center",
       gap: "var(--sp-5)", padding: "0 var(--sp-3) 0 var(--sp-5)", borderBottom: "1px solid var(--w-12)",
       background: "var(--surface-base)" }}>
-      <img src={logoMark} width="15" height="15" alt="" style={{ opacity: 0.9 }} />
+      <img src={logoMark} width="15" height="15" alt=""
+        style={{ opacity: 0.9, filter: "var(--logo-filter, none)" }} />
       <span style={{ font: "var(--w-bold) var(--size-micro)/1 var(--font-core)", fontStretch: "100%",
         letterSpacing: "var(--track-wordmark)", color: "var(--text-hi)" }}>SHIRO</span>
       <span style={{ flex: 1 }} />
@@ -37,7 +38,9 @@ export function NavRail({ view, onView }) {
       borderRight: "1px solid var(--w-12)", background: "var(--surface-sunken)" }}>
       {NAV.map(n => (
         <div key={n.id} style={{ position: "relative", width: "100%", display: "flex", justifyContent: "center" }}>
-          {view === n.id && <span style={{ position: "absolute", left: 0, top: 3, bottom: 3, width: 2, background: "var(--ink-000)" }} />}
+          {/* --text-hi, not the ink ramp: the marker is the same ink as the
+              item it marks, and only the semantic layer follows a skin. */}
+          {view === n.id && <span style={{ position: "absolute", left: 0, top: 3, bottom: 3, width: 2, background: "var(--text-hi)" }} />}
           <IconButton icon={n.icon} label={n.label} size="lg" active={view === n.id} onClick={() => onView(n.id)} />
         </div>
       ))}

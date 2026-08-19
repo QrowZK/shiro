@@ -12,6 +12,14 @@
  * every machine that can build it has Edge. Override with CHROMIUM_PATH.
  *
  * Exits non-zero on the first failed check or any uncaught page error.
+ *
+ * The login it performs is against tools/e2e/fake-server.js, not zero-k.info,
+ * so any password will do and the one below is a placeholder. It is read from
+ * the environment because a real credential written into a file here is a real
+ * credential published to everyone who can read the repo - which is exactly
+ * what happened once already, and cost a password change.
+ *
+ *   SHIRO_E2E_PASS=whatever npm run test:e2e
  */
 import { chromium } from "playwright-core";
 import { fileURLToPath } from "node:url";
@@ -19,6 +27,12 @@ import { dirname, join } from "node:path";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const URL = process.env.SHIRO_URL || "http://localhost:1420/";
+/* The name is fixture data: tools/e2e/fake-server.js keys its canned replies on
+   it, and a lobby name is public anyway. The password is not fixture data and
+   has no business being written down - the fake server accepts anything, so
+   this default is a placeholder, and a real one belongs in the environment. */
+const USER = process.env.SHIRO_E2E_USER || "Qrow";
+const PASS = process.env.SHIRO_E2E_PASS || "not-a-real-password";
 const SHOTS = process.env.SHIRO_SHOTS;
 
 const failures = [];
@@ -116,12 +130,13 @@ check("cancelling returns to the login screen",
   await waitFor("backtologin", () => seeing(/Steam accounts need a lobby password/)));
 
 console.log("login");
-await page.locator("input").nth(0).fill("Qrow");
-await page.locator("input").nth(1).fill("mariotoad");
+await page.locator("input").nth(0).fill(USER);
+await page.locator("input").nth(1).fill(PASS);
 await page.keyboard.press("Enter");
 check("login handshake reaches the battle list",
   await waitFor("battles", () => seeing(/Teams 8v8 - all welcome/)));
-check("Login was sent with our name", await sentAny(/^Login \{.*"Name":"Qrow"/));
+check("Login was sent with our name",
+  await sentAny(new RegExp(`^Login \\{.*"Name":"${USER}"`)));
 check("the status bar shows the server's numbers", await seeing(/100 online/));
 await shot("live-01-battles");
 
