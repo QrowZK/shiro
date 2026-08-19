@@ -343,6 +343,29 @@ before committing to a mod-support date.
 
 ---
 
+### The exit code is not per-item
+
+`--download-game` and `--download-map` are repeatable, so one invocation can
+carry everything a battle needs. Do not do that. Measured against a real
+install, June 2026 engine:
+
+| invocation | exit |
+|---|---|
+| `--download-game zk:stable` (already present) | 0 |
+| `--download-map "Hide and Seek 2.2.3"` (does not exist) | 1 |
+| **both of the above together** | **0** |
+| two missing maps | 1 |
+
+pr-downloader exits 0 if **any** item in the batch succeeded. Batching a map
+with the game - which is nearly always already present - therefore reports
+success no matter what happens to the map, and the first anyone hears of it is
+the engine's own "Dependent archive ... not found" at launch.
+
+So Shiro queues **one job per item**. The Rust queue runs them one at a time
+anyway, so this costs a process spawn per item and buys an exit code that means
+something. See `fetch` in src/store/content.ts.
+
+
 ## 8. Endpoints and constants
 
 | Purpose | Value | Source |

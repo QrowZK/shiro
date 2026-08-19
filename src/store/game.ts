@@ -27,7 +27,8 @@ export type GamePhase =
   /** Working out whether the game and map are even present. */
   | { kind: "preflight"; title?: string }
   /** Fetching what is missing before the engine is allowed to start. */
-  | { kind: "downloading"; title?: string; jobId: string; percent: number; what: string }
+  | { kind: "downloading"; title?: string; jobId: string; jobIds?: string[];
+      percent: number; what: string }
   | { kind: "launching"; title?: string }
   | { kind: "running"; pid: number; title?: string }
   | { kind: "failed"; reason: string };
@@ -158,18 +159,24 @@ export const useGame = create<GameState>((set, get) => ({
 
       const { useContent } = await import("./content.ts");
       const what = pre.items.map(i => i.name).join(", ");
-      const id = await useContent.getState().fetch(c.Engine ?? "", pre.items, root);
+      // One job per item, because pr-downloader's exit code is not per-item -
+      // see the note on `fetch`. The game and the map now succeed or fail on
+      // their own, which is the whole point.
+      const ids = await useContent.getState().fetch(c.Engine ?? "", pre.items, root);
 
-      set({ phase: { kind: "downloading", title, jobId: id, percent: 0, what } });
-      const unsub = useContent.subscribe(s => {
-        const job = s.jobs[id];
+      set({ phase: { kind: "downloading", title, jobId: ids[0], jobIds: ids, percent: 0, what } });
+      const unsub = useContent.subscribe((s: { jobs: Record<string, { percent: number }> }) => {
         const phase = get().phase;
-        if (job && phase.kind === "downloading" && phase.jobId === id) {
-          set({ phase: { ...phase, percent: job.percent } });
-        }
+        if (phase.kind !== "downloading" || phase.jobIds?.[0] !== ids[0]) return;
+        // One bar for the lot: the mean of what each job reports.
+        const seen = ids.map((i: string) => s.jobs[i]).filter(Boolean);
+        if (!seen.length) return;
+        const percent = Math.round(
+          seen.reduce((n: number, j: { percent: number }) => n + j.percent, 0) / ids.length);
+        if (percent !== phase.percent) set({ phase: { ...phase, percent } });
       });
 
-      const job = await useContent.getState().settled(id);
+      const job = await useContent.getState().settledAll(ids);
       unsub();
 
       if (job.state !== "done") {

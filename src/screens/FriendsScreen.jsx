@@ -2,6 +2,11 @@ import React from "react";
 import { Button, UserChip, IconButton, Badge, Input, EmptyState } from "../ds/shiro.js";
 import magpie from "../assets/art/magpie-banking.png";
 
+/* Where the Magpie stops being drawn. Soft, so whatever the bottom of the
+   panel turns out to be - the add-a-friend bar, a short window - it is a
+   fade rather than a cut across the fuselage. */
+const FADE = "linear-gradient(to bottom, #000 62%, transparent 96%)";
+
 /* Screen 8 - friends list and the profile detail: badges, level, three ratings.
 
    Live, the list is whatever the server sent in `FriendList`; the ratings come
@@ -44,12 +49,19 @@ export default function FriendsScreen({ users, profile, onSelect, onMessage, onI
             friends list leaves: the band between a name and its presence
             label, and the block under the last row.
 
-            Three things about the placement are deliberate. It lives in the
+            Four things about the placement are deliberate. It lives in the
             column rather than inside the scroller, so it stays put while the
             list scrolls over it. It is clipped to the column, so the bleed off
             the bottom edge stays inside the panel instead of running under the
-            status bar. And it stops short of the right-hand column the
-            presence labels sit in - the wing crosses the rows, never the text.
+            status bar. It stops short of the right-hand column the presence
+            labels sit in - the wing crosses the rows, never the text.
+
+            And it fades out at the bottom rather than simply ending. The
+            add-a-friend bar is opaque and only exists when you are logged in,
+            so on the live path the plane met a hard horizontal edge across the
+            fuselage that looked like a rendering fault. The mask makes the
+            crop soft wherever it lands, which also covers window heights
+            nobody has tried yet.
 
             It is dropped entirely when there is nobody to list: art behind an
             empty state reads as a mistake rather than a flourish.
@@ -67,6 +79,8 @@ export default function FriendsScreen({ users, profile, onSelect, onMessage, onI
               backgroundSize: "contain",
               backgroundPosition: "right bottom",
               filter: "var(--art-filter, none)",
+              maskImage: FADE,
+              WebkitMaskImage: FADE,
               opacity: 0.16,
             }} />
           </div>
