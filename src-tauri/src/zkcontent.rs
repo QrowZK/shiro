@@ -268,6 +268,96 @@ pub fn parse_response(xml: &str) -> Result<Option<Resolved>, String> {
     }))
 }
 
+// -------------------------------------------------------------- searching ----
+
+/// A map the service knows about.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct MapHit {
+    pub name: String,
+    /// Zero-K's own rating of the map. "MatchMaker" is the curated set the
+    /// ladder draws from, so those are worth showing first.
+    pub support: String,
+}
+
+/// Every `<InternalName>` in a FindResourceData response, with its support
+/// level, best first.
+///
+/// The catalogue is enormous and unfiltered - a search for "wars" over mods
+/// returns four hundred results going back to Star Wars TA - so the ordering
+/// matters more than it looks. Maps the matchmaker will use come first.
+pub fn parse_search(xml: &str) -> Result<Vec<MapHit>, String> {
+    if let Some(fault) = element_text(xml, "faultstring") {
+        return Err(format!("the content service refused: {}", xml_unescape(fault).trim()));
+    }
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some((start, _, _)) = find_element(rest, "ResourceData") {
+        let block_end = rest[start..]
+            .find("</a:ResourceData>")
+            .map(|i| start + i)
+            .unwrap_or(rest.len());
+        let block = &rest[start..block_end];
+        if let Some(name) = element_text(block, "InternalName") {
+            out.push(MapHit {
+                name: xml_unescape(name),
+                support: element_text(block, "MapSupportLevel").unwrap_or("").to_string(),
+            });
+        }
+        rest = &rest[block_end.min(rest.len())..];
+        if rest.is_empty() {
+            break;
+        }
+    }
+    // Stable, so equal-ranked maps keep the service's own order.
+    out.sort_by_key(|m| match m.support.as_str() {
+        "MatchMaker" => 0,
+        "Featured" => 1,
+        "Supported" => 2,
+        _ => 3,
+    });
+    Ok(out)
+}
+
+fn search_request(words: &[String], kind: &str) -> Result<String, String> {
+    let mut items = String::new();
+    for w in words {
+        check_name(w)?;
+        items.push_str(&format!("<a:string>{}</a:string>", xml_escape(w)));
+    }
+    Ok(format!(
+        concat!(
+            r#"<?xml version="1.0" encoding="utf-8"?>"#,
+            r#"<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>"#,
+            r#"<FindResourceData xmlns="http://tempuri.org/">"#,
+            r#"<words xmlns:a="http://schemas.microsoft.com/2003/10/Serialization/Arrays">{}</words>"#,
+            r#"<type>{}</type></FindResourceData></s:Body></s:Envelope>"#,
+        ),
+        items, kind
+    ))
+}
+
+/// Search Zero-K's map catalogue.
+#[tauri::command]
+pub fn zks_find_maps(query: String) -> Result<Vec<MapHit>, String> {
+    let words: Vec<String> =
+        query.split_whitespace().map(str::to_string).filter(|w| !w.is_empty()).collect();
+    if words.is_empty() {
+        return Ok(Vec::new());
+    }
+    let body = search_request(&words, "Map")?;
+    let res = client()?
+        .post(ENDPOINT)
+        .header("Content-Type", "text/xml; charset=utf-8")
+        .header("SOAPAction", format!("\"{}\"", "http://tempuri.org/IContentService/FindResourceData"))
+        .body(body)
+        .send()
+        .map_err(|e| format!("could not reach the Zero-K content service: {e}"))?;
+    if !res.status().is_success() {
+        return Err(format!("the content service answered {}", res.status()));
+    }
+    parse_search(&res.text().map_err(|e| format!("unreadable response: {e}"))?)
+}
+
 // ------------------------------------------------------------- filenames ----
 
 /// The file name a URL implies, refused if it could escape the target folder.
@@ -456,6 +546,48 @@ mod tests {
         let red = parse_response(NO_LINKS).unwrap().expect("Red Comet exists");
         assert!(red.urls.is_empty(), "it just is not served from here");
         assert_eq!(red.md5.as_deref(), Some("2be4f8b3709359902c056fdb2e67af44"));
+    }
+
+    const SEARCH: &str = include_str!("fixtures/findresource-maps.xml");
+    const SEARCH_NONE: &str = include_str!("fixtures/findresource-none.xml");
+
+    #[test]
+    fn a_search_returns_the_names_the_server_would_accept() {
+        let hits = parse_search(SEARCH).unwrap();
+        assert!(hits.len() >= 8, "got {}", hits.len());
+        let names: Vec<&str> = hits.iter().map(|h| h.name.as_str()).collect();
+        assert!(names.contains(&"Comet Catcher Redux v3.1"), "{names:?}");
+        // The map name, not a file name - this is what goes in BattleHeader.Map.
+        assert!(names.iter().all(|n| !n.ends_with(".sd7") && !n.ends_with(".sdz")));
+    }
+
+    /// The catalogue is unfiltered and huge, so the order is the feature.
+    #[test]
+    fn matchmaker_maps_come_first() {
+        let hits = parse_search(SEARCH).unwrap();
+        let first_other = hits.iter().position(|h| h.support != "MatchMaker");
+        let last_mm = hits.iter().rposition(|h| h.support == "MatchMaker");
+        if let (Some(f), Some(l)) = (first_other, last_mm) {
+            assert!(l < f, "a MatchMaker map sorted below a non-MatchMaker one");
+        }
+    }
+
+    #[test]
+    fn a_search_with_no_hits_is_empty_rather_than_an_error() {
+        assert_eq!(parse_search(SEARCH_NONE).unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn a_blank_search_never_reaches_the_wire() {
+        assert_eq!(zks_find_maps("   ".into()).unwrap(), Vec::new());
+    }
+
+    #[test]
+    fn search_words_are_escaped_like_any_other_name() {
+        let r = search_request(&["a & b".into()], "Map").unwrap();
+        assert!(r.contains("a &amp; b"), "{r}");
+        assert!(search_request(&["bad
+word".into()], "Map").is_err());
     }
 
     #[test]
