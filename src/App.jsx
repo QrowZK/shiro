@@ -11,6 +11,7 @@ import ChatScreen from "./screens/ChatScreen.jsx";
 import QueueScreen from "./screens/QueueScreen.jsx";
 import DebriefingScreen from "./screens/DebriefingScreen.jsx";
 import FriendsScreen from "./screens/FriendsScreen.jsx";
+import ProfileScreen from "./screens/ProfileScreen.jsx";
 import SettingsScreen from "./screens/SettingsScreen.jsx";
 import DownloadsScreen from "./screens/DownloadsScreen.jsx";
 import HostBattleDialog from "./screens/HostBattleDialog.jsx";
@@ -31,6 +32,7 @@ import { useParty, inviteSecondsLeft } from "./store/party";
 import { useSettings } from "./store/settings";
 import { useSite, channelOf, isExternalUrl } from "./store/site";
 import { useHistory, buildDebriefView } from "./store/history";
+import { AutohostModeLabel } from "./protocol/enums";
 import {
   battleList, statusBarKind, describeFailure, roomModel, chatLines, userToChip,
 } from "./store/adapters";
@@ -57,6 +59,8 @@ export default function App() {
   const [profileOf, setProfileOf] = React.useState(null);
   const [away, setAway] = React.useState(false);
   const [registering, setRegistering] = React.useState(false);
+  /* Undefined means your own profile; a name means you searched for them. */
+  const [viewingProfile, setViewingProfile] = React.useState(undefined);
   const [loadingIn, setLoadingIn] = React.useState(false);
 
   const settings = useSettings();
@@ -459,6 +463,32 @@ export default function App() {
         ? (on, picked) => useMatchmaker.getState().setQueues(on ? picked : [])
         : on => setQueued(on)}
       onFake={live ? undefined : () => setCheck(9)} />
+  );
+  else if (view === "profile") body = (
+    <ProfileScreen
+      me={live ? me : "demo"}
+      users={live ? liveUsers : {}}
+      profile={live && me ? profiles[me] : undefined}
+      viewing={viewingProfile}
+      onView={setViewingProfile}
+      /* The elo series and the table are the matches this client actually saw
+         land. There is no history in the protocol, so this is all there is. */
+      records={live ? records.map(r => {
+        const v = buildDebriefView(r, me, n => liveUsers[n], profiles);
+        return { elo: v.rating ? v.rating.next : undefined };
+      }) : []}
+      matchRows={live ? records.map(r => {
+        const v = buildDebriefView(r, me, n => liveUsers[n], profiles);
+        return {
+          id: r.serverBattleId, map: v.map, result: v.result,
+          mode: v.mode != null ? AutohostModeLabel[v.mode] : undefined, elapsed: v.elapsed,
+          change: v.rating ? v.rating.change : undefined,
+        };
+      }) : []}
+      onMessage={live ? openDm : undefined}
+      onAddFriend={live ? name => useFriends.getState().add(name) : undefined}
+      onIgnore={live ? name => useFriends.getState().ignore(name) : undefined}
+      onExternal={name => openExternal(`https://zero-k.info/Users/Detail?name=${encodeURIComponent(name)}`)} />
   );
   else if (view === "friends") body = (
     <FriendsScreen

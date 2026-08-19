@@ -37,6 +37,7 @@ import Swords from "lucide/dist/esm/icons/swords.js";
 import Target from "lucide/dist/esm/icons/target.js";
 import Trophy from "lucide/dist/esm/icons/trophy.js";
 import User from "lucide/dist/esm/icons/user.js";
+import UserPlus from "lucide/dist/esm/icons/user-plus.js";
 import Users from "lucide/dist/esm/icons/users.js";
 import Wifi from "lucide/dist/esm/icons/wifi.js";
 import WifiOff from "lucide/dist/esm/icons/wifi-off.js";
@@ -72,6 +73,7 @@ export const ICONS = {
   "target": Target,
   "trophy": Trophy,
   "user": User,
+  "user-plus": UserPlus,
   "users": Users,
   "wifi": Wifi,
   "wifi-off": WifiOff,

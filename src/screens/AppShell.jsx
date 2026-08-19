@@ -8,6 +8,7 @@ export const NAV = [
   { id: "chat", icon: "message-square", label: "Chat" },
   { id: "queue", icon: "target", label: "Matchmaker" },
   { id: "friends", icon: "users", label: "Friends" },
+  { id: "profile", icon: "user", label: "Profile" },
   { id: "debrief", icon: "trophy", label: "Last match" }
 ];
 

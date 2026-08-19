@@ -234,6 +234,25 @@ await page.evaluate(() => window.__ZKS.push('AreYouReadyResult {"IsBattleStartin
 check("the dialog closes when the match starts",
   await waitFor("closed", async () => !(await seeing(/Match found/))));
 
+console.log("profile and player search");
+await page.locator("nav button").nth(4).click();
+check("your own profile is the default view",
+  await waitFor("prof", () => seeing(/MY PROFILE/) && seeing(/GENERAL ELO/)));
+await page.getByPlaceholder("Find a player").fill("hex");
+check("searching the directory finds a player who is online",
+  await waitFor("hit", () => seeing(/ENTER OPENS TOP HIT/) && seeing(/hexed/)));
+await page.keyboard.press("Enter");
+check("and opening one turns the screen into them",
+  await waitFor("viewing", () => seeing(/VIEWING/) && seeing(/Add friend/)));
+/* The asymmetry the protocol forces: their record has no Planetwars rating and
+   there is no way to ask for one, so the panel is absent rather than blank. */
+check("another player shows no Planetwars rating, because there is none to show",
+  !(await seeing(/PLANETWARS/)));
+check("and says why the history is missing rather than showing an empty table",
+  await seeing(/only available for your own account/));
+await clickText(/My profile/);
+check("going back returns to your own", await waitFor("back2", () => seeing(/MY PROFILE/)));
+
 console.log("friends");
 await page.locator("nav button").nth(3).click();
 check("the friend list is the server's", await waitFor("friends", () => seeing(/FRIENDS/) && seeing(/hexed/)));
