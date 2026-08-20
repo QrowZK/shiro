@@ -12,7 +12,7 @@ export const NAV = [
   { id: "debrief", icon: "trophy", label: "Last match" }
 ];
 
-export function TitleBar() {
+export function TitleBar({ version = "0.1.0", updateReady }) {
   return (
     <div data-tauri-drag-region style={{ height: "var(--shell-titlebar)", flex: "0 0 auto", display: "flex", alignItems: "center",
       gap: "var(--sp-5)", padding: "0 var(--sp-3) 0 var(--sp-5)", borderBottom: "1px solid var(--w-12)",
@@ -22,7 +22,14 @@ export function TitleBar() {
       <span style={{ font: "var(--w-bold) var(--size-micro)/1 var(--font-core)", fontStretch: "100%",
         letterSpacing: "var(--track-wordmark)", color: "var(--text-hi)" }}>SHIRO</span>
       <span style={{ flex: 1 }} />
-      <span style={{ font: "var(--w-regular) var(--size-micro)/1 var(--font-mono)", color: "var(--text-faint)" }}>0.1.0</span>
+      {/* The build's own version, and a quiet mark when a newer one is waiting.
+          Deliberately not a dialog: an update prompt over a battle is an
+          interruption, and Settings is where the button lives. */}
+      <span title={updateReady ? "An update is ready - see Settings" : undefined}
+        style={{ font: "var(--w-regular) var(--size-micro)/1 var(--font-mono)",
+          color: updateReady ? "var(--text-body)" : "var(--text-faint)" }}>
+        {version}{updateReady ? " ·" : ""}
+      </span>
       <div style={{ display: "flex", gap: 0 }}>
         <IconButton icon="minus" label="Minimise" size="sm" onClick={minimize} />
         <IconButton icon="square" label="Maximise" size="sm" onClick={toggleMaximize} />
@@ -86,11 +93,12 @@ export function StatusBar({ connection = "online", users, engine, game, onReconn
   );
 }
 
-export default function AppShell({ view, onView, connection, users, engine, game, onReconnect, attempt, children, overlay }) {
+export default function AppShell({ view, onView, connection, users, engine, game, onReconnect, attempt, children, overlay,
+  version, updateReady }) {
   return (
     <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%",
       minHeight: 0, background: "var(--surface-base)", overflow: "hidden" }}>
-      <TitleBar />
+      <TitleBar version={version} updateReady={updateReady} />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <NavRail view={view} onView={onView} />
         <main style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>{children}</main>

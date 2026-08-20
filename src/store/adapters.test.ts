@@ -54,13 +54,50 @@ test("timestamps render as local HH:MM, or not at all", () => {
   assert.match(shortTime("2026-08-18T09:51:00Z")!, /^\d{2}:\d{2}$/);
 });
 
-test("the battle list sorts running games below waiting ones", () => {
+test("the battle list is busiest first", () => {
+  const rows = battleList({
+    1: { BattleID: 1, PlayerCount: 3 } as T.BattleHeader,
+    2: { BattleID: 2, PlayerCount: 12 } as T.BattleHeader,
+    3: { BattleID: 3, PlayerCount: 9 } as T.BattleHeader,
+  });
+  assert.deepEqual(rows.map(r => r.id), [2, 3, 1]);
+});
+
+test("spectators count as being in the room", () => {
+  /* A 1v1 with a crowd watching is a busier room than a half-empty lobby,
+     which is what "where is everybody" is really asking. */
+  const rows = battleList({
+    1: { BattleID: 1, PlayerCount: 8, SpectatorCount: 0 } as T.BattleHeader,
+    2: { BattleID: 2, PlayerCount: 2, SpectatorCount: 12 } as T.BattleHeader,
+  });
+  assert.deepEqual(rows.map(r => r.id), [2, 1]);
+});
+
+test("a tie puts the room you can join first", () => {
+  const rows = battleList({
+    1: { BattleID: 1, Title: "a", PlayerCount: 4, Password: "x" } as T.BattleHeader,
+    2: { BattleID: 2, Title: "b", PlayerCount: 4 } as T.BattleHeader,
+  });
+  assert.deepEqual(rows.map(r => r.id), [2, 1], "passworded sorts after open");
+});
+
+test("and a room tied on both still lands somewhere predictable", () => {
+  // Otherwise the order is whatever the server happened to mention them in.
+  const rows = battleList({
+    7: { BattleID: 7, Title: "zulu", PlayerCount: 4 } as T.BattleHeader,
+    9: { BattleID: 9, Title: "alpha", PlayerCount: 4 } as T.BattleHeader,
+  });
+  assert.deepEqual(rows.map(r => r.id), [9, 7]);
+});
+
+test("a running game is no longer pushed to the bottom", () => {
+  /* It used to sort below everything. The list has a "Hide running" filter for
+     people who do not want them, which is a better tool than a hidden rule. */
   const rows = battleList({
     1: { BattleID: 1, IsRunning: true, PlayerCount: 12 } as T.BattleHeader,
     2: { BattleID: 2, PlayerCount: 3 } as T.BattleHeader,
-    3: { BattleID: 3, PlayerCount: 9 } as T.BattleHeader,
   });
-  assert.deepEqual(rows.map(r => r.id), [3, 2, 1]);
+  assert.deepEqual(rows.map(r => r.id), [1, 2]);
 });
 
 test("a locked battle is one with a password", () => {

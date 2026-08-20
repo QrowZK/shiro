@@ -13,6 +13,8 @@ pub fn run() {
         .manage(relay::Relay::default())
         .manage(launch::Game::default())
         .manage(content::Content::default())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             relay::zks_connect,
             relay::zks_send,

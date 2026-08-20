@@ -57,5 +57,13 @@
     },
     "category": "Game",
     "shortDescription": "A lobby client for Zero-K"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDE5NDA1NDc1RkEyMTJGQzIKUldUQ0x5SDZkVlJBR2JERGJNNEhnVnB0VUlhOTJ2M3V5a3B5TFpiUWNWemZWdVZucUdxOU14elcK",
+      "endpoints": [
+        "https://github.com/QrowZK/shiro/releases/download/dev/latest.json"
+      ]
+    }
   }
 }

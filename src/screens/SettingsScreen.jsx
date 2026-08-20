@@ -48,6 +48,55 @@ function Row({ label, value }) {
   );
 }
 
+/**
+ * The update control, and everything it can be doing.
+ *
+ * Restarting is a separate press from installing: an update that closes the app
+ * while you are in a game is worse than one that waits, and the plugin will not
+ * apply the new build until the process ends anyway.
+ */
+function UpdateRow({ state, onCheck, onInstall, onRestart }) {
+  const kind = state?.kind ?? "idle";
+  const line = {
+    idle: "",
+    checking: "Checking…",
+    current: "Up to date",
+    available: state?.kind === "available" ? `Version ${state.update.version} is available` : "",
+    downloading: state?.kind === "downloading"
+      ? (state.percent == null ? "Downloading…" : `Downloading… ${state.percent}%`)
+      : "",
+    ready: state?.kind === "ready" ? `Version ${state.update.version} installs on restart` : "",
+    failed: state?.kind === "failed" ? `Could not check: ${state.why}` : "",
+  }[kind];
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "120px 1fr", gap: "var(--sp-5)",
+      alignItems: "center" }}>
+      <span className="lab">Updates</span>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)", flexWrap: "wrap" }}>
+        {kind === "available" && (
+          <Button size="sm" variant="primary" onClick={onInstall}>Install update</Button>
+        )}
+        {kind === "ready" && (
+          <Button size="sm" variant="primary" onClick={onRestart}>Restart now</Button>
+        )}
+        {kind !== "available" && kind !== "ready" && (
+          <Button size="sm" variant="secondary" onClick={onCheck}
+            disabled={kind === "checking" || kind === "downloading"}>
+            Check for updates
+          </Button>
+        )}
+        {line && (
+          <span style={{ font: "var(--text-ui-sm)",
+            color: kind === "failed" ? "var(--text-faint)" : "var(--text-body)" }}>
+            {line}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* Zero-K's own settings menu, ported.
  *
  * These are the game's settings, not the lobby's: the engine reads them out of
@@ -253,7 +302,7 @@ function EngineSection({ installRoot, disabled }) {
 }
 
 export default function SettingsScreen({ me, install, installError, engine, settings, onSettings,
-  onRedetect, onLogout, onPreview, away, onAway, version = "0.1.0" }) {
+  onRedetect, onLogout, onPreview, away, onAway, version = "0.1.0", update }) {
   const [host, setHost] = React.useState((settings && settings.host) || "");
   const [port, setPort] = React.useState((settings && settings.port) ? String(settings.port) : "");
   const [root, setRoot] = React.useState((settings && settings.installRoot) || "");
@@ -408,6 +457,8 @@ export default function SettingsScreen({ me, install, installError, engine, sett
         <Section title="About">
           <Row label="Version" value={version} />
           <Row label="Design system" value="Shiro 0f4b7d9c" />
+          {update && <UpdateRow state={update.state} onCheck={update.check}
+            onInstall={update.install} onRestart={update.restart} />}
         </Section>
       </div>
     </div>

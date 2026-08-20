@@ -143,6 +143,23 @@ check("login handshake reaches the battle list",
 check("Login was sent with our name",
   await sentAny(new RegExp(`^Login \\{.*"Name":"${USER}"`)));
 check("the status bar shows the server's numbers", await seeing(/100 online/));
+
+/* Busiest first, spectators counted. The running 12-player game is the busiest
+   room on this server, so it leads - and the default selection deliberately
+   skips it, because "Join battle" is the point of this screen and you cannot
+   join a game already under way. */
+check("the busiest room leads the list",
+  await waitFor("order", async () => {
+    // 12 players running, versus 9 players and 2 spectators.
+    const [first, second] = await page.evaluate(() => {
+      const t = document.body.innerText;
+      return [t.indexOf("running match"), t.indexOf("Teams 8v8")];
+    });
+    return first >= 0 && second >= 0 && first < second;
+  }));
+check("but the default selection is a room you can actually join",
+  await seeing(/Join battle/) && !(await seeing(/^Watch$/)));
+
 await shot("live-01-battles");
 
 console.log("battle room");

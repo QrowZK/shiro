@@ -118,11 +118,32 @@ export function battleToRow(b: T.BattleHeader): BattleRowModel | null {
   };
 }
 
+/**
+ * The battle list, busiest first.
+ *
+ * "Participants" is everyone in the room, spectators included: a 1v1 with a
+ * dozen people watching is a busier room than an empty 16-slot lobby, and the
+ * question this list answers is where everybody is.
+ *
+ * Ties break public before passworded, because a room you can join is a more
+ * useful answer than one you cannot.
+ *
+ * Running games are no longer sorted to the bottom - the order above is the
+ * whole order. The list has a "Hide running" filter for people who do not want
+ * to see them at all, which is a better tool for that than a sort key nobody
+ * asked for.
+ */
 export function battleList(battles: Record<number, T.BattleHeader>): BattleRowModel[] {
+  const occupants = (b: BattleRowModel) => b.players + b.spectators;
   return Object.values(battles)
     .map(battleToRow)
     .filter((b): b is BattleRowModel => b !== null)
-    .sort((a, b) => Number(a.running) - Number(b.running) || b.players - a.players);
+    .sort((a, b) =>
+      occupants(b) - occupants(a)
+      || Number(a.locked) - Number(b.locked)
+      // Stable and predictable when a room ties on both, rather than whatever
+      // order the server happened to mention them in.
+      || a.title.localeCompare(b.title));
 }
 
 /**
