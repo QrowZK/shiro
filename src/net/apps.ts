@@ -42,6 +42,18 @@ export async function statuses(): Promise<AppStatus[]> {
   return invoke<AppStatus[]>("zka_status");
 }
 
+/**
+ * Download, verify and unpack an app.
+ *
+ * The verification is in Rust and is not optional: the bytes are checked
+ * against the hash pinned in the catalogue before anything is unpacked, and a
+ * mismatch discards the download rather than installing it.
+ */
+export async function installApp(id: string): Promise<void> {
+  if (!inTauri()) return;
+  await invoke("zka_install", { id });
+}
+
 /** Start an installed app. Only ever in response to a person pressing Launch. */
 export async function launchApp(id: string): Promise<void> {
   if (!inTauri()) return;

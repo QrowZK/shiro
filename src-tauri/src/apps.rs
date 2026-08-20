@@ -223,6 +223,111 @@ pub fn zka_launch(app: tauri::AppHandle, id: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Only these hosts may be fetched from, whatever the catalogue says.
+///
+/// The catalogue is compiled in, so this is belt and braces - but it is the
+/// belt that stops a bad edit becoming a download from anywhere.
+fn host_allowed(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else { return false };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    let host = host.split(':').next().unwrap_or(host).to_ascii_lowercase();
+    host == "github.com"
+        || host.ends_with(".github.com")
+        || host == "objects.githubusercontent.com"
+}
+
+fn sha256_of(bytes: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(bytes);
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Unpack a zip into `dir`, refusing any entry that would land outside it.
+///
+/// A zip is a list of paths somebody else chose, and `../../` in one of them is
+/// the oldest trick there is.
+fn unpack(bytes: &[u8], dir: &Path) -> Result<(), String> {
+    let reader = std::io::Cursor::new(bytes);
+    let mut archive = zip::ZipArchive::new(reader).map_err(|e| format!("not a zip: {e}"))?;
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).map_err(|e| format!("unreadable entry: {e}"))?;
+        let Some(rel) = file.enclosed_name() else {
+            return Err(format!("refusing an unsafe path in the archive: {}", file.name()));
+        };
+        let target = dir.join(rel);
+        if !target.starts_with(dir) {
+            return Err(format!("refusing an entry outside the app directory: {}", file.name()));
+        }
+        if file.is_dir() {
+            std::fs::create_dir_all(&target).map_err(|e| format!("{}: {e}", target.display()))?;
+            continue;
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+        }
+        let mut out =
+            std::fs::File::create(&target).map_err(|e| format!("{}: {e}", target.display()))?;
+        std::io::copy(&mut file, &mut out).map_err(|e| format!("{}: {e}", target.display()))?;
+    }
+    Ok(())
+}
+
+/// Download an app, check it against the hash in the catalogue, and unpack it.
+///
+/// The hash is the point. The download is over HTTPS from a host we allow, but
+/// it is the hash that decides whether the bytes get to become a program on
+/// somebody's machine - so a mismatch deletes what it fetched and says so.
+#[tauri::command]
+pub fn zka_install(app: tauri::AppHandle, id: String) -> Result<(), String> {
+    let a = entry(&id)?;
+    if let Some(why) = a.unavailable {
+        return Err(why.to_string());
+    }
+    let (url, want) = match (a.download, a.sha256) {
+        (Some(u), Some(h)) => (u, h),
+        _ => return Err(format!("{} has nothing to install", a.name)),
+    };
+    if !host_allowed(url) {
+        return Err(format!("refusing to fetch {url}"));
+    }
+
+    let res = reqwest::blocking::Client::builder()
+        .user_agent(concat!("Shiro/", env!("CARGO_PKG_VERSION")))
+        .build()
+        .map_err(|e| format!("could not build an HTTP client: {e}"))?
+        .get(url)
+        .send()
+        .map_err(|e| format!("could not reach {url}: {e}"))?;
+    if !res.status().is_success() {
+        return Err(format!("{url} answered {}", res.status()));
+    }
+    let bytes = res.bytes().map_err(|e| format!("download failed: {e}"))?;
+
+    let got = sha256_of(&bytes);
+    if !got.eq_ignore_ascii_case(want) {
+        return Err(format!(
+            "{} did not match its published hash and was discarded - expected {want}, got {got}",
+            a.name
+        ));
+    }
+
+    let dir = app_dir(&app, a.id)?;
+    // A half-unpacked previous attempt is not an install.
+    if dir.is_dir() {
+        std::fs::remove_dir_all(&dir)
+            .map_err(|e| format!("could not clear {}: {e}", dir.display()))?;
+    }
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    unpack(&bytes, &dir)?;
+
+    if let Some(v) = a.version {
+        let _ = std::fs::write(dir.join("installed-version"), v);
+    }
+    Ok(())
+}
+
 /// Remove an installed app. Its own directory, and nothing above it.
 #[tauri::command]
 pub fn zka_uninstall(app: tauri::AppHandle, id: String) -> Result<(), String> {
@@ -282,6 +387,73 @@ mod tests {
                 a.id
             );
         }
+    }
+
+    #[test]
+    fn only_github_is_fetchable() {
+        assert!(host_allowed("https://github.com/QrowZK/Springen/releases/download/v1/x.zip"));
+        assert!(host_allowed("https://objects.githubusercontent.com/x"));
+        assert!(!host_allowed("https://github.com.evil.example/x"));
+        assert!(!host_allowed("https://example.com/x"));
+        // Userinfo is the classic way to make a URL look like somewhere else.
+        assert!(!host_allowed("https://github.com@evil.example/x"));
+        // Plain HTTP is not a download we would trust even with a hash.
+        assert!(!host_allowed("http://github.com/x"));
+    }
+
+    #[test]
+    fn a_zip_cannot_write_outside_the_app_directory() {
+        // The oldest trick there is, and the one that turns "install an app"
+        // into "overwrite anything this process can reach".
+        let dir = std::env::temp_dir().join("shiro-test-unpack");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut buf = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default();
+            w.start_file("../escaped.txt", opts).unwrap();
+            use std::io::Write;
+            w.write_all(b"nope").unwrap();
+            w.finish().unwrap();
+        }
+
+        let err = unpack(&buf, &dir).unwrap_err();
+        assert!(err.contains("refusing"), "{err}");
+        assert!(!dir.parent().unwrap().join("escaped.txt").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_normal_zip_unpacks() {
+        let dir = std::env::temp_dir().join("shiro-test-unpack-ok");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut buf = Vec::new();
+        {
+            let mut w = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+            let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default();
+            w.start_file("bin/app.exe", opts).unwrap();
+            use std::io::Write;
+            w.write_all(b"MZ").unwrap();
+            w.finish().unwrap();
+        }
+
+        unpack(&buf, &dir).unwrap();
+        assert_eq!(std::fs::read(dir.join("bin/app.exe")).unwrap(), b"MZ");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_hash_is_of_the_bytes() {
+        // A known vector, so a change of algorithm is a failing test rather
+        // than every future download being rejected.
+        assert_eq!(
+            sha256_of(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]

@@ -294,8 +294,12 @@
           return [
             { id: "profiler", installed: true },
             { id: "splaunch", installed: true },
-            { id: "springen", installed: false },
+            { id: "springen", installed: state.installed === "springen" },
           ];
+        case "zka_install":
+          state.sent.push("install " + args.id);
+          state.installed = args.id;
+          return null;
         case "zka_launch":
           state.sent.push("launched " + args.id);
           return null;

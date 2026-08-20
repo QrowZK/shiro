@@ -38,7 +38,7 @@ import { useParty, inviteSecondsLeft } from "./store/party";
 import { useSettings } from "./store/settings";
 import { useUpdate } from "./store/update.ts";
 import { appVersion } from "./net/update.ts";
-import { catalogue, statuses as appStatuses, launchApp } from "./net/apps.ts";
+import { catalogue, statuses as appStatuses, launchApp, installApp } from "./net/apps.ts";
 import { profileMachine } from "./net/profile.ts";
 import { testScenario } from "./net/scenario.ts";
 import { useSite, channelOf, isExternalUrl } from "./store/site";
@@ -89,6 +89,7 @@ export default function App() {
   const [profileState, setProfileState] = React.useState("idle");
   const [profileError, setProfileError] = React.useState(undefined);
   const [testError, setTestError] = React.useState(undefined);
+  const [installing, setInstalling] = React.useState(undefined);
 
   const refreshApps = React.useCallback(() => {
     catalogue().then(setAppCatalogue, () => setAppCatalogue([]));
@@ -524,6 +525,14 @@ export default function App() {
     );
     else body = (
       <AppsScreen apps={appCatalogue} statuses={appStatusList} error={appError}
+        installing={installing}
+        onInstall={id => {
+          setAppError(undefined);
+          setInstalling(id);
+          installApp(id)
+            .then(refreshApps, e => setAppError(String(e?.message ?? e)))
+            .finally(() => setInstalling(undefined));
+        }}
         onOpen={id => { setAppError(undefined); setAppView(id); if (id === "profiler") runProfile(); }}
         onLaunch={id => {
           setAppError(undefined);

@@ -33,7 +33,7 @@ function StateBadge({ state, status }) {
   }
 }
 
-function Row({ app, status, selected, onSelect, onOpen }) {
+function Row({ app, status, selected, onSelect, onOpen, onInstall, busy }) {
   const state = appState(app, status);
   /* The row is a div with a button inside it, not a button containing one: a
      nested button is invalid HTML, and the browser resolves it by making the
@@ -64,11 +64,17 @@ function Row({ app, status, selected, onSelect, onOpen }) {
           {state === "builtin" ? "Open" : "Launch"}
         </Button>
       )}
+      {state === "available" && (
+        <Button size="sm" variant="secondary" disabled={busy}
+          onClick={() => onInstall(app)}>
+          {busy ? "Installing…" : "Install"}
+        </Button>
+      )}
     </div>
   );
 }
 
-export default function AppsScreen({ apps = [], statuses = [], onOpen, onLaunch, error }) {
+export default function AppsScreen({ apps = [], statuses = [], onOpen, onLaunch, onInstall, installing, error }) {
   const [sel, setSel] = React.useState(undefined);
   const byId = React.useMemo(
     () => Object.fromEntries(statuses.map(s => [s.id, s])), [statuses]);
@@ -106,7 +112,9 @@ export default function AppsScreen({ apps = [], statuses = [], onOpen, onLaunch,
           {apps.map(a => (
             <Row key={a.id} app={a} status={byId[a.id]}
               selected={current && current.id === a.id}
-              onSelect={() => setSel(a.id)} onOpen={open} />
+              busy={installing === a.id}
+              onSelect={() => setSel(a.id)} onOpen={open}
+              onInstall={x => onInstall?.(x.id)} />
           ))}
         </div>
       </div>
@@ -161,6 +169,12 @@ export default function AppsScreen({ apps = [], statuses = [], onOpen, onLaunch,
             {(state === "builtin" || state === "installed") && (
               <Button variant="primary" size="lg" onClick={() => open(current)}>
                 {state === "builtin" ? "Open" : "Launch"}
+              </Button>
+            )}
+            {state === "available" && (
+              <Button variant="primary" size="lg" disabled={installing === current.id}
+                onClick={() => onInstall?.(current.id)}>
+                {installing === current.id ? "Installing…" : "Install"}
               </Button>
             )}
           </>

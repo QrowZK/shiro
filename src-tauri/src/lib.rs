@@ -40,6 +40,7 @@ pub fn run() {
             zkcontent::zks_map_catalogue,
             apps::zka_catalogue,
             apps::zka_status,
+            apps::zka_install,
             apps::zka_launch,
             apps::zka_uninstall,
             profile::zkp_profile,
