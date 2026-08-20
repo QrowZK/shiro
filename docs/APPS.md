@@ -1,6 +1,9 @@
 # An app store, and three apps
 
-Scope only. Nothing here is built.
+**Built.** The launcher is `src-tauri/src/apps.rs` and `src/screens/AppsScreen.jsx`;
+the profiler is `profile.rs` and `ProfilerScreen.jsx`; Splaunch is `scenario.rs`
+and `SplaunchScreen.jsx`. This is kept as the reasoning, with §9 recording what
+building it changed.
 
 Four asks: a place inside Shiro to install apps, and three apps to put in it —
 a port of Springen, an updated SpringBoard, and a system profiler with a
@@ -287,3 +290,35 @@ Two things it should also catch, because they are the actual failure modes:
 - **Do not let the store write into the Zero-K data directory by hand.**
   `content.rs` and `install.rs` own that; a second writer is how two tools end
   up disagreeing about what is installed.
+
+---
+
+## 9. What building it changed
+
+**Springen is installable.** It had no releases, which is what §4 was blocked
+on. A release workflow now publishes a Windows build to a rolling `dev`
+prerelease, and its first build - `Springen_0.1.1_x64.zip` - is pinned in the
+catalogue by SHA-256. The hash was verified by downloading the file and hashing
+it here rather than by copying the one in the release notes: it is the value
+that decides whether bytes become a program, so checking it against the thing it
+is meant to check would be circular.
+
+**The catalogue's invariants are tests, not intentions.** An executable entry
+either has a download *and* a hash *and* something to run, or an explicit reason
+it cannot be installed. A download without a hash fails the build, because that
+pairing is the whole security model.
+
+**Unpacking refuses to escape.** A zip is a list of paths somebody else chose.
+There is a test that builds an archive containing `../escaped.txt` and asserts
+nothing lands outside the app's own directory.
+
+**SpringBoard stayed out.** §5's clarification never came, and it is still true
+that the ZK module has not been touched since 2021. It is in the catalogue as
+unavailable, with the reason on screen - which is the state the launcher was
+designed around, so it earns its place by proving that state reads as a fact
+rather than a fault.
+
+**Splaunch has not been launched.** The script writer's output is compared
+against Zero-K's own `_missionScript.txt` - sections, keys, and the way values
+terminate - but no game has been started from one. That is the next thing, and
+it wants doing by hand rather than by a test.
