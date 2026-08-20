@@ -63,8 +63,11 @@ jobs:
       #
       # Pushes to main only: a pull request build is never published, and
       # renumbering it would only make the artifact confusing.
+      # Kept identical to the publish step's condition below: a run that
+      # publishes without stamping would offer an update claiming version "",
+      # and a run that stamps without publishing just renames an artifact.
       - name: Stamp the build version
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         shell: pwsh
         run: |
           $version = "0.1.${{ github.run_number }}"
@@ -131,8 +134,15 @@ jobs:
       #
       # Pushes only. A pull request from a fork gets a read-only token, so
       # trying this there would fail the build for an outside contributor.
+      # Manual runs publish too, so a release can be cut without inventing a
+      # commit - which is exactly what is needed the first time the signing key
+      # appears, since the secret arriving is not itself a push.
+      #
+      # Still main only. A dev build is a public download link, and publishing
+      # an unreviewed branch to it would be a way to hand somebody code that
+      # nobody has looked at.
       - name: Publish the dev release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
