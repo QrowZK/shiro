@@ -1,6 +1,7 @@
 import React from "react";
 import { BattleRow, Button, Input, Select, Checkbox, Badge,
   MapImage, UserChip, EmptyState, IconButton } from "../ds/shiro.js";
+import { useMapResourceId } from "../hooks/useMapResourceId.js";
 
 const DEMO_OCCUPANTS = ["hexed", "quantum", "tinman", "lorelei", "marrow", "nine"];
 
@@ -18,6 +19,7 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
     (!hideLocked || !b.locked) &&
     (q === "" || (b.title + " " + b.founder + " " + b.map).toLowerCase().includes(q.toLowerCase())));
   const current = list.find(b => b.id === sel) || list[0];
+  const mapId = useMapResourceId(current && current.map);
   return (
     <div style={{ flex: 1, display: "grid", gridTemplateColumns: "200px minmax(0,1fr) 300px", minHeight: 0 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-6)", padding: "var(--sp-5)",
@@ -59,7 +61,7 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
         display: "flex", flexDirection: "column", minHeight: 0 }}>
         {current ? (
           <>
-            <MapImage map={current.map} kind="minimap" ratio="1" caption link saturate={1} style={{ flex: "0 0 auto" }} />
+            <MapImage map={current.map} resourceId={mapId} kind="minimap" ratio="1" caption link saturate={1} style={{ flex: "0 0 auto" }} />
             <div style={{ padding: "var(--sp-5)", display: "flex", flexDirection: "column", gap: "var(--sp-5)",
               borderBottom: "1px solid var(--w-06)" }}>
               <span style={{ font: "var(--text-heading)", color: "var(--text-hi)" }}>{current.title}</span>

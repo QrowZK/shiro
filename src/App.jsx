@@ -8,6 +8,7 @@ import LoginScreen from "./screens/LoginScreen.jsx";
 import BattleListScreen from "./screens/BattleListScreen.jsx";
 import BattleRoomScreen from "./screens/BattleRoomScreen.jsx";
 import { canEdit as canEditOptions } from "./net/modOptions.ts";
+import { useWebProfile } from "./hooks/useWebProfile.js";
 import ChatScreen from "./screens/ChatScreen.jsx";
 import QueueScreen from "./screens/QueueScreen.jsx";
 import DebriefingScreen from "./screens/DebriefingScreen.jsx";
@@ -74,6 +75,13 @@ export default function App() {
   const connection = useLobby(s => s.connection);
   const welcome = useLobby(s => s.welcome);
   const me = useLobby(s => s.me);
+  /* Somebody else's profile, from their zero-k.info page. Only fetched for a
+     name we are actually looking at, and only when it is not our own - see
+     docs/PROFILES-WITHOUT-ENDPOINTS.md section 5 on not crawling them. */
+  const webProfileState = useWebProfile(
+    live && viewingProfile && viewingProfile !== me ? viewingProfile : undefined,
+  );
+
   const liveBattles = useLobby(s => s.battles);
   const liveUsers = useLobby(s => s.users);
   const reconnectAttempt = useLobby(s => s.reconnect);
@@ -485,6 +493,10 @@ export default function App() {
       profile={live && me ? profiles[me] : undefined}
       viewing={viewingProfile}
       onView={setViewingProfile}
+      /* Only for somebody else: our own awards and progression arrive over the
+         socket in UserProfile, so asking the website for them would be a
+         request for what we already have. */
+      web={webProfileState}
       /* The elo series and the table are the matches this client actually saw
          land. There is no history in the protocol, so this is all there is. */
       records={live ? records.map(r => {

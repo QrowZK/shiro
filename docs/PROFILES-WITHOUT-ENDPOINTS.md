@@ -1,6 +1,9 @@
 # Profiles, without the endpoints
 
-Scope only. Nothing here is built.
+**Built.** `src-tauri/src/zkweb.rs` reads the pages, `src/net/zkweb.ts` and
+`src/hooks/useWebProfile.js` bring them into the profile screen, and the map
+catalogue from §1 is in `zkcontent.rs` as `zks_map_catalogue`. This is kept as
+the reasoning; §8 records what building it changed.
 
 `PROFILE-AND-SEARCH.md` §4 said: ship online-only search first, and *"ask the
 Zero-K developers for an endpoint before scraping"*. They were asked, and said
@@ -220,3 +223,30 @@ fixtures are what keep it honest.
   person clicking.
 - **Do not put the parser in TypeScript.** It belongs behind the same allowlist
   and timeout as the rest of our outbound HTTP, which is Rust.
+
+---
+
+## 8. What building it changed
+
+Three things the measurements did not show, found by writing the parser:
+
+**Half the numbers live in tooltips, not in the text.** Level, XP to the next
+level, the progress percentage and the rank's name are all inside `title`
+attributes, so stripping tags to get at the text throws them away with the
+markup. The parser reads both: the visible text, and the tooltips appended to
+it.
+
+**The page carries a legend of every rank icon**, to explain the scheme - so
+the first `/img/ranks/*.png` on the page belongs to nobody. A player's own icon
+is the one inside their rank tooltip, and that is where it is now read from.
+The same tooltip states, in upstream's own words, *"Rank is represented by the
+icon's color … Level is represented by the icon's shape"* - which independently
+confirms what `src/net/ranks.ts` was built on.
+
+**`nicetitle` is not a badge marker.** It is the site's tooltip attribute and it
+is on everything: the login control, the clan link, the rank explainer. Reading
+them all gives help text with badges mixed in. Only the images inside the badges
+block are badges.
+
+The parser's anchors were then checked against four accounts that are not
+fixtures - `Stuart98`, `bread070707`, `Skel`, `Anir` - and all seven hold.

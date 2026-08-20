@@ -123,8 +123,103 @@ function EloTrend({ points }) {
   );
 }
 
+/**
+ * What zero-k.info says about a player, which is everything the lobby will not.
+ *
+ * Only for other people: your own awards and progression already arrive over
+ * the socket in `UserProfile`, and asking the website for what the server has
+ * already told us would be a request for nothing.
+ *
+ * The four states are kept apart on purpose. A player with no awards and a page
+ * we could not read are different facts, and rendering both as blanks would say
+ * they were the same. See docs/PROFILES-WITHOUT-ENDPOINTS.md.
+ */
+export function FromTheSite({ state }) {
+  if (!state || state.kind === "loading") {
+    return (
+      <div style={{ padding: "var(--sp-6) var(--sp-7)" }}>
+        <span style={label}>Reading zero-k.info…</span>
+      </div>
+    );
+  }
+  if (state.kind === "missing") {
+    return (
+      <div style={{ padding: "var(--sp-6) var(--sp-7)" }}>
+        <span style={label}>No zero-k.info account under that name</span>
+      </div>
+    );
+  }
+  if (state.kind === "error") {
+    return (
+      <div style={{ padding: "var(--sp-6) var(--sp-7)" }}>
+        <span style={label}>Could not read their zero-k.info page</span>
+      </div>
+    );
+  }
+
+  const p = state.profile;
+  const facts = [
+    p.rank && ["Rank", p.rank],
+    p.level != null && ["Level", String(p.level)],
+    p.battlesPlayed != null && ["Battles", p.battlesPlayed.toLocaleString()],
+    p.battlesWatched != null && ["Watched", p.battlesWatched.toLocaleString()],
+    p.lastLogin && ["Last seen", p.lastLogin],
+    p.firstLogin && ["Playing for", p.firstLogin],
+  ].filter(Boolean);
+
+  /* The top handful. Twenty-nine award types with a count each is a wall, and
+     the ones with the big numbers are the ones that say who somebody is. */
+  const awards = (p.awards || []).slice(0, 8);
+
+  return (
+    <div style={{ borderTop: "1px solid var(--w-06)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)",
+        padding: "var(--sp-5) var(--sp-7) 0" }}>
+        <span style={label}>From zero-k.info</span>
+      </div>
+
+      {facts.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-7)",
+          padding: "var(--sp-5) var(--sp-7)" }}>
+          {facts.map(([k, v]) => (
+            <div key={k} style={{ display: "flex", flexDirection: "column", gap: "var(--sp-2)" }}>
+              <span style={label}>{k}</span>
+              <span style={{ font: "var(--text-num-lg)", color: "var(--text-hi)",
+                fontVariantNumeric: "tabular-nums" }}>{v}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {p.badges?.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-3)",
+          padding: "0 var(--sp-7) var(--sp-5)" }}>
+          {p.badges.map(b => <Badge key={b} tone="outline">{b}</Badge>)}
+        </div>
+      )}
+
+      {awards.length > 0 && (
+        <div style={{ padding: "0 var(--sp-7) var(--sp-6)" }}>
+          <span style={label}>Awards</span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-5)",
+            marginTop: "var(--sp-4)" }}>
+            {awards.map(a => (
+              <div key={a.key} style={{ display: "flex", alignItems: "baseline",
+                gap: "var(--sp-3)" }}>
+                <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)" }}>{a.name}</span>
+                <span style={{ font: "var(--w-medium) var(--size-tiny)/1 var(--font-mono)",
+                  color: "var(--text-mid)", fontVariantNumeric: "tabular-nums" }}>{a.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function ProfileScreen({ me, users = {}, profile, records = [], viewing,
-  onView, onMessage, onAddFriend, onIgnore, onExternal, matchRows = [] }) {
+  onView, onMessage, onAddFriend, onIgnore, onExternal, matchRows = [], web }) {
   const [query, setQuery] = React.useState("");
   const hits = React.useMemo(() => rankHits(users, query), [users, query]);
 
@@ -134,7 +229,10 @@ export default function ProfileScreen({ me, users = {}, profile, records = [], v
 
   /* Yours comes from UserProfile, theirs from the directory. Both may be
      missing pieces; nothing here invents one. */
-  const level = isMe ? (profile?.Level ?? u?.Level) : u?.Level;
+  /* The web page is the only source for somebody who is offline: there is no
+     `User` record for them at all, so without it their card would be a name. */
+  const w = web?.kind === "ok" ? web.profile : undefined;
+  const level = isMe ? (profile?.Level ?? u?.Level) : (u?.Level ?? w?.level);
   const rank = isMe ? (profile?.Rank ?? u?.Rank) : u?.Rank;
   const badges = (isMe ? profile?.Badges : u?.Badges) || [];
   const ratings = isMe
@@ -145,8 +243,10 @@ export default function ProfileScreen({ me, users = {}, profile, records = [], v
     : [["General elo", u?.EffectiveElo], ["Matchmaker", u?.EffectiveMmElo]];
 
   const trend = React.useMemo(
-    () => (isMe ? records.map(r => r.elo).filter(n => typeof n === "number").reverse() : []),
-    [isMe, records],
+    () => (isMe
+      ? records.map(r => r.elo).filter(n => typeof n === "number").reverse()
+      : (web?.kind === "ok" ? web.ratings || [] : []).map(p => p.elo)),
+    [isMe, records, web],
   );
 
   const open = who => { setQuery(""); if (onView) onView(who === me ? undefined : who); };
@@ -261,6 +361,8 @@ export default function ProfileScreen({ me, users = {}, profile, records = [], v
           </div>
 
           <EloTrend points={trend} />
+
+          {!isMe && <FromTheSite state={web} />}
 
           {isMe && matchRows.length > 0 && (
             <div>
