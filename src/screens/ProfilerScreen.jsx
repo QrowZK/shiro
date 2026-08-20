@@ -72,15 +72,46 @@ export function Duck({ mood = "working", size = 96 }) {
   );
 }
 
-function StepRow({ name, state }) {
-  const icon = { done: "check", fail: "alert-triangle", running: "loader", idle: "minus" }[state];
-  const colour = state === "fail" ? "var(--signal-warn)"
-    : state === "done" ? "var(--text-mid)" : "var(--text-faint)";
+/* One line of the run: a step, its state, and what it found.
+ *
+ * Steps resolve one at a time and stay on screen with their result, so the whole
+ * run is readable once it finishes. Following the design kit: the result glyph
+ * is the only chroma, and a pass is plain ink rather than green - a green tick
+ * on every passing line makes them shout louder than the one line that matters.
+ */
+const MARK = {
+  pending: { glyph: null, colour: "var(--text-faint)" },
+  running: { glyph: "loader", colour: "var(--text-mid)" },
+  ok: { glyph: "check", colour: "var(--text-hi)" },
+  warn: { glyph: "alert-triangle", colour: "var(--signal-warn)" },
+  fail: { glyph: "alert-triangle", colour: "var(--signal-danger)" },
+};
+
+function StepRow({ index, label, state = "pending", detail }) {
+  const m = MARK[state] || MARK.pending;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)", height: 26 }}>
-      <Icon name={icon} size={14} style={{ color: colour }} />
-      <span style={{ font: "var(--text-ui-sm)",
-        color: state === "idle" ? "var(--text-faint)" : "var(--text-body)" }}>{name}</span>
+    <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--sp-5)",
+      padding: "var(--sp-4) 0", boxShadow: "var(--rule-inset)",
+      opacity: state === "pending" ? 0.55 : 1,
+      transition: "opacity var(--dur-base) var(--ease-out)" }}>
+      <span style={{ width: 18, flex: "0 0 auto",
+        font: "var(--w-regular) var(--size-micro)/18px var(--font-mono)",
+        color: "var(--text-faint)", fontVariantNumeric: "tabular-nums" }}>
+        {String(index).padStart(2, "0")}
+      </span>
+      <span style={{ width: 16, height: 18, flex: "0 0 auto", display: "inline-flex",
+        alignItems: "center", color: m.colour }}>
+        {m.glyph && <Icon name={m.glyph} size={14} />}
+      </span>
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 2 }}>
+        <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)" }}>{label}</span>
+        {detail && (
+          <span style={{ font: "var(--w-regular) var(--size-tiny)/1.45 var(--font-mono)",
+            color: state === "fail" ? "var(--signal-danger)"
+              : state === "warn" ? "var(--signal-warn)" : "var(--text-low)",
+            overflowWrap: "anywhere" }}>{detail}</span>
+        )}
+      </div>
     </div>
   );
 }
@@ -107,12 +138,26 @@ export default function ProfilerScreen({ report, state = "idle", error, onRun, o
       : v.findings.some(f => f.level === "warn") ? "warn" : "ok";
   const mood = running ? "working" : (worst || "working");
 
-  const stepState = i => {
-    if (running) return i === 0 ? "running" : "idle";
-    if (!report) return "idle";
-    if (i === 2 && worst === "fail") return "fail";
-    return "done";
-  };
+  /* Each step's state and the line it found. The graphics step carries the
+     worst finding, because that is the step people are actually asking about. */
+  const steps = STEPS.map((label, i) => {
+    if (running) return { label, state: i === 0 ? "running" : "pending" };
+    if (!report) return { label, state: "pending" };
+    if (i === 0) return { label, state: "ok", detail: p?.seen ? "Found" : undefined };
+    if (i === 1) {
+      return p?.seen
+        ? { label, state: "ok", detail: "infolog.txt" }
+        : { label, state: "warn", detail: "No log yet - the game has not been run here" };
+    }
+    if (i === 2) {
+      const bad = v?.findings.find(f => f.level === "fail")
+        || v?.findings.find(f => f.level === "warn");
+      return { label, state: bad ? (bad.level === "fail" ? "fail" : "warn") : "ok",
+        detail: bad ? bad.title : p?.glRenderer };
+    }
+    return { label, state: v?.preset ? "ok" : "warn",
+      detail: v?.preset ? `Suggested: ${v.preset}` : "Nothing to base one on" };
+  });
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
@@ -134,7 +179,10 @@ export default function ProfilerScreen({ report, state = "idle", error, onRun, o
             </span>
           </div>
 
-          <div>{STEPS.map((s, i) => <StepRow key={s} name={s} state={stepState(i)} />)}</div>
+          <div>{steps.map((s, i) => (
+            <StepRow key={s.label} index={i + 1} label={s.label}
+              state={s.state} detail={s.detail} />
+          ))}</div>
 
           {!report && !running && (
             <Button variant="primary" size="lg" onClick={onRun}

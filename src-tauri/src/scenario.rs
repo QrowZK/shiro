@@ -276,6 +276,92 @@ mod tests {
         assert!(problems(&sc).iter().any(|p| p.contains("does not exist")));
     }
 
+    /// Zero-K's own mission script, lifted out of
+    /// `games/User Interface Tutorial r22.sdz`. This is what the engine is
+    /// known to accept, so it is the thing to be measured against.
+    const REAL: &str = include_str!("fixtures/mission-script.txt");
+
+    /// Every `[SECTION]` name, in order.
+    fn sections(script: &str) -> Vec<String> {
+        script
+            .lines()
+            .map(str::trim)
+            .filter(|l| l.starts_with('[') && l.ends_with(']'))
+            .map(|l| l.trim_matches(['[', ']']).to_string())
+            .collect()
+    }
+
+    /// Every `Key=` at any depth, lowercased.
+    fn keys(script: &str) -> std::collections::HashSet<String> {
+        script
+            .lines()
+            .filter_map(|l| l.trim().split_once('='))
+            .map(|(k, _)| k.trim().to_ascii_lowercase())
+            .collect()
+    }
+
+    #[test]
+    fn our_script_has_the_sections_the_engine_expects() {
+        /* The single biggest unknown in docs/SCENARIO-EDITOR.md is whether a
+           script we write actually launches. Nothing here launches anything -
+           that still wants doing by hand - but a script missing a section the
+           engine's own one has would fail for a reason we can find now rather
+           than at the whistle. */
+        let ours = write_script(&sample(), "Qrow").unwrap();
+        let theirs = sections(REAL);
+        let mine = sections(&ours);
+
+        for want in ["GAME", "MODOPTIONS", "PLAYER0", "AI0", "TEAM0", "TEAM1", "ALLYTEAM0"] {
+            assert!(theirs.iter().any(|s| s == want), "the real script has no [{want}]");
+            assert!(mine.iter().any(|s| s == want), "ours has no [{want}]");
+        }
+    }
+
+    #[test]
+    fn our_script_sets_the_keys_the_engine_reads() {
+        let ours = write_script(&sample(), "Qrow").unwrap();
+        let theirs = keys(REAL);
+        let mine = keys(&ours);
+
+        /* Not every key - the real one carries mission-specific extras we have
+           no business emitting. These are the ones that decide whether a local
+           game starts at all, and every one of them is in theirs too. */
+        for want in ["mapname", "gametype", "myplayername", "ishost", "onlylocal",
+                     "gamestartdelay", "name", "team", "shortname", "allyteam"] {
+            assert!(theirs.contains(want), "the real script does not set {want}");
+            assert!(mine.contains(want), "ours does not set {want}");
+        }
+    }
+
+    #[test]
+    fn our_script_parses_the_way_theirs_does() {
+        /* Balanced braces, and every value terminated by a `;` before the next
+           assignment or the end of its section.
+
+           Deliberately not a per-line rule: the real script puts four pairs on
+           one line and closes the section on the same one -
+           `StartRectTop=0;		StartRectBottom=0; ... }` - which is the engine
+           telling us that newlines are not part of its grammar at all. Ours is
+           formatted for a human to read, and that is free. */
+        let ours = write_script(&sample(), "Qrow").unwrap();
+        for script in [REAL, ours.as_str()] {
+            assert_eq!(script.matches('{').count(), script.matches('}').count());
+            let bytes = script.as_bytes();
+            for (i, _) in script.match_indices('=') {
+                let rest = &bytes[i + 1..];
+                let end = rest
+                    .iter()
+                    .position(|c| matches!(c, b';' | b'}' | b'='))
+                    .expect("a value with no terminator");
+                assert_eq!(
+                    rest[end], b';',
+                    "unterminated value at {:?}",
+                    &script[i.saturating_sub(24)..(i + 8).min(script.len())]
+                );
+            }
+        }
+    }
+
     #[test]
     fn the_unit_payload_round_trips() {
         let json = write_units(&sample());

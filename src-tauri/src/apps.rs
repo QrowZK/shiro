@@ -97,14 +97,17 @@ and writes a finished .sd7 - heightmap, textures, metal spots and start boxes - 
 without mapconv. Opens in its own window.",
         kind: AppKind::Executable,
         source: "github.com/QrowZK/Springen",
-        download: None,
-        sha256: None,
-        version: None,
+        download: Some(
+            "https://github.com/QrowZK/Springen/releases/download/dev/Springen_0.1.1_x64.zip",
+        ),
+        // Verified by hand against the downloaded file, not copied from the
+        // release notes: this value is what decides whether the bytes are
+        // allowed to become a program, so it is worth checking rather than
+        // trusting the thing it is meant to check.
+        sha256: Some("99e5b950937719056052aff1258ca28054733d3a37fa5a2386ecf174a05335ea"),
+        version: Some("0.1.1"),
         run: Some("springen-app.exe"),
-        // Measured 2026-08-20: the repository has no releases. Until it
-        // publishes one there is nothing to fetch, and saying so is better than
-        // an Install button that fails.
-        unavailable: Some("No build published yet - Springen has no releases."),
+        unavailable: None,
     },
     CatalogueApp {
         id: "springboard",

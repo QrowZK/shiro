@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Badge, EmptyState } from "../ds/shiro.js";
+import { Button, Badge, EmptyState, Icon } from "../ds/shiro.js";
 
 /* The app launcher. Four entries, shipped with Shiro, no search and no
    accounts - see docs/APPS.md for why this is a launcher rather than a store.
@@ -20,56 +20,82 @@ export function appState(app, status) {
   return status?.installed ? "installed" : "available";
 }
 
-function StateBadge({ state, status }) {
-  switch (state) {
-    case "builtin":
-      return <Badge tone="outline">Built in</Badge>;
-    case "installed":
-      return <Badge tone="solid">{status?.installedVersion || "Installed"}</Badge>;
-    case "unavailable":
-      return <Badge tone="outline">Unavailable</Badge>;
-    default:
-      return <Badge tone="outline">Not installed</Badge>;
-  }
-}
+/* The row, following the design kit's rule for this screen: an unavailable row
+   is NOT dimmed. Dimming the whole row is what makes a deliberately-blocked
+   entry read as broken, and Springen shipped in that state. So the name stays
+   at full ink in every state, the reason is stated in words in the meta column,
+   and only the action slot changes - it holds a badge naming the blocker
+   instead of a button. */
 
-function Row({ app, status, selected, onSelect, onOpen, onInstall, busy }) {
-  const state = appState(app, status);
-  /* The row is a div with a button inside it, not a button containing one: a
-     nested button is invalid HTML, and the browser resolves it by making the
-     inner one unclickable - which is exactly the button that launches things. */
+const META = {
+  builtin: () => "Part of Shiro",
+  available: app => app.version ? `Version ${app.version}` : "Not installed",
+  installing: () => "Downloading and checking",
+  installed: (app, status) => status?.installedVersion || app.version || "Installed",
+  unavailable: app => app.unavailable,
+};
+
+const ACTION = { builtin: "Open", available: "Install", installed: "Launch" };
+
+function Row({ app, status, state, selected, onSelect, onAct, busy }) {
+  const [hover, setHover] = React.useState(false);
+  const shown = busy ? "installing" : state;
+  const verb = ACTION[shown];
+  const meta = META[shown]?.(app, status);
+
   return (
-    <div style={{
-      display: "flex", alignItems: "center", gap: "var(--sp-5)",
-      padding: "var(--sp-5) var(--sp-6)",
-      background: selected ? "var(--w-06)" : "transparent",
-      boxShadow: "var(--rule-inset)",
-    }}>
+    <div onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}
+      style={{
+        position: "relative", display: "flex", alignItems: "center", gap: "var(--sp-5)",
+        padding: "var(--sp-4) var(--sp-5)", minWidth: 0,
+        background: selected ? "var(--surface-selected)"
+          : hover ? "var(--surface-hover)" : "transparent",
+        boxShadow: "var(--rule-inset)", transition: "var(--transition-hover)",
+      }}>
+      {selected && <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2,
+        background: "var(--ink-000)" }} />}
+
+      {/* The selectable part is a real button rather than a clickable div: this
+          row is how somebody reaches an app, and a div is unreachable by
+          keyboard. The action beside it is a sibling, because a button inside a
+          button is invalid and the browser makes the inner one dead. */}
       <button type="button" onClick={onSelect}
-        style={{ flex: 1, minWidth: 0, textAlign: "left", cursor: "pointer",
-          background: "transparent", border: 0, padding: 0, color: "inherit",
-          font: "inherit", display: "flex", flexDirection: "column",
-          gap: "var(--sp-2)" }}>
-        <span style={{ display: "flex", alignItems: "baseline", gap: "var(--sp-4)" }}>
-          <span style={{ font: "var(--w-medium) var(--size-mid)/1.2 var(--font-core)",
-            color: "var(--text-hi)" }}>{app.name}</span>
-          <StateBadge state={state} status={status} />
-        </span>
-        <span style={{ font: "var(--text-ui-sm)", color: "var(--text-mid)" }}>
-          {app.summary}
-        </span>
+        style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center",
+          gap: "var(--sp-5)", background: "transparent", border: 0, padding: 0,
+          cursor: "pointer", textAlign: "left", color: "inherit", font: "inherit" }}>
+      <span style={{ width: 28, height: 28, flex: "0 0 auto", display: "inline-flex",
+        alignItems: "center", justifyContent: "center", border: "1px solid var(--w-12)",
+        color: "var(--text-mid)" }}>
+        <Icon name={app.kind === "builtin" ? "settings" : "package"} size={16} />
+      </span>
+
+      <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
+        <span style={{ font: "var(--w-semibold) var(--size-base)/1.2 var(--font-core)",
+          color: "var(--text-hi)", whiteSpace: "nowrap", overflow: "hidden",
+          textOverflow: "ellipsis" }}>{app.name}</span>
+        <span style={{ font: "var(--w-regular) var(--size-tiny)/1.35 var(--font-core)",
+          color: "var(--text-low)", overflow: "hidden", textOverflow: "ellipsis",
+          whiteSpace: "nowrap" }}>{app.summary}</span>
+      </div>
+
+      <span style={{ width: 220, flex: "0 0 auto", textAlign: "right",
+        font: "var(--w-regular) var(--size-tiny)/1.35 var(--font-mono)",
+        color: shown === "unavailable" ? "var(--text-mid)" : "var(--text-low)",
+        overflowWrap: "anywhere" }}>{meta}</span>
       </button>
-      {(state === "builtin" || state === "installed") && (
-        <Button size="sm" variant="primary" onClick={() => onOpen(app)}>
-          {state === "builtin" ? "Open" : "Launch"}
-        </Button>
-      )}
-      {state === "available" && (
-        <Button size="sm" variant="secondary" disabled={busy}
-          onClick={() => onInstall(app)}>
-          {busy ? "Installing…" : "Install"}
-        </Button>
-      )}
+
+      <span style={{ width: 120, flex: "0 0 auto", display: "flex", justifyContent: "flex-end" }}>
+        {verb && (
+          <Button size="sm" variant={shown === "available" ? "secondary" : "primary"}
+            onClick={() => onAct(app)}>{verb}</Button>
+        )}
+        {shown === "installing" && (
+          <span style={{ font: "var(--text-label)", letterSpacing: "var(--track-label)",
+            textTransform: "uppercase", color: "var(--text-faint)" }}>Installing</span>
+        )}
+        {/* Named, so the row says what is wrong rather than looking wrong. */}
+        {shown === "unavailable" && <Badge tone="outline">Unavailable</Badge>}
+      </span>
     </div>
   );
 }
@@ -111,10 +137,12 @@ export default function AppsScreen({ apps = [], statuses = [], onOpen, onLaunch,
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           {apps.map(a => (
             <Row key={a.id} app={a} status={byId[a.id]}
+              state={appState(a, byId[a.id])}
               selected={current && current.id === a.id}
               busy={installing === a.id}
-              onSelect={() => setSel(a.id)} onOpen={open}
-              onInstall={x => onInstall?.(x.id)} />
+              onSelect={() => setSel(a.id)}
+              onAct={x => (appState(x, byId[x.id]) === "available"
+                ? onInstall?.(x.id) : open(x))} />
           ))}
         </div>
       </div>

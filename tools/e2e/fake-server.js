@@ -287,8 +287,14 @@
             { id: "springen", name: "Springen", kind: "executable",
               summary: "Node-graph map generator for Spring and Zero-K",
               description: "Authors terrain and writes a finished .sd7.",
-              source: "github.com/QrowZK/Springen",
-              unavailable: "No build published yet - Springen has no releases." },
+              source: "github.com/QrowZK/Springen", version: "0.1.1",
+              download: "https://github.com/QrowZK/Springen/releases/download/dev/Springen_0.1.1_x64.zip",
+              sha256: "99e5b950937719056052aff1258ca28054733d3a37fa5a2386ecf174a05335ea" },
+            { id: "springboard", name: "SpringBoard", kind: "executable",
+              summary: "The existing Spring scenario editor",
+              description: "Runs on the Spring engine, with its own installer.",
+              source: "github.com/Spring-SpringBoard/SpringBoard-Core",
+              unavailable: "Not managed by Shiro yet - install it from its own release page." },
           ];
         case "zka_status":
           return [
