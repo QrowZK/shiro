@@ -39,6 +39,19 @@ function tx<K extends CommandName>(cmd: K, data: MessageMap[K]): void {
     .catch(err => console.error(`room: ${cmd} failed:`, err));
 }
 
+/**
+ * A bot name not already in use in this room: `"CAI (1)"`, `"CAI (2)"`, and so
+ * on, which is the scheme the ZK client uses.
+ *
+ * Exported for the test rather than for callers - `addBot` picks the name.
+ */
+export function freeBotName(aiLib: string, bots: Record<string, unknown>): string {
+  for (let n = 1; ; n++) {
+    const name = `${aiLib} (${n})`;
+    if (!(name in bots)) return name;
+  }
+}
+
 /** What the host dialog collects. Engine comes from `Welcome`, so the room we
  *  open runs what everyone else is running; game and options come from the
  *  chosen custom mode, when there is one. */
@@ -351,12 +364,18 @@ export const useRoom = create<RoomState>((set, get) => ({
     tx("SetModOptions", { Options: options });
   },
 
+  /* The name is ours to pick. The server does not generate one: it looks the
+     name straight up in the room's bot dictionary, so an absent Name arrives as
+     a null key and throws ArgumentNullException before anything is added -
+     which is what "error processing line UpdateBotStatus" in the server log is.
+
+     The ZK client's scheme, and now ours: "<lib> (n)" with the first n that is
+     not already taken in this room. */
   addBot: (aiLib, ally, name) => {
     tx("UpdateBotStatus", {
       AiLib: aiLib,
       AllyNumber: ally,
-      // The server names it if we do not, which is what the official client does.
-      Name: name,
+      Name: name || freeBotName(aiLib, get().bots),
       Owner: get().me,
     });
   },

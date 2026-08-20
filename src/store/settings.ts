@@ -62,6 +62,14 @@ export interface Settings {
   autoOpenDebriefing: boolean;
   /** Which of SKINS is on. Cosmetic only - nothing else reads it. */
   skin: SkinId;
+  /**
+   * Height of the room's chat and spectator pane, in pixels.
+   *
+   * Remembered because it is a per-person preference about a fixed layout:
+   * people who read chat want it tall, people watching the teams want it short,
+   * and re-dragging it on every join would be the annoying kind of tidy.
+   */
+  roomChatHeight: number;
 }
 
 export interface SettingsState extends Settings {
@@ -70,7 +78,10 @@ export interface SettingsState extends Settings {
   forgetPassword: () => void;
 }
 
-const DEFAULTS: Settings = { name: "", remember: false, autoOpenDebriefing: true, skin: "paper" };
+const DEFAULTS: Settings = {
+  name: "", remember: false, autoOpenDebriefing: true, skin: "paper",
+  roomChatHeight: 200,
+};
 
 function load(): Settings {
   try {
@@ -91,9 +102,10 @@ function load(): Settings {
 function save(s: Settings): void {
   try {
     const { name, password, remember, host, port, installRoot, skin,
-            autoOpenDebriefing } = s;
+            autoOpenDebriefing, roomChatHeight } = s;
     globalThis.localStorage?.setItem(KEY, JSON.stringify({
       name, remember, host, port, installRoot, skin, autoOpenDebriefing,
+      roomChatHeight,
       password: remember ? password : undefined,
     }));
   } catch {

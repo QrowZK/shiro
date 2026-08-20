@@ -128,10 +128,82 @@ export function PollPanel({ poll, onVote }) {
 /* `chat`, `onSay`, `onTeam`, `onSpectate`, `sync` and `phase` are supplied when
    the screen is driven by the live store; without them it renders the demo
    room from data.js and the interactive parts stand down. */
+/* The divider between the teams and the chat. Dragged, or nudged with the
+   arrow keys - it is a real separator to a screen reader either way, which a
+   bare div with a mousedown handler is not.
+
+   Height is owned by the caller and persisted, because it is a preference
+   about how you use the room rather than a state of this render. */
+/* Enough chat to be worth having, and enough room above it that the teams -
+   the reason you are on this screen - do not vanish. */
+const CHAT_MIN = 120;
+const TEAMS_FLOOR = 300;
+
+export function PaneResizer({ height, min, max, onResize }) {
+  const clamp = h => Math.max(min, Math.min(max, h));
+
+  const onPointerDown = e => {
+    e.preventDefault();
+    const startY = e.clientY;
+    const startHeight = height;
+    // Dragging up makes the pane taller: it is anchored to the bottom.
+    const move = ev => onResize(clamp(startHeight + (startY - ev.clientY)));
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop);
+  };
+
+  const onKeyDown = e => {
+    const step = e.shiftKey ? 48 : 16;
+    if (e.key === "ArrowUp") { e.preventDefault(); onResize(clamp(height + step)); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); onResize(clamp(height - step)); }
+  };
+
+  /* The focus ring is drawn on the grip rather than left to the browser: the
+     default outline on a 7px full-width strip reads as a heavy bar across the
+     screen, which looks like a broken border rather than a focused control. */
+  const [focused, setFocused] = React.useState(false);
+
+  return (
+    <div role="separator" aria-orientation="horizontal" tabIndex={0}
+      aria-label="Resize chat" aria-valuenow={Math.round(height)}
+      aria-valuemin={min} aria-valuemax={max}
+      onPointerDown={onPointerDown} onKeyDown={onKeyDown}
+      onFocus={() => setFocused(true)} onBlur={() => setFocused(false)}
+      style={{
+        height: 7, marginBottom: -1, flex: "0 0 auto", cursor: "ns-resize",
+        /* The grab area is taller than the line it draws, because a 1px
+           target is a target you miss. */
+        display: "flex", alignItems: "center", justifyContent: "center",
+        background: "transparent", outline: "none",
+      }}>
+      <div aria-hidden="true" style={{
+        width: focused ? 72 : 44, height: 3, borderRadius: 2,
+        background: focused ? "var(--text-hi)" : "var(--w-12)",
+        transition: "var(--transition-hover)",
+      }} />
+    </div>
+  );
+}
+
 export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
   onTeam, onSpectate, sync, phase, poll, pollOutcome, onVote, onKick, onAddBot, onPlayer,
-  download, onEditOptions, optionsLocked }) {
+  download, onEditOptions, optionsLocked, chatHeight = 200, onChatHeight }) {
   const [msg, setMsg] = React.useState("");
+  /* The pane may not grow so far that the teams it sits under disappear. The
+     ceiling is the window rather than the container because the container's
+     height is what we are changing - measuring it would chase itself. */
+  const [viewport, setViewport] = React.useState(
+    () => (typeof window === "undefined" ? 800 : window.innerHeight));
+  React.useEffect(() => {
+    const onResize = () => setViewport(window.innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  const chatMax = Math.max(CHAT_MIN, viewport - TEAMS_FLOOR);
   const total = room.teams.reduce((n, t) => n + t.players.length, 0);
   const lines = chat || room.chat || [];
   const scroll = useStickyScroll({ count: lines.length, resetKey: room.id });
@@ -162,8 +234,11 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
             onKick={onKick} onAddBot={onAddBot} onPlayer={onPlayer} />)}
         </div>
 
+        <PaneResizer height={chatHeight} min={CHAT_MIN} max={chatMax}
+          onResize={onChatHeight || (() => {})} />
         <div style={{ flex: "0 0 auto", borderTop: "1px solid var(--w-12)", display: "flex", minHeight: 0 }}>
-          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", height: 200 }}>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column",
+            height: Math.min(chatHeight, chatMax) }}>
             <div style={{ height: 26, display: "flex", alignItems: "center", justifyContent: "space-between",
               padding: "0 var(--sp-5)", borderBottom: "1px solid var(--w-06)" }}>
               <span className="lab">ROOM CHAT</span>

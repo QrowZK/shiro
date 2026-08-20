@@ -1,7 +1,23 @@
 /* Fake data shaped exactly like the ZkLobbyServer payloads documented in
    docs/DESIGN_HANDOFF.md section 6. Replaced by the real protocol store
    once the Rust TCP relay lands - see docs/ARCHITECTURE.md section 4. */
-export default {
+import { rankColour } from "./net/ranks.ts";
+
+/* Rank tints are derived rather than written into the fixtures below: the live
+   path computes them in `userToChip`, and a demo that hard-coded them would
+   drift from it the moment either changed. */
+function tinted(value) {
+  if (Array.isArray(value)) return value.map(tinted);
+  if (!value || typeof value !== "object") return value;
+  const out = {};
+  for (const [k, v] of Object.entries(value)) out[k] = tinted(v);
+  if (typeof out.elo === "number" && out.eloTint === undefined) {
+    out.eloTint = rankColour(out.elo);
+  }
+  return out;
+}
+
+export default tinted({
   welcome: { Engine: "2025.06.21", Game: "Zero-K v1.14.8.0", UserCount: 100 },
   me: { name: "Shadowfury", clan: "ZKF", country: "DE", faction: "machines", level: 41, elo: 1842, mmElo: 1766 },
   battles: [
@@ -106,4 +122,4 @@ export default {
       { user:{name:"vexatiousmachinist",country:"BR",faction:"rising",level:8}, elo:1187, change:-17, win:false }
     ]
   }
-};
+});

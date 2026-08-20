@@ -151,6 +151,40 @@ check("JoinBattle went out", await waitFor("join", () => sentAny(/^JoinBattle /)
 check("the roster arrives", await waitFor("roster", () => seeing(/CAI-Brutal/)));
 check("spectators are separated from players", await seeing(/SPECTATORS/) && await seeing(/lorelei/));
 check("mod options render", await seeing(/commshare/));
+/* Ratings carry the colour their rank icon carries, so the number in the
+   roster and the badge in the official client agree. Three players, three
+   different bands: 1842 yellow, 1790 amber, 1588 orange. */
+const tints = await page.evaluate(() => {
+  const out = {};
+  for (const el of document.querySelectorAll("span")) {
+    const t = el.textContent.trim();
+    if (/^\d{3,4}$/.test(t) && el.style.fontVariantNumeric === "tabular-nums") {
+      out[t] = getComputedStyle(el).color;
+    }
+  }
+  return out;
+});
+check("ratings are tinted by rank band",
+  tints["1842"] === "rgb(222, 185, 11)"
+  && tints["1790"] === "rgb(209, 143, 37)"
+  && tints["1588"] === "rgb(209, 98, 37)",
+  JSON.stringify(tints));
+
+/* The chat and spectator pane is draggable, and remembers where you left it -
+   people who read chat want it tall, people watching the teams want it short. */
+const resizer = page.getByRole("separator", { name: "Resize chat" });
+const paneHeight = () => page.evaluate(() =>
+  document.querySelector('[role=separator][aria-label="Resize chat"]')
+    .nextElementSibling.firstElementChild.getBoundingClientRect().height);
+const startHeight = await paneHeight();
+await resizer.focus();
+await page.keyboard.press("ArrowUp");
+check("the chat pane resizes", await waitFor("taller", async () => (await paneHeight()) > startHeight));
+await shot("live-05-room");
+check("and the new height is remembered",
+  await page.evaluate(() =>
+    JSON.parse(localStorage.getItem("shiro.settings") || "{}").roomChatHeight > 200));
+
 /* Somebody else's room. The server would refuse a SetModOptions from us, so
    the button is offered disabled with the reason rather than hidden. */
 check("options are not editable in a room we did not open",
@@ -443,6 +477,11 @@ console.log("host controls");
 await clickText(/Add AI/);
 check("adding an AI names us as the owner",
   await waitFor("bot", () => sentAny(/^UpdateBotStatus \{.*"AiLib":"CAI".*"Owner":"Qrow"/)));
+/* And names the bot. The server looks Name up in the room's bot dictionary
+   without checking it first, so leaving it out threw ArgumentNullException
+   server-side and added nothing - with no error the client could see. */
+check("and names the bot, which the server will not do for us",
+  await sentAny(/^UpdateBotStatus \{.*"Name":"CAI \(\d+\)"/));
 await page.getByRole("button", { name: /Remove hexed/ }).first().click();
 check("kicking sends the battle and the name",
   await waitFor("kick", () => sentAny(/^KickFromBattle \{.*"Name":"hexed"/)));
