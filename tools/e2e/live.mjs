@@ -465,6 +465,45 @@ check("a name that is nobody says so",
 await clickText(/My profile/);
 check("going back returns to your own", await waitFor("back2", () => seeing(/MY PROFILE/)));
 
+console.log("apps");
+await page.locator("nav button").nth(6).click();
+check("the launcher lists what Shiro can run",
+  await waitFor("apps", () => seeing(/System profiler/) && seeing(/Splaunch/)));
+/* Springen has no release yet, so its row is unavailable - the state most
+   likely to look like a bug rather than a fact. It has to say why. */
+check("an app with nothing to download says so rather than offering Install",
+  await waitFor("unavail", async () => {
+    await page.getByRole("button", { name: /Springen/ }).first().click();
+    return (await seeing(/no releases/i)) && (await seeing(/Unavailable/i));
+  }));
+await shot("live-06-apps");
+
+console.log("profiler");
+await page.getByRole("button", { name: /System profiler/ }).first().click();
+await page.getByRole("button", { name: /^Open$/ }).last().click();
+check("the profiler reports what the engine saw",
+  await waitFor("prof", () => seeing(/NVIDIA GeForce RTX 4060/) && seeing(/4\.6 \(Compat\)/)));
+check("and recommends a preset with a reason",
+  await seeing(/High/) && await seeing(/comfortable at High/));
+await shot("live-07-profiler");
+await clickText(/^Apps$/);
+
+console.log("splaunch");
+await page.getByRole("button", { name: /Splaunch/ }).first().click();
+await page.getByRole("button", { name: /^Open$/ }).last().click();
+check("splaunch asks for a map before anything else",
+  await waitFor("sp", () => seeing(/Pick a map/)));
+await page.getByRole("button", { name: "TartarusV7" }).first().click();
+check("and then offers the palette and the map",
+  await waitFor("sp2", () => seeing(/Commanders/) && seeing(/armcom/)));
+/* Nothing placed is the common starting state, so the selection panel has to
+   say what to do rather than sit blank. */
+check("the empty selection says what to do",
+  await seeing(/click the map to place it/i));
+check("it refuses to test an empty scenario, and says what is missing",
+  await seeing(/Nothing placed yet/));
+await shot("live-08-splaunch");
+
 console.log("friends");
 await page.locator("nav button").nth(3).click();
 check("the friend list is the server's", await waitFor("friends", () => seeing(/FRIENDS/) && seeing(/hexed/)));

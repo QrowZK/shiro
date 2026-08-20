@@ -63,7 +63,7 @@ export async function writeEngineSettings(
    regenerated whole from a template rather than patched, so they get their own
    commands; see src-tauri/src/game_files.rs. */
 
-async function readInfolog(installRoot?: string): Promise<string | null> {
+export async function readInfolog(installRoot?: string): Promise<string | null> {
   if (!inTauri()) return null;
   return invoke<string | null>("zks_read_infolog", { installRoot });
 }

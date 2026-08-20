@@ -40,3 +40,20 @@ button:focus-visible,input:focus-visible,select:focus-visible{outline:none;box-s
   .shiro-runner { animation: none !important; left: 50% !important;
                   margin-left: -22px; }
 }
+
+/* The profiler's duck. Two small motions rather than one big one: the body
+   bobs on the water, the feet paddle at twice the rate underneath it. Same
+   principle as the Dirtbag - if the parts move at the same rate it reads as a
+   single sliding image rather than a bird. */
+@keyframes shiro-duck-bob    { 0%, 100% { transform: translateY(0); }
+                               50%      { transform: translateY(-1.5px); } }
+@keyframes shiro-duck-paddle { 0%, 100% { transform: translateX(0); }
+                               50%      { transform: translateX(2px); } }
+.shiro-duck-bob    { animation: shiro-duck-bob 1.6s ease-in-out infinite; }
+.shiro-duck-paddle { animation: shiro-duck-paddle 0.8s ease-in-out infinite; }
+
+/* The check takes a moment; the duck is there to make that legible, not to be
+   watched. Under a reduced motion preference it simply floats. */
+@media (prefers-reduced-motion: reduce) {
+  .shiro-duck-bob, .shiro-duck-paddle { animation: none !important; }
+}

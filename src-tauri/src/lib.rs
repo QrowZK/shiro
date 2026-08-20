@@ -4,6 +4,9 @@ mod game_files;
 mod install;
 mod launch;
 mod relay;
+mod apps;
+mod scenario;
+mod profile;
 mod zkcontent;
 mod zkweb;
 
@@ -35,6 +38,14 @@ pub fn run() {
             zkcontent::zks_find_maps,
             zkcontent::zks_game_modes,
             zkcontent::zks_map_catalogue,
+            apps::zka_catalogue,
+            apps::zka_status,
+            apps::zka_launch,
+            apps::zka_uninstall,
+            profile::zkp_profile,
+            scenario::zksc_script,
+            scenario::zksc_problems,
+            scenario::zksc_test,
             zkweb::zkw_profile,
             zkweb::zkw_ratings,
         ])
