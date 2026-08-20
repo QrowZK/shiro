@@ -147,6 +147,12 @@
           joined(99);
         });
         break;
+      /* The real server assigns the dictionary and broadcasts it to the room -
+         there is no acknowledgement, the echo *is* the acknowledgement, and a
+         client that does not wait for it is guessing. */
+      case "SetModOptions":
+        soon(() => state.push(line("SetModOptions", { Options: data.Options })));
+        break;
       /* LeaveBattle gets no reply: the real server tells the *room* you left
          by re-sending User records, and says nothing to the leaver. Removing
          the battle here would be wrong - it is still open without us. */

@@ -7,6 +7,7 @@ import AppShell from "./screens/AppShell.jsx";
 import LoginScreen from "./screens/LoginScreen.jsx";
 import BattleListScreen from "./screens/BattleListScreen.jsx";
 import BattleRoomScreen from "./screens/BattleRoomScreen.jsx";
+import { canEdit as canEditOptions } from "./net/modOptions.ts";
 import ChatScreen from "./screens/ChatScreen.jsx";
 import QueueScreen from "./screens/QueueScreen.jsx";
 import DebriefingScreen from "./screens/DebriefingScreen.jsx";
@@ -15,6 +16,7 @@ import ProfileScreen from "./screens/ProfileScreen.jsx";
 import SettingsScreen from "./screens/SettingsScreen.jsx";
 import DownloadsScreen from "./screens/DownloadsScreen.jsx";
 import HostBattleDialog from "./screens/HostBattleDialog.jsx";
+import ModOptionsDialog from "./screens/ModOptionsDialog.jsx";
 import JoinPasswordDialog from "./screens/JoinPasswordDialog.jsx";
 import RegisterDialog from "./screens/RegisterDialog.jsx";
 import LoadingDialog from "./screens/LoadingDialog.jsx";
@@ -54,6 +56,7 @@ export default function App() {
   const [check, setCheck] = React.useState(0);
   const [launching, setLaunching] = React.useState(false);
   const [hosting, setHosting] = React.useState(false);
+  const [editingOptions, setEditingOptions] = React.useState(false);
   const [locked, setLocked] = React.useState(null);
   const [install, setInstall] = React.useState(null);
   const [profileOf, setProfileOf] = React.useState(null);
@@ -423,9 +426,16 @@ export default function App() {
       onKick={u => useRoom.getState().kick(u.name)}
       onAddBot={ally => useRoom.getState().addBot("CAI", ally)}
       onPlayer={u => { if (u.name !== me && !u.bot) openDm(u.name); }}
+      onEditOptions={() => setEditingOptions(true)}
+      /* The server's rule, read backwards: only the founder may set options,
+         and an autohost's founder is never a person. */
+      optionsLocked={canEditOptions(liveRoom.founder, me)
+        ? undefined : "Only the room's host can change these"}
       onStart={startRoom} />
   );
   else if (room) body = <BattleRoomScreen room={D.room} onLeave={() => setRoom(null)}
+    // The demo room belongs to somebody else, so the options are theirs to set.
+    optionsLocked="Only the room's host can change these"
     onStart={() => { setLaunching(true); setTimeout(() => { setLaunching(false); setRoom(null); setView("debrief"); }, 1600); }} />;
   else if (view === "battles") body = <BattleListScreen battles={battles} empty={empty}
     occupants={live ? occupantsOf : null}
@@ -638,6 +648,10 @@ export default function App() {
           )}
         </div>
       </Dialog>
+
+      <ModOptionsDialog open={editingOptions} current={roomOptions}
+        onClose={() => setEditingOptions(false)}
+        onApply={options => useRoom.getState().setModOptions(options)} />
 
       <HostBattleDialog open={hosting} onClose={() => setHosting(false)}
         defaultTitle={me ? me + "'s battle" : "New battle"}

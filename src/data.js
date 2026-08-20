@@ -18,7 +18,14 @@ export default {
   ],
   room: {
     id:1, title:"Teams 8v8 - no noobs", map:"Argent_Strata_1.1", founder:"Shadowfury", mode:"Teams",
-    options:[["commshare",null],["multiplier","2.0"],["startmetal","1300"],["maxunits","2000"],["deathmode","allunits"]],
+    options:[
+      { key:"noelo", label:"No Elo", value:"1", known:true, desc:"Prevent battle from affecting Elo rankings" },
+      { key:"startmetal", label:"Starting metal", value:"1300", known:true },
+      { key:"maxunits", label:"Max units", value:"2000", known:true },
+      // A key the option table has no entry for - a custom game's, or one the
+      // server set itself. Shown as it arrived rather than hidden.
+      { key:"commshare", label:"commshare", value:"1", known:false },
+    ],
     teams:[
       { ally:0, players:[
         { user:{name:"Shadowfury",clan:"ZKF",country:"DE",faction:"machines",level:41,elo:1842}, host:true },

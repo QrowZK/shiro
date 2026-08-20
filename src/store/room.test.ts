@@ -22,7 +22,8 @@ function fresh() {
 
 const JOINED = msg("JoinBattleSuccess", {
   BattleID: 7,
-  Options: { commshare: "1", multiplier: "2.0" },
+  // One real modoption and one the table knows nothing about.
+  Options: { noelo: "1", commshare: "1" },
   Players: [
     { Name: "Qrow", AllyNumber: 0 },
     { Name: "hexed", AllyNumber: 1 },
@@ -197,12 +198,26 @@ test("ally numbers are the ones present, not a range", () => {
   assert.deepEqual(room.teams.map(t => t.ally), [0, 3]);
 });
 
-test("a flag option renders bare, a valued option keeps its value", () => {
+test("options are shown by name, and a key we do not know is still shown", () => {
   fresh();
   useRoom.getState().applyMessage(JOINED);
   const s = useRoom.getState();
   const room = roomModel(HEADER, s.players, s.bots, USERS, s.modOptions)!;
-  assert.deepEqual(room.options.sort(), [["commshare", null], ["multiplier", "2.0"]]);
+
+  // Known options come first, by their upstream name rather than their key.
+  assert.deepEqual(room.options.map(o => [o.label, o.value, o.known]), [
+    ["No Elo", "1", true],
+    ["commshare", "1", false],
+  ]);
+});
+
+test("an option left at its default is not worth listing", () => {
+  fresh();
+  useRoom.getState().applyMessage(JOINED);
+  useRoom.getState().applyMessage(msg("SetModOptions", { Options: { noelo: "0" } }));
+  const s = useRoom.getState();
+  const room = roomModel(HEADER, s.players, s.bots, USERS, s.modOptions)!;
+  assert.deepEqual(room.options, [], "noelo defaults to off");
 });
 
 test("no header means no room, rather than a half-rendered one", () => {

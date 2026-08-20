@@ -5,6 +5,7 @@
 import type * as T from "../protocol/types.ts";
 import type { AutohostMode, LoginResponse_Code } from "../protocol/enums.ts";
 import type { ConnectionState } from "./lobby.ts";
+import { changedOptions, type ModOptionDisplay } from "../net/modOptions.ts";
 
 /**
  * `AutohostMode` and `LoginResponse_Code` restated as literals.
@@ -201,7 +202,8 @@ export interface RoomModel {
   founder: string;
   mode: string;
   running: boolean;
-  options: Array<[string, string | null]>;
+  /** What the host changed, by name. Defaults are not worth listing. */
+  options: ModOptionDisplay[];
   teams: Array<{ ally: number; players: RoomPlayerModel[] }>;
   spectators: RoomPlayerModel[];
 }
@@ -358,8 +360,10 @@ export function roomModel(
     founder: battle.Founder ?? "",
     mode: modeLabel(battle.Mode),
     running: Boolean(battle.IsRunning),
-    // The engine reports "1" and "0"; leave a bare flag bare in the UI.
-    options: Object.entries(modOptions).map(([k, v]) => [k, v === "1" ? null : v]),
+    /* Only what the host changed. A room with all ninety options at their
+       defaults has nothing to say, and upstream shows non-hosts the same
+       thing. Names rather than keys, where we have a name. */
+    options: changedOptions(modOptions),
     teams: teams.length ? teams : [{ ally: 0, players: [] }],
     spectators: spectators.sort((a, b) => a.user.name.localeCompare(b.user.name)),
   };
