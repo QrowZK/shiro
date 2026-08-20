@@ -162,6 +162,10 @@ jobs:
           "@
           $assets = @($exe.FullName)
 
+          # The stamp step and this one share an `if:`, so an empty version here
+          # means one of them changed and the manifest would claim version "".
+          if (-not $env:SHIRO_VERSION) { throw "SHIRO_VERSION is unset - did the stamp step run?" }
+
           if ($sig) {
             # What the app fetches: version, notes, and per-platform url+signature.
             # The url is the release asset, which is why the tag is `dev` rather
@@ -185,10 +189,41 @@ jobs:
             Write-Warning "Publishing the installer without an update manifest; autoupdate stays on the previous build."
           }
 
-          gh release delete dev --yes 2>$null
-          gh release create dev $assets `
-            --title "Shiro - development build" `
-            --notes $notes `
-            --prerelease `
-            --target ${{ github.sha }}
+          # Updated in place rather than deleted and recreated. The old version
+          # of this step ran `gh release delete dev --yes 2>$null` and then
+          # created it again: the delete's failure went to $null, and the create
+          # then failed with "a release with the same tag name already exists",
+          # which is how a broken publish looked like a working one.
+          #
+          # In place also means there is never a moment when the download link
+          # people have does not exist.
+          gh release view dev --json tagName *> $null
+          $exists = $LASTEXITCODE -eq 0
+
+          if ($exists) {
+            gh release edit dev --title "Shiro - development build" --notes $notes --prerelease
+            if ($LASTEXITCODE -ne 0) { throw "could not update the dev release" }
+
+            # The installer's filename carries the version, so yesterday's asset
+            # does not collide with today's - it just sits there looking current.
+            $keep = $assets | ForEach-Object { Split-Path $_ -Leaf }
+            $stale = gh release view dev --json assets --jq '.assets[].name' |
+              Where-Object { $_ -and $keep -notcontains $_ }
+            foreach ($old in $stale) {
+              "Removing stale asset $old"
+              gh release delete-asset dev $old --yes
+              if ($LASTEXITCODE -ne 0) { throw "could not remove the stale asset $old" }
+            }
+
+            gh release upload dev $assets --clobber
+            if ($LASTEXITCODE -ne 0) { throw "could not upload the release assets" }
+          } else {
+            gh release create dev $assets `
+              --title "Shiro - development build" `
+              --notes $notes `
+              --prerelease `
+              --target ${{ github.sha }}
+            if ($LASTEXITCODE -ne 0) { throw "could not create the dev release" }
+          }
+
           "Published $($assets.Count) asset(s) as $env:SHIRO_VERSION"
