@@ -56,6 +56,26 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # The updater compares versions, so every published build has to be
+      # strictly newer than the last. `github.run_number` only ever increases
+      # for this workflow, which is exactly the property needed - and it is
+      # stamped rather than committed, so main stays on the base version.
+      #
+      # Pushes to main only: a pull request build is never published, and
+      # renumbering it would only make the artifact confusing.
+      - name: Stamp the build version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          $version = "0.1.${{ github.run_number }}"
+          $conf = "src-tauri/tauri.conf.json"
+          $json = Get-Content $conf -Raw | ConvertFrom-Json
+          $json.version = $version
+          $json | ConvertTo-Json -Depth 32 | Set-Content $conf -Encoding utf8
+          npm version $version --no-git-tag-version --allow-same-version | Out-Null
+          "SHIRO_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "Stamped $version"
+
       # Cheap, and a broken build is worth catching before the ten-minute part.
       - name: Unit tests
         run: npm test
@@ -66,8 +86,26 @@ jobs:
 
       # Not through scripts/tauri.ps1: that exists to find MSVC on a developer's
       # machine, and the runner already has it on PATH.
+      # Updater artifacts are built only when there is a key to sign them with.
+      #
+      # `createUpdaterArtifacts` is not in tauri.conf.json for a reason: with it
+      # on and no private key, the bundler fails outright - "a public key has
+      # been found, but no private key" - which would break every pull request
+      # build and every checkout that does not have the secret. So it lives in
+      # an overlay applied here, on the one path that has the key.
       - name: Build installer
-        run: npm run tauri -- build
+        shell: pwsh
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if ($env:TAURI_SIGNING_PRIVATE_KEY) {
+            "Signing key present - building updater artifacts."
+            npm run tauri -- build --config src-tauri/updater.json
+          } else {
+            "No signing key - building the installer only."
+            npm run tauri -- build
+          }
 
       - name: Collect the installer
         shell: pwsh
@@ -99,8 +137,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $exe = Get-ChildItem src-tauri/target/release/bundle/nsis -Filter *.exe |
+          $nsis = "src-tauri/target/release/bundle/nsis"
+          $exe = Get-ChildItem $nsis -Filter *.exe | Select-Object -First 1
+
+          # The updater installs the .nsis.zip, not the .exe, and will not touch
+          # it without a matching signature. No .sig means the signing secret is
+          # missing - publish the installer, but do not publish an update
+          # manifest pointing at something nobody can install.
+          $zip = Get-ChildItem $nsis -Filter *.nsis.zip -ErrorAction SilentlyContinue |
             Select-Object -First 1
+          $sig = if ($zip) {
+            Get-ChildItem "$($zip.FullName).sig" -ErrorAction SilentlyContinue
+          } else { $null }
           $notes = @"
           Unsigned development build of Shiro, from commit ${{ github.sha }}.
 
@@ -112,10 +160,35 @@ jobs:
           games and maps itself, including the community content pr-downloader
           cannot reach.
           "@
+          $assets = @($exe.FullName)
+
+          if ($sig) {
+            # What the app fetches: version, notes, and per-platform url+signature.
+            # The url is the release asset, which is why the tag is `dev` rather
+            # than `latest` - GitHub's /releases/latest skips prereleases.
+            $manifest = [ordered]@{
+              version   = $env:SHIRO_VERSION
+              notes     = "Development build from commit ${{ github.sha }}."
+              pub_date  = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+              platforms = [ordered]@{
+                "windows-x86_64" = [ordered]@{
+                  signature = (Get-Content $sig.FullName -Raw).Trim()
+                  url = "https://github.com/${{ github.repository }}/releases/download/dev/$($zip.Name)"
+                }
+              }
+            }
+            $manifest | ConvertTo-Json -Depth 8 | Set-Content latest.json -Encoding utf8
+            $assets += $zip.FullName
+            $assets += "latest.json"
+          } else {
+            Write-Warning "No .sig beside the bundle - TAURI_SIGNING_PRIVATE_KEY is probably unset."
+            Write-Warning "Publishing the installer without an update manifest; autoupdate stays on the previous build."
+          }
+
           gh release delete dev --yes 2>$null
-          gh release create dev $exe.FullName `
+          gh release create dev $assets `
             --title "Shiro - development build" `
             --notes $notes `
             --prerelease `
             --target ${{ github.sha }}
-          "Published $($exe.Name)"
+          "Published $($assets.Count) asset(s) as $env:SHIRO_VERSION"

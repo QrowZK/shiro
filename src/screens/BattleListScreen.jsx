@@ -8,7 +8,11 @@ const DEMO_OCCUPANTS = ["hexed", "quantum", "tinman", "lorelei", "marrow", "nine
 /* Screen 3 - the default view and the highest-traffic surface.
    Left: filter strip. Centre: the list. Right: detail for the selected battle. */
 export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty, occupants, onHost, onSpectate }) {
-  const [sel, setSel] = React.useState(battles[0] && battles[0].id);
+  /* Nothing is selected until somebody selects something. The default is
+     worked out below from the list as it stands, so there is one rule for it
+     rather than one at mount and another afterwards - the mount-time one used
+     to win, and it picked whatever happened to be first. */
+  const [sel, setSel] = React.useState(undefined);
   const [q, setQ] = React.useState("");
   const [mode, setMode] = React.useState("All modes");
   const [hideRunning, setHideRunning] = React.useState(false);
@@ -18,7 +22,11 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
     (!hideRunning || !b.running) &&
     (!hideLocked || !b.locked) &&
     (q === "" || (b.title + " " + b.founder + " " + b.map).toLowerCase().includes(q.toLowerCase())));
-  const current = list.find(b => b.id === sel) || list[0];
+  /* Ordering is busiest-first, which can put a running game at the top - you
+     cannot join one of those, so the default selection skips to the first room
+     you can actually do something with. An explicit click still wins; this is
+     only the fallback when nothing is selected. */
+  const current = list.find(b => b.id === sel) || list.find(b => !b.running) || list[0];
   const mapId = useMapResourceId(current && current.map);
   return (
     <div style={{ flex: 1, display: "grid", gridTemplateColumns: "200px minmax(0,1fr) 300px", minHeight: 0 }}>

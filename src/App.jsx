@@ -33,6 +33,8 @@ import { useMatchmaker, secondsLeft } from "./store/matchmaker";
 import { useFriends } from "./store/friends";
 import { useParty, inviteSecondsLeft } from "./store/party";
 import { useSettings } from "./store/settings";
+import { useUpdate } from "./store/update.ts";
+import { appVersion } from "./net/update.ts";
 import { useSite, channelOf, isExternalUrl } from "./store/site";
 import { useHistory, buildDebriefView } from "./store/history";
 import { AutohostModeLabel } from "./protocol/enums";
@@ -68,6 +70,23 @@ export default function App() {
   const [loadingIn, setLoadingIn] = React.useState(false);
 
   const settings = useSettings();
+  const updateState = useUpdate(s => s.state);
+  /* The version the binary reports, not one written into the UI - CI stamps it
+     at build time, so a literal here would be a number that was true once. */
+  const [appVer, setAppVer] = React.useState("0.1.0");
+  React.useEffect(() => {
+    let live2 = true;
+    void appVersion().then(v => { if (live2) setAppVer(v); }, () => {});
+    return () => { live2 = false; };
+  }, []);
+
+  /* One check a session, a few seconds after start so it is not competing with
+     logging in. Nothing installs on its own. */
+  React.useEffect(() => {
+    if (!live) return undefined;
+    const t = setTimeout(() => void useUpdate.getState().check(), 4000);
+    return () => clearTimeout(t);
+  }, [live]);
   /* `logout` is one of the site's actions, but the handler is defined below;
      a ref keeps the definition where it reads best. */
   const handleLogoutRef = React.useRef(null);
@@ -343,6 +362,9 @@ export default function App() {
   handleLogoutRef.current = handleLogout;
 
   const shell = {
+    version: appVer,
+    // A mark beside the version, not a dialog over whatever you are doing.
+    updateReady: updateState.kind === "available" || updateState.kind === "ready",
     connection: live ? statusBarKind(connection, reconnectAttempt) : "online",
     users: live ? (welcome?.UserCount ?? 0) : D.welcome.UserCount,
     engine: live ? (welcome?.Engine ?? "-") : D.welcome.Engine,
@@ -551,6 +573,15 @@ export default function App() {
   );
   else if (view === "settings") body = (
     <SettingsScreen
+      /* Only inside the app: the browser demo has no updater to ask, and a
+         "Check for updates" button that cannot is worse than none. */
+      update={live ? {
+        state: updateState,
+        check: () => useUpdate.getState().check(),
+        install: () => useUpdate.getState().install(),
+        restart: () => useUpdate.getState().restart(),
+      } : undefined}
+      version={appVer}
       me={live ? me : "Shadowfury"}
       install={live ? install : { root: "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Zero-K", source: "Steam" }}
       installError={installError}

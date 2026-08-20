@@ -28,6 +28,8 @@
           "url": "http://*.zero-k.info/*"
         }
       ]
-    }
+    },
+    "updater:default",
+    "process:allow-restart"
   ]
 }
