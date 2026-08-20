@@ -148,17 +148,17 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $nsis = "src-tauri/target/release/bundle/nsis"
-          $exe = Get-ChildItem $nsis -Filter *.exe | Select-Object -First 1
+          # -Filter *.exe can match Shiro_x.y.z_x64-setup.exe.sig through short
+          # names, and the signature is not the installer.
+          $exe = Get-ChildItem $nsis -Filter *.exe |
+            Where-Object { $_.Name -notlike "*.sig" } | Select-Object -First 1
 
-          # The updater installs the .nsis.zip, not the .exe, and will not touch
-          # it without a matching signature. No .sig means the signing secret is
-          # missing - publish the installer, but do not publish an update
-          # manifest pointing at something nobody can install.
-          $zip = Get-ChildItem $nsis -Filter *.nsis.zip -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-          $sig = if ($zip) {
-            Get-ChildItem "$($zip.FullName).sig" -ErrorAction SilentlyContinue
-          } else { $null }
+          # For NSIS, Tauri v2 signs the installer itself and writes
+          # <installer>.exe.sig beside it - there is no .nsis.zip; that was v1.
+          # No .sig means the signing secret is missing, so publish the
+          # installer but not a manifest pointing at something the app would
+          # refuse to install anyway.
+          $sig = Get-ChildItem "$($exe.FullName).sig" -ErrorAction SilentlyContinue
           $notes = @"
           Unsigned development build of Shiro, from commit ${{ github.sha }}.
 
@@ -187,12 +187,13 @@ jobs:
               platforms = [ordered]@{
                 "windows-x86_64" = [ordered]@{
                   signature = (Get-Content $sig.FullName -Raw).Trim()
-                  url = "https://github.com/${{ github.repository }}/releases/download/dev/$($zip.Name)"
+                  url = "https://github.com/${{ github.repository }}/releases/download/dev/$($exe.Name)"
                 }
               }
             }
             $manifest | ConvertTo-Json -Depth 8 | Set-Content latest.json -Encoding utf8
-            $assets += $zip.FullName
+            # The installer is already in $assets - the updater downloads that
+            # same file, so there is nothing extra to upload but the manifest.
             $assets += "latest.json"
           } else {
             Write-Warning "No .sig beside the bundle - TAURI_SIGNING_PRIVATE_KEY is probably unset."
