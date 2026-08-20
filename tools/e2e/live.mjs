@@ -465,6 +465,63 @@ check("a name that is nobody says so",
 await clickText(/My profile/);
 check("going back returns to your own", await waitFor("back2", () => seeing(/MY PROFILE/)));
 
+console.log("apps");
+await page.locator("nav button").nth(6).click();
+check("the launcher lists what Shiro can run",
+  await waitFor("apps", () => seeing(/System profiler/) && seeing(/Splaunch/)));
+/* An app Shiro cannot install is the state most likely to look like a bug
+   rather than a fact, so it has to say why instead of offering a button that
+   fails. */
+check("an app Shiro cannot install says so rather than offering Install",
+  await waitFor("unavail", async () => {
+    await page.getByRole("button", { name: /SpringBoard/ }).first().click();
+    return (await seeing(/its own release page/i)) && (await seeing(/Unavailable/i));
+  }));
+
+/* And one it can offers Install, with the verification happening in Rust. */
+check("an app with a published build can be installed",
+  await waitFor("install", async () => {
+    await page.getByRole("button", { name: /Springen/ }).first().click();
+    return await seeing(/Install/);
+  }));
+const beforeInstall = await mark();
+await page.getByRole("button", { name: /^Install$/ }).last().click();
+check("installing asks the backend rather than fetching in the page",
+  await waitFor("installed", () => sentSince(beforeInstall, /^install springen$/)));
+await shot("live-06-apps");
+
+console.log("profiler");
+await page.getByRole("button", { name: /System profiler/ }).first().click();
+await page.getByRole("button", { name: /^Open$/ }).last().click();
+check("the profiler reports what the engine saw",
+  await waitFor("prof", () => seeing(/NVIDIA GeForce RTX 4060/) && seeing(/4\.6 \(Compat\)/)));
+check("and recommends a preset with a reason",
+  await seeing(/High/) && await seeing(/comfortable at High/));
+await shot("live-07-profiler");
+await clickText(/^Apps$/);
+
+console.log("splaunch");
+await page.getByRole("button", { name: /Splaunch/ }).first().click();
+await page.getByRole("button", { name: /^Open$/ }).last().click();
+check("splaunch asks for a map before anything else",
+  await waitFor("sp", () => seeing(/NEW SCENARIO/) && seeing(/Choose a map/)));
+await page.getByRole("button", { name: "TartarusV7" }).first().click();
+check("and then offers the palette and the map",
+  await waitFor("sp2", () => seeing(/Commanders/) && seeing(/armcom/)));
+/* Nothing placed is the common starting state, so the selection panel has to
+   say what to do rather than sit blank. */
+check("the empty selection says what to do",
+  await seeing(/click the map to place it/i));
+/* An invalid scenario is visible while it is being made, not after Test fails:
+   the count is in the header and opens the list. */
+check("it counts the problems before you can test",
+  await seeing(/problem/i));
+await clickText(/problem/i);
+check("and names them",
+  await waitFor("issues", () => seeing(/Nothing has been placed yet/)));
+await clickText(/Back to the map/);
+await shot("live-08-splaunch");
+
 console.log("friends");
 await page.locator("nav button").nth(3).click();
 check("the friend list is the server's", await waitFor("friends", () => seeing(/FRIENDS/) && seeing(/hexed/)));

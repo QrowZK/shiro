@@ -14,6 +14,9 @@ import QueueScreen from "./screens/QueueScreen.jsx";
 import DebriefingScreen from "./screens/DebriefingScreen.jsx";
 import FriendsScreen from "./screens/FriendsScreen.jsx";
 import ProfileScreen from "./screens/ProfileScreen.jsx";
+import AppsScreen from "./screens/AppsScreen.jsx";
+import ProfilerScreen from "./screens/ProfilerScreen.jsx";
+import SplaunchScreen from "./screens/SplaunchScreen.jsx";
 import SettingsScreen from "./screens/SettingsScreen.jsx";
 import DownloadsScreen from "./screens/DownloadsScreen.jsx";
 import HostBattleDialog from "./screens/HostBattleDialog.jsx";
@@ -35,6 +38,9 @@ import { useParty, inviteSecondsLeft } from "./store/party";
 import { useSettings } from "./store/settings";
 import { useUpdate } from "./store/update.ts";
 import { appVersion } from "./net/update.ts";
+import { catalogue, statuses as appStatuses, launchApp, installApp } from "./net/apps.ts";
+import { profileMachine } from "./net/profile.ts";
+import { testScenario } from "./net/scenario.ts";
 import { useSite, channelOf, isExternalUrl } from "./store/site";
 import { useHistory, buildDebriefView } from "./store/history";
 import { AutohostModeLabel } from "./protocol/enums";
@@ -71,6 +77,34 @@ export default function App() {
 
   const settings = useSettings();
   const updateState = useUpdate(s => s.state);
+
+  /* The app launcher. The catalogue is compiled into the binary, so this is a
+     read of what is installed rather than a fetch. `appView` is which built-in
+     is open - the launcher is a screen and so are the things it opens. */
+  const [appCatalogue, setAppCatalogue] = React.useState([]);
+  const [appStatusList, setAppStatusList] = React.useState([]);
+  const [appView, setAppView] = React.useState(undefined);
+  const [appError, setAppError] = React.useState(undefined);
+  const [report, setReport] = React.useState(undefined);
+  const [profileState, setProfileState] = React.useState("idle");
+  const [profileError, setProfileError] = React.useState(undefined);
+  const [testError, setTestError] = React.useState(undefined);
+  const [installing, setInstalling] = React.useState(undefined);
+
+  const refreshApps = React.useCallback(() => {
+    catalogue().then(setAppCatalogue, () => setAppCatalogue([]));
+    appStatuses().then(setAppStatusList, () => setAppStatusList([]));
+  }, []);
+  React.useEffect(() => { refreshApps(); }, [refreshApps]);
+
+  const runProfile = React.useCallback(() => {
+    setProfileState("running");
+    setProfileError(undefined);
+    profileMachine(useSettings.getState().installRoot).then(
+      r => { setReport(r); setProfileState("done"); },
+      e => { setProfileError(String(e?.message ?? e)); setProfileState("idle"); },
+    );
+  }, []);
   /* The version the binary reports, not one written into the UI - CI stamps it
      at build time, so a literal here would be a number that was true once. */
   const [appVer, setAppVer] = React.useState("0.1.0");
@@ -471,6 +505,41 @@ export default function App() {
     chatHeight={settings.roomChatHeight}
     onChatHeight={h => useSettings.getState().set({ roomChatHeight: h })}
     onStart={() => { setLaunching(true); setTimeout(() => { setLaunching(false); setRoom(null); setView("debrief"); }, 1600); }} />;
+  else if (view === "apps") {
+    if (appView === "profiler") body = (
+      <ProfilerScreen report={report} state={profileState} error={profileError}
+        onRun={runProfile} onBack={() => setAppView(undefined)} />
+    );
+    else if (appView === "splaunch") body = (
+      <SplaunchScreen
+        maps={[...new Set(battles.map(b => b.map).filter(Boolean))].sort()}
+        engine={welcome?.Engine} game={welcome?.Game} player={live ? me : "Player"}
+        running={phase != null && phase.kind === "running"}
+        testError={testError}
+        onBack={() => setAppView(undefined)}
+        onTest={sc => {
+          setTestError(undefined);
+          testScenario(sc, live ? me : "Player", welcome?.Engine || "")
+            .catch(e => setTestError(String(e?.message ?? e)));
+        }} />
+    );
+    else body = (
+      <AppsScreen apps={appCatalogue} statuses={appStatusList} error={appError}
+        installing={installing}
+        onInstall={id => {
+          setAppError(undefined);
+          setInstalling(id);
+          installApp(id)
+            .then(refreshApps, e => setAppError(String(e?.message ?? e)))
+            .finally(() => setInstalling(undefined));
+        }}
+        onOpen={id => { setAppError(undefined); setAppView(id); if (id === "profiler") runProfile(); }}
+        onLaunch={id => {
+          setAppError(undefined);
+          launchApp(id).then(refreshApps, e => setAppError(String(e?.message ?? e)));
+        }} />
+    );
+  }
   else if (view === "battles") body = <BattleListScreen battles={battles} empty={empty}
     occupants={live ? occupantsOf : null}
     onToggleEmpty={e => setEmpty(e.target.checked)}
@@ -774,7 +843,10 @@ export default function App() {
   );
 
   return (
-    <AppShell view={view} onView={v => { setRoom(null); setView(v); }} {...shell}
+    /* Pressing Apps in the rail returns to the launcher, rather than leaving
+       you on whichever built-in was open last - the rail is how you leave a
+       screen, so it has to actually leave it. */
+    <AppShell view={view} onView={v => { setRoom(null); if (v === "apps") setAppView(undefined); setView(v); }} {...shell}
       overlay={overlay} me={me}>
       <ErrorBoundary>{body}</ErrorBoundary>
     </AppShell>
