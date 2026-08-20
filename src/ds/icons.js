@@ -23,7 +23,6 @@ import Info from "lucide/dist/esm/icons/info.js";
 import Loader from "lucide/dist/esm/icons/loader.js";
 import Lock from "lucide/dist/esm/icons/lock.js";
 import LogOut from "lucide/dist/esm/icons/log-out.js";
-import Map from "lucide/dist/esm/icons/map.js";
 import MessageSquare from "lucide/dist/esm/icons/message-square.js";
 import Minus from "lucide/dist/esm/icons/minus.js";
 import Package from "lucide/dist/esm/icons/package.js";
@@ -60,7 +59,6 @@ export const ICONS = {
   "loader": Loader,
   "lock": Lock,
   "log-out": LogOut,
-  "map": Map,
   "message-square": MessageSquare,
   "minus": Minus,
   "package": Package,

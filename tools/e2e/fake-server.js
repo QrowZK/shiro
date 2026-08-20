@@ -276,30 +276,27 @@
            a release - and it is the state most likely to look broken. */
         case "zka_catalogue":
           return [
-            { id: "profiler", name: "System profiler", kind: "builtin",
+            { id: "sprofiler", name: "Sprofiler", kind: "executable",
               summary: "Check whether Zero-K will run well on this machine",
               description: "Reads what the engine saw the last time it ran.",
-              source: "Shiro" },
-            { id: "splaunch", name: "Splaunch", kind: "builtin",
+              source: "github.com/QrowZK/Sprofiler",
+              unavailable: "No build published yet." },
+            { id: "splaunch", name: "Splaunch", kind: "executable",
               summary: "Build Zero-K scenarios and play them",
               description: "Place units, set objectives, press Test.",
-              source: "Shiro" },
+              source: "github.com/QrowZK/Splaunch",
+              unavailable: "No build published yet." },
             { id: "springen", name: "Springen", kind: "executable",
               summary: "Node-graph map generator for Spring and Zero-K",
               description: "Authors terrain and writes a finished .sd7.",
               source: "github.com/QrowZK/Springen", version: "0.1.1",
               download: "https://github.com/QrowZK/Springen/releases/download/dev/Springen_0.1.1_x64.zip",
               sha256: "99e5b950937719056052aff1258ca28054733d3a37fa5a2386ecf174a05335ea" },
-            { id: "springboard", name: "SpringBoard", kind: "executable",
-              summary: "The existing Spring scenario editor",
-              description: "Runs on the Spring engine, with its own installer.",
-              source: "github.com/Spring-SpringBoard/SpringBoard-Core",
-              unavailable: "Not managed by Shiro yet - install it from its own release page." },
           ];
         case "zka_status":
           return [
-            { id: "profiler", installed: true },
-            { id: "splaunch", installed: true },
+            { id: "sprofiler", installed: false },
+            { id: "splaunch", installed: false },
             { id: "springen", installed: state.installed === "springen" },
           ];
         case "zka_install":
@@ -312,36 +309,6 @@
 
         /* The profiler. A machine with a real graphics card, so the happy path
            is what the screenshot shows. */
-        case "zkp_profile":
-          return {
-            profile: {
-              seen: true, physicalCores: 10, logicalCores: 16,
-              glVendor: "NVIDIA Corporation",
-              glRenderer: "NVIDIA GeForce RTX 4060 Laptop GPU/PCIe/SSE2",
-              glVersion: "4.6 (Compat)", vramTotalMb: 8188, vramFreeMb: 5910,
-              sdlVersion: "2.0.18", window: "8x anti-aliasing and 24-bit depth-buffer",
-            },
-            verdict: {
-              findings: [
-                { level: "ok", title: "Graphics card",
-                  detail: "NVIDIA GeForce RTX 4060 Laptop GPU (NVIDIA Corporation)" },
-                { level: "ok", title: "OpenGL", detail: "4.6 (Compat)" },
-                { level: "ok", title: "Video memory", detail: "8188 MB, 5910 MB free" },
-                { level: "ok", title: "Processor", detail: "10 cores, 16 threads" },
-              ],
-              preset: "High",
-              reason: "8188 MB of video memory is comfortable at High.",
-            },
-          };
-
-        case "zksc_problems":
-          return [];
-        case "zksc_script":
-          return "[GAME] { Mapname=TartarusV7; }";
-        case "zksc_test":
-          state.sent.push("scenario test " + args.scenario.units.length + " units");
-          return 4242;
-
         case "zks_map_catalogue":
           return [
             { name: "TartarusV7", resourceId: 4242 },

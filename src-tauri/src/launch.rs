@@ -236,67 +236,6 @@ pub fn zks_launch_spring(
     Ok(pid)
 }
 
-/// Start the engine on a script somebody else wrote.
-///
-/// The supervision is the part worth sharing with `zks_launch_spring`: one game
-/// at a time, `running` cleared however it ends, and the exit announced on
-/// `zks://game` so the lobby comes back by itself. A second copy of that would
-/// be a second way to leave `running` stuck true.
-pub fn launch_script(
-    app: AppHandle,
-    game: State<'_, Game>,
-    script: &Path,
-    engine: &str,
-) -> Result<u32, String> {
-    {
-        let mut running = game
-            .running
-            .lock()
-            .map_err(|_| "game state poisoned".to_string())?;
-        if *running {
-            return Err("A game is already running.".into());
-        }
-        *running = true;
-    }
-
-    let root = game.root.lock().ok().and_then(|r| r.clone());
-    let spawned = (|| {
-        let install = install::detect_with(root.as_deref())?;
-        let exe = install::find_engine(&install.root, engine)?;
-        let plan = spawn_plan(&exe, &install.root, script);
-        std::process::Command::new(&plan.exe)
-            .args(&plan.args)
-            .current_dir(&plan.cwd)
-            .spawn()
-            .map_err(|e| format!("could not start the engine: {e}"))
-    })();
-
-    let mut child = match spawned {
-        Ok(child) => child,
-        Err(e) => {
-            if let Ok(mut r) = game.running.lock() {
-                *r = false;
-            }
-            let _ = app.emit(GAME_EVENT, GameStatus::Failed { reason: e.clone() });
-            return Err(e);
-        }
-    };
-
-    let pid = child.id();
-    let _ = app.emit(GAME_EVENT, GameStatus::Launched { pid });
-
-    let running = game.running.clone();
-    std::thread::spawn(move || {
-        let code = child.wait().ok().and_then(|s| s.code());
-        if let Ok(mut r) = running.lock() {
-            *r = false;
-        }
-        let _ = app.emit(GAME_EVENT, GameStatus::Exited { code });
-    });
-
-    Ok(pid)
-}
-
 /// Resolve install and engine, write the script, spawn.
 fn start(req: &ConnectRequest, root: Option<&str>) -> Result<std::process::Child, String> {
     let install = install::detect_with(root)?;
