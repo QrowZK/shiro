@@ -103,6 +103,44 @@ test("mod options are replaced wholesale, because SetModOptions is a snapshot", 
   assert.deepEqual(useRoom.getState().modOptions, { deathmode: "allunits" });
 });
 
+/* There is no "left the battle" message: the server re-broadcasts the leaver's
+   User record with BattleID cleared, and that echo is the only notification. */
+test("a User update with a different battle drops them from the roster", () => {
+  fresh();
+  useRoom.getState().applyMessage(JOINED);
+  assert.ok(useRoom.getState().players.hexed, "precondition: hexed is in the room");
+  useRoom.getState().applyMessage(msg("User", { Name: "hexed", BattleID: undefined }));
+  assert.equal(useRoom.getState().players.hexed, undefined, "left the battle");
+  assert.ok(useRoom.getState().players.Qrow, "and nobody else moved");
+});
+
+test("a full disconnect drops them too", () => {
+  fresh();
+  useRoom.getState().applyMessage(JOINED);
+  useRoom.getState().applyMessage(msg("UserDisconnected", { Name: "hexed" }));
+  assert.equal(useRoom.getState().players.hexed, undefined);
+});
+
+/* The trap this fell into first time. A standing filter that compared the
+   roster against the directory dropped everyone, because a User record with no
+   BattleID yet - it predates the join, or arrived in the login flood - looks
+   exactly like one who left. Only an update about someone already on the
+   roster may remove them. */
+test("a User update that still names this battle keeps them", () => {
+  fresh();
+  useRoom.getState().applyMessage(JOINED);
+  useRoom.getState().applyMessage(msg("User", { Name: "hexed", BattleID: 7 }));
+  assert.ok(useRoom.getState().players.hexed, "still here");
+});
+
+test("a User update about someone not in the room changes nothing", () => {
+  fresh();
+  useRoom.getState().applyMessage(JOINED);
+  const before = Object.keys(useRoom.getState().players).sort();
+  useRoom.getState().applyMessage(msg("User", { Name: "a-stranger", BattleID: 99 }));
+  assert.deepEqual(Object.keys(useRoom.getState().players).sort(), before);
+});
+
 // ------------------------------------------------------------------ view ---
 
 const HEADER: T.BattleHeader = {

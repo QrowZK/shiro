@@ -173,6 +173,21 @@ await composer.fill("gl hf");
 await composer.press("Enter");
 check("room chat sends as a battle Say",
   await waitFor("say", () => sentAny(/^Say \{.*"Place":1.*"Text":"gl hf"/)));
+/* The server echoes a Say back to the room, and the log has to follow it down.
+   Nothing exercised an incoming chat line until the fake server learned to
+   echo, which is why "chat does not snap to new messages" had no test. */
+check("and the echoed line lands in the log",
+  await waitFor("echo", () => seeing(/gl hf/)));
+for (let i = 0; i < 24; i++) {
+  await composer.fill("filler " + i);
+  await composer.press("Enter");
+}
+check("the log follows new messages to the bottom",
+  await waitFor("follow", () => page.evaluate(() => {
+    const els = [...document.querySelectorAll("div")]
+      .filter(d => getComputedStyle(d).overflowY === "auto" && d.scrollHeight > d.clientHeight + 4);
+    return els.length > 0 && els.every(d => d.scrollHeight - d.scrollTop - d.clientHeight <= 48);
+  })));
 
 await clickText(/^Start game$/);
 check("start asks the host", await waitFor("start", () => sentAny(/^Say \{.*"!start"/)));

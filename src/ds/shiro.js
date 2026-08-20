@@ -1208,7 +1208,13 @@ function MapImage({
      about balance wants. */
   const Root = link ? "a" : "div";
   const rootProps = link ? {
-    href: "https://zero-k.info/Maps/Detail?name=" + encodeURIComponent(String(map).replace(/ /g, "_")),
+    /* VENDOR PATCH (see README > Known issues): /Maps/Detail?name= is ignored
+       by zero-k.info - a real map, a nonsense one and an empty one all return
+       a byte-identical generic page, which is why these links appeared to go
+       "only to the maps page". The detail page is addressed by numeric
+       ResourceID, which is not knowable from the name alone; ?search= is
+       relevance-ordered and puts the right map first. */
+    href: "https://zero-k.info/Maps?search=" + encodeURIComponent(String(map).replace(/_/g, " ")),
     target: "_blank",
     rel: "noreferrer",
     title: "Open " + map + " on zero-k.info"

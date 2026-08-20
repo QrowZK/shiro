@@ -174,6 +174,41 @@ export const useRoom = create<RoomState>((set, get) => ({
           break;
         }
 
+        /* Someone leaving the room.
+         *
+         * There is no "X left the battle" message. ZkLobbyServer's
+         * ConnectedUser.LeaveBattle removes them and then calls SyncUserToAll,
+         * which re-broadcasts their `User` with BattleID cleared - that echo IS
+         * the notification. Without acting on it, everyone who ever joined
+         * stays on the roster reading "offline" forever.
+         *
+         * Edge-triggered on the message, deliberately, rather than filtering
+         * the roster against the directory on every render. A `User` we hold
+         * that simply has no BattleID yet - the record predates their join, or
+         * arrived in the login flood before JoinBattleSuccess - is
+         * indistinguishable from one who left, so a standing filter drops real
+         * players. Reacting to the update only ever removes someone the server
+         * has just told us about. */
+        case "User": {
+          const d = m.data as T.User;
+          if (battleID == null || !d.Name) break;
+          if (players[d.Name] && d.BattleID !== battleID) {
+            const next = { ...players };
+            delete next[d.Name];
+            players = next;
+          }
+          break;
+        }
+
+        case "UserDisconnected": {
+          const d = m.data as T.UserDisconnected;
+          if (battleID == null || !d.Name || !players[d.Name]) break;
+          const next = { ...players };
+          delete next[d.Name];
+          players = next;
+          break;
+        }
+
         case "UpdateUserBattleStatus": {
           const d = m.data as T.UpdateUserBattleStatus;
           // Outside a room these are noise from a battle we just left.
