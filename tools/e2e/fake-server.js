@@ -264,6 +264,19 @@
             root: args.root || "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Zero-K",
             source: args.root ? "settings" : "Steam",
           };
+        /* What a launch would need. Nothing was stubbed here before, so the
+           preflight rejected and prefetchForBattle swallowed it - which is how
+           "we never tell the room we have the map" went unnoticed. Default is
+           a complete install; `state.missing` makes it incomplete. */
+        case "zks_content_preflight":
+          return {
+            install: { root: state.installRoot || "C:\Zero-K", source: "Steam" },
+            engineOk: true,
+            downloader: "pr-downloader.exe",
+            items: state.missing || [],
+            writable: true,
+          };
+
         case "zks_launch_preview": {
           const root = state.installRoot
             || "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Zero-K";

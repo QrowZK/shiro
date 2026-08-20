@@ -119,3 +119,9 @@ export enum Relation {
   Ignore = 2,
 }
 
+export enum SyncStatuses {
+  Unknown = 0,
+  Synced = 1,
+  Unsynced = 2,
+}
+

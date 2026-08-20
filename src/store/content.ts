@@ -200,15 +200,31 @@ export async function prefetchForBattle(
   map?: string,
   installRoot?: string,
 ): Promise<void> {
+  /* The memory stops us downloading the same content twice, not reporting it
+     twice: leaving a room resets what the server knows about us, so a rejoin
+     has to say where we stand again even though there is nothing to fetch. */
   const key = `${battleID}:${game ?? ""}:${map ?? ""}`;
-  if (prefetched.has(key)) return;
+  const fetchedBefore = prefetched.has(key);
   prefetched.add(key);
 
   try {
     const { contentPreflight } = await import("../net/content");
+    const { useRoom } = await import("./room.ts");
+
     const pre = await contentPreflight(engine, game, map, installRoot);
-    if (!pre.items.length || !pre.downloader || !pre.writable) return;
+    /* Tell the room where we stand before downloading anything. Without this
+       the server has us as Unknown, and `!start` announces us as "still
+       downloading the map" to everybody, every game. */
+    useRoom.getState().reportSync(pre.items.length === 0);
+
+    if (fetchedBefore || !pre.items.length || !pre.downloader || !pre.writable) return;
     await useContent.getState().fetch(engine, pre.items, installRoot);   // one job per item
+
+    /* Ask again rather than trusting the download. pr-downloader exits 0 when
+       *any* item in a batch succeeded, so "the job finished" and "the map is
+       there" are different claims - and this one is the one the room acts on. */
+    const after = await contentPreflight(engine, game, map, installRoot);
+    useRoom.getState().reportSync(after.items.length === 0);
   } catch {
     // Nothing to say here: the launch preflight will report it properly if it
     // still matters by then.

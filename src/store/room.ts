@@ -25,6 +25,15 @@ import { create } from "zustand";
 
 import type { CommandName, Message, MessageMap } from "../protocol/registry.ts";
 import type * as T from "../protocol/types.ts";
+import type { SyncStatuses } from "../protocol/enums.ts";
+
+/* Spelled out rather than imported as values: `enums.ts` declares TypeScript
+   `enum`s, which are a runtime construct that Node's type stripping refuses to
+   execute - so the stores here take the type and name the numbers, and the
+   member types make tsc the check that upstream has not renumbered them. */
+export const SYNC_UNKNOWN: SyncStatuses.Unknown = 0;
+export const SYNC_SYNCED: SyncStatuses.Synced = 1;
+export const SYNC_UNSYNCED: SyncStatuses.Unsynced = 2;
 import { mergePatch } from "../protocol/wire.ts";
 import { registerSlice } from "./slices.ts";
 
@@ -90,6 +99,8 @@ export interface RoomState {
   poll?: T.BattlePoll;
   /** How the last vote ended, until the next one starts. */
   pollOutcome?: T.BattlePollOutcome;
+  /** What we last told the room about having the map. See `reportSync`. */
+  sync: SyncStatuses;
 
   applyBatch: (messages: Message[]) => void;
   applyMessage: (m: Message) => void;
@@ -122,6 +133,18 @@ export interface RoomState {
    * offer this unless `canEdit()` says so.
    */
   setModOptions: (options: Record<string, string>) => void;
+  /**
+   * Tell the room whether we have the map and game yet.
+   *
+   * Not cosmetic. `CmdStart` gathers everyone whose status is not `Synced` and
+   * announces "the following users are still downloading the map, please click
+   * Rejoin ASAP because you're playing", then delays the start by ten seconds.
+   * A client that never sends this stays `Unknown`, so it is named every single
+   * time anybody starts a game.
+   *
+   * Sent only when the answer changes - it is a broadcast to the whole room.
+   */
+  reportSync: (synced: boolean) => void;
   addBot: (aiLib: string, ally: number, name?: string) => void;
   removeBot: (name: string) => void;
   /** We left, were kicked, or the room closed. */
@@ -139,6 +162,7 @@ const EMPTY = {
   pendingOptions: undefined as Record<string, string> | undefined,
   poll: undefined as T.BattlePoll | undefined,
   pollOutcome: undefined as T.BattlePollOutcome | undefined,
+  sync: SYNC_UNKNOWN as SyncStatuses,
 };
 
 export const useRoom = create<RoomState>((set, get) => ({
@@ -357,6 +381,13 @@ export const useRoom = create<RoomState>((set, get) => ({
     const id = get().battleID;
     if (id == null) return;
     tx("KickFromBattle", { BattleID: id, Name: name, Reason: reason });
+  },
+
+  reportSync: synced => {
+    const next: SyncStatuses = synced ? SYNC_SYNCED : SYNC_UNSYNCED;
+    if (get().battleID == null || get().sync === next) return;
+    set({ sync: next });
+    tx("UpdateUserBattleStatus", { Sync: next });
   },
 
   setModOptions: options => {
