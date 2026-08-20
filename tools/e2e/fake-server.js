@@ -121,9 +121,20 @@
         break;
       case "Login":
         soon(() => {
+          state.me = data.Name;
           state.push(line("LoginResponse", { ResultCode: 0, Name: data.Name, SessionToken: "t" }));
           flood();
         });
+        break;
+      /* The real server echoes a Say back to everyone in the channel or room,
+         including the sender - that echo is how a sent line ever appears. This
+         server did not, which is why nothing here ever exercised an INCOMING
+         chat line, and so nothing caught the log failing to follow one. */
+      case "Say":
+        soon(() => state.push(line("Say", {
+          Place: data.Place, Target: data.Target, User: state.me || "Qrow",
+          Text: data.Text, Time: new Date(0).toISOString(),
+        })));
         break;
       case "JoinBattle":
         soon(() => joined(data.BattleID));
