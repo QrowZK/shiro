@@ -1,6 +1,9 @@
 # A modoptions editor
 
-Scope only. Nothing here is built.
+**Built.** This was the scope; it is kept as the reasoning behind the shape of
+`tools/gen-modoptions.mjs`, `src/net/modOptions.ts` and
+`src/screens/ModOptionsDialog.jsx`. Two things below turned out differently once
+it was built, and both are corrected in place and marked.
 
 "Implement modoptions from the ZK client." Zero-K's client has a modoptions
 panel; Shiro shows the raw dictionary and nothing else. This is what it would
@@ -24,7 +27,9 @@ install. Nothing here is inferred from how it looks.
 3. **`SetModOptions` replaces the whole dictionary, it does not merge.** Send a
    partial map and everything you left out is gone. This has a real casualty:
    the server sets `noelo` itself for non-vanilla games, and a careless editor
-   would silently re-enable rating on a modded room.
+   would silently re-enable rating on a modded room. (`noelo` is a *lobby*
+   option, not a server-only key - see §3.1 - which makes the reset case the
+   sharp one rather than the merge case.)
 4. **Options for games other than Zero-K are out of reach for now**, and the ZK
    client only reaches them because it runs inside the engine. Details in §5.
 5. There is a free win on the way: the same generated table gives every player a
@@ -147,6 +152,22 @@ disabled, since this game is not vanilla ZK"*. An editor that sends only the
 options it has controls for would drop `noelo` and quietly re-enable rating on a
 modded room — a change nobody asked for, from a menu that never mentioned it.
 
+### 3.1 Correction: `noelo` is a lobby option
+
+Scoping assumed `noelo` was a key only the server set. It is not — it is a bool
+in the *Important* section, named "No Elo", and the editor renders a tickbox for
+it like any other. The merge still has to preserve unrecognised keys (a custom
+game's own options, and the eighteen `tweakdefs`/`tweakunits` slots we
+deliberately do not carry), but the sharp edge moved:
+
+**Reset is the dangerous operation, not apply.** `SwitchGame` is the *only*
+place the server sets `noelo`, and nothing re-asserts it — not starting the
+game, not a player joining. The ZK client resets by sending an empty dictionary,
+so in a modded room its reset button silently turns rating back on and leaves it
+on. `resetToDefaults` keeps `noelo` at whatever the room has, and a host who
+genuinely wants it off can untick the box, which is a decision rather than a
+side effect.
+
 The ZK client avoids this without ever addressing it directly: its working copy
 is seeded from the room's current dictionary
 (`localModoptions = CopyTable(battleLobby:GetMyBattleModoptions())`), edited in
@@ -175,6 +196,17 @@ That last one is not decoration. Defaults are compared **as strings** to decide
 whether an option is non-default, so `"0.60"` and `"0.6"` are different answers
 to "did the host change this?". Zero-K's steps include `0.01`, `0.05`, `0.1` and
 `0.5`, so the branch is exercised in practice. Port it with tests.
+
+### 4.1 Correction: upstream's rounding is not portable as written
+
+The number field clamps and rounds when it loses focus, via
+`floor(v/step + 0.49)*step + 0.01*step`. The trailing nudge guards float error
+and is harmless at small steps, but `chicken_maxtech` has step 60 and max 9000,
+and that expression turns its own default into **9001** — above the maximum the
+same table declares. Tabbing through the field edited it.
+
+`clampNumber` rounds properly and clamps afterwards. It agrees with upstream
+everywhere else, and a test asserts no option can leave its own declared range.
 
 Worth noting the server does *not* validate on this path — `Process()` assigns
 whatever it is given. `!setoptions` validates against the hosted game's real

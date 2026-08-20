@@ -97,6 +97,18 @@ export interface RoomState {
   vote: (option: number | boolean) => void;
   /** Host controls. The server ignores these from anyone but the host. */
   kick: (name: string, reason?: string) => void;
+  /**
+   * Replace the room's game options.
+   *
+   * The whole dictionary, not a delta: `ServerBattle.SetModOptions` assigns
+   * what it is given, so anything left out is dropped. Build it with
+   * `merge()` from src/net/modOptions.ts rather than by hand.
+   *
+   * The server refuses anyone but the founder - and refuses even them in an
+   * autohost - with a chat line rather than an error, so callers should not
+   * offer this unless `canEdit()` says so.
+   */
+  setModOptions: (options: Record<string, string>) => void;
   addBot: (aiLib: string, ally: number, name?: string) => void;
   removeBot: (name: string) => void;
   /** We left, were kicked, or the room closed. */
@@ -297,6 +309,11 @@ export const useRoom = create<RoomState>((set, get) => ({
     const id = get().battleID;
     if (id == null) return;
     tx("KickFromBattle", { BattleID: id, Name: name, Reason: reason });
+  },
+
+  setModOptions: options => {
+    if (get().battleID == null) return;
+    tx("SetModOptions", { Options: options });
   },
 
   addBot: (aiLib, ally, name) => {

@@ -1,6 +1,6 @@
 import React from "react";
 import { Button, Badge, Tag, PlayerRow, ChatLine, MapImage, Input,
-  IconButton, Icon, UserChip, Meter } from "../ds/shiro.js";
+  IconButton, Icon, UserChip, Meter, Tooltip } from "../ds/shiro.js";
 import { useStickyScroll } from "../hooks/useStickyScroll.js";
 
 /* Screen 4 - the largest and densest screen. Teams, spectators, bots, map,
@@ -130,7 +130,7 @@ export function PollPanel({ poll, onVote }) {
    room from data.js and the interactive parts stand down. */
 export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
   onTeam, onSpectate, sync, phase, poll, pollOutcome, onVote, onKick, onAddBot, onPlayer,
-  download }) {
+  download, onEditOptions, optionsLocked }) {
   const [msg, setMsg] = React.useState("");
   const total = room.teams.reduce((n, t) => n + t.players.length, 0);
   const lines = chat || room.chat || [];
@@ -220,10 +220,35 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
             </div>
           )}
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
-            <span className="lab">MOD OPTIONS</span>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-3)" }}>
-              {room.options.map(([k, v]) => <Tag key={k} value={v || undefined}>{k}</Tag>)}
+            <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)" }}>
+              <span className="lab">MOD OPTIONS</span>
+              <div style={{ flex: 1 }} />
+              {/* Only the host may change these - the server refuses everyone
+                  else, and in an autohost it refuses even the founder. Shown
+                  disabled with the reason rather than hidden: a button that is
+                  not there is a mystery, and this is the screen where people go
+                  looking for it. */}
+              {optionsLocked ? (
+                <Tooltip label={optionsLocked} side="top">
+                  <Button size="sm" variant="ghost" disabled>Edit</Button>
+                </Tooltip>
+              ) : (
+                <Button size="sm" variant="ghost" onClick={onEditOptions}>Edit</Button>
+              )}
             </div>
+            {room.options.length === 0 ? (
+              <span style={{ font: "var(--text-ui-sm)", color: "var(--text-faint)" }}>
+                Default settings
+              </span>
+            ) : (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-3)" }}>
+                {room.options.map(o => (
+                  <Tooltip key={o.key} label={o.desc || o.key} side="top">
+                    <Tag value={o.value}>{o.label}</Tag>
+                  </Tooltip>
+                ))}
+              </div>
+            )}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
             <span className="lab">SYNC</span>

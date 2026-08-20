@@ -17,7 +17,8 @@
     "serve:csp": "node tools/e2e/serve-csp.mjs",
     "gen:icons": "node tools/gen-icons.mjs",
     "check:icons": "node tools/gen-icons.mjs --check",
-    "gen:settings": "node tools/gen-settings.mjs"
+    "gen:settings": "node tools/gen-settings.mjs",
+    "gen:modoptions": "node tools/gen-modoptions.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",

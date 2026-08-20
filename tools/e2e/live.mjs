@@ -151,6 +151,10 @@ check("JoinBattle went out", await waitFor("join", () => sentAny(/^JoinBattle /)
 check("the roster arrives", await waitFor("roster", () => seeing(/CAI-Brutal/)));
 check("spectators are separated from players", await seeing(/SPECTATORS/) && await seeing(/lorelei/));
 check("mod options render", await seeing(/commshare/));
+/* Somebody else's room. The server would refuse a SetModOptions from us, so
+   the button is offered disabled with the reason rather than hidden. */
+check("options are not editable in a room we did not open",
+  await page.getByRole("button", { name: "Edit" }).isDisabled());
 check("the install we found is named, as an install",
   await seeing(/Zero-K installation found via Steam/));
 /* The panel used to say only "Zero-K found via Steam", which in a room
@@ -193,6 +197,57 @@ check("OpenBattle carries the title, map and engine",
   await waitFor("open", () => sentAny(/^OpenBattle \{.*"Title":"shiro test room".*"Map":"TartarusV7".*"Engine":"2025\.06\.21"/)));
 check("we land in the room we opened", await waitFor("hosted", () => seeing(/shiro test room/)));
 await shot("live-03-hosted");
+
+/* Game options. Only the founder may set them - the server refuses everyone
+   else, and refuses even the founder in an autohost - so the Edit button exists
+   here and nowhere else in this run. */
+check("the host is offered the game options",
+  await waitFor("editable", () => seeing(/MOD OPTIONS/)));
+const beforeOptions = await mark();
+const noElo = () => page.getByLabel("No Elo");
+await clickText(/^Edit$/);
+check("the options open on the game's own first section",
+  await waitFor("opts", () => seeing(/Game options/)) && await seeing(/Important/));
+check("every section upstream declares is offered",
+  (await Promise.all(["Important", "Start", "Map", "Multipliers", "Silly", "Experimental", "Chicken"]
+    .map(n => seeing(new RegExp(n))))).every(Boolean));
+
+/* Nothing is sent until Apply: a send per keystroke would broadcast the whole
+   dictionary to every player in the room on every click.
+
+   The click is dispatched rather than performed because the design system's
+   checkbox is a 0x0 input hidden behind a styled span: it is the element
+   carrying the label and the change handler, but nothing Playwright will agree
+   to click. */
+await noElo().dispatchEvent("click");
+await page.waitForTimeout(400);
+await shot("live-04-modoptions");
+check("editing alone sends nothing",
+  !(await sentSince(beforeOptions, /^SetModOptions/)));
+
+await clickText(/^Cancel$/);
+check("cancelling sends nothing either",
+  !(await sentSince(beforeOptions, /^SetModOptions/)));
+
+await clickText(/^Edit$/);
+check("cancelling kept the room's own value, not ours",
+  await waitFor("reseed", async () => !(await noElo().isChecked())));
+await noElo().dispatchEvent("click");
+const beforeApply = await mark();
+await clickText(/^Apply$/);
+check("applying sends the change",
+  await waitFor("sent", () => sentSince(beforeApply, /^SetModOptions \{.*"noelo":"1"/)));
+
+/* The trap this whole module is shaped around. SetModOptions assigns the
+   room's dictionary rather than merging into it, so a send that carries only
+   our own controls silently drops everything else - the server's own keys
+   included. Both of these were in the room before we opened the dialog. */
+check("and carries the keys we never touched",
+  await sentSince(beforeApply, /^SetModOptions \{.*"commshare":"1"/)
+  && await sentSince(beforeApply, /^SetModOptions \{.*"multiplier":"2\.0"/));
+
+check("the room shows the change by name", await waitFor("shown", () => seeing(/No Elo/)));
+
 await clickText(/^Leave$/);
 await waitFor("back", () => seeing(/Host a battle/));
 
