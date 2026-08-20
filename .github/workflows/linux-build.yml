@@ -5,9 +5,9 @@
 # against WebKitGTK and glibc headers that only exist on the target. So Linux
 # artifacts come from here or not at all.
 #
-# Sibling of windows-installer.yml; kept as a separate workflow rather than a
-# matrix because the system dependencies and the artifact set have nothing in
-# common.
+# This is the pull request check. Releases are built by build-and-release.yml,
+# which builds both platforms together because there is only one update
+# manifest and two workflows writing it would race.
 #
 # NOTE: nothing in this app has ever been RUN on Linux. A green build here means
 # it compiles and packages, not that it works. See docs/DESIGN_HANDOFF.md §4 on
@@ -22,18 +22,9 @@ on:
   # running whenever one was renamed or replaced.
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
-    paths:
-      - "src/**"
-      - "src-tauri/**"
-      - "index.html"
-      - "package.json"
-      - "package-lock.json"
-      - "vite.config.js"
-      - "tools/**"
-      - ".gitattributes"
-      - ".github/workflows/linux-build.yml"
+  # No push trigger: build-and-release.yml builds Linux on main, and running
+  # both would be twenty minutes of runner time to produce the same packages
+  # twice.
 
 jobs:
   build:
