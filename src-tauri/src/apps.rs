@@ -13,8 +13,9 @@
 //! - **Nothing is ever launched that the user did not just ask to launch.** No
 //!   run-after-install, no autostart.
 //!
-//! An app that Shiro itself provides - the profiler, Splaunch - is in the same
-//! list with `kind: Builtin`, so the launcher is one list rather than two.
+//! Everything in the catalogue is a separate program. Splaunch and Sprofiler
+//! started as screens in here and were taken out: a scenario editor has nothing
+//! to do with a lobby, and a lobby should not have to carry one.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -22,13 +23,15 @@ use std::process::Command;
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
-/// How an app is delivered, which decides what "install" and "launch" mean.
+/// How an app is delivered.
+///
+/// Only one variant today, and it is kept rather than removed because "what
+/// kind of thing is this" is the question the launcher will have to answer
+/// again the moment something arrives that is not a Windows executable.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum AppKind {
-    /// A screen inside Shiro. Nothing to fetch, nothing to run.
-    Builtin,
-    /// A program we download and start. The one that needs the care above.
+    /// A program we download and start.
     Executable,
 }
 
@@ -55,38 +58,43 @@ pub struct CatalogueApp {
     pub unavailable: Option<&'static str>,
 }
 
-/// The catalogue. Four entries, hand-written, shipped in the binary.
+/// The catalogue: the tools Shiro can install and run.
+///
+/// All of them are separate programs with their own repositories. Splaunch and
+/// Sprofiler began life as screens in here and were taken out - a scenario
+/// editor has nothing to do with a lobby, and a lobby should not have to carry
+/// one. What is left is a launcher, which is a smaller and more honest thing.
 pub const CATALOGUE: &[CatalogueApp] = &[
     CatalogueApp {
-        id: "profiler",
-        name: "System profiler",
+        id: "sprofiler",
+        name: "Sprofiler",
         summary: "Check whether Zero-K will run well on this machine",
         description: "Reads what the engine saw the last time it ran - processor, \
 graphics card, video memory, OpenGL version - and recommends a settings preset. \
 Catches the two failures that actually stop people playing: a software renderer, \
 and an OpenGL version too old for the game.",
-        kind: AppKind::Builtin,
-        source: "Shiro",
+        kind: AppKind::Executable,
+        source: "github.com/QrowZK/Sprofiler",
         download: None,
         sha256: None,
         version: None,
-        run: None,
-        unavailable: None,
+        run: Some("Sprofiler.exe"),
+        unavailable: Some("No build published yet."),
     },
     CatalogueApp {
         id: "splaunch",
         name: "Splaunch",
         summary: "Build Zero-K scenarios and play them",
-        description: "Place units and features on a map, give them orders, set \
-objectives, and press Test to launch straight into it. Scenarios are start \
-scripts, so Test is the real game rather than a preview.",
-        kind: AppKind::Builtin,
-        source: "Shiro",
+        description: "Place units on a map, set objectives, and press Test to \
+launch straight into it. A scenario compiles to a start script, so Test is the \
+real game rather than a preview.",
+        kind: AppKind::Executable,
+        source: "github.com/QrowZK/Splaunch",
         download: None,
         sha256: None,
         version: None,
-        run: None,
-        unavailable: None,
+        run: Some("Splaunch.exe"),
+        unavailable: Some("No build published yet."),
     },
     CatalogueApp {
         id: "springen",
@@ -108,20 +116,6 @@ without mapconv. Opens in its own window.",
         version: Some("0.1.1"),
         run: Some("springen-app.exe"),
         unavailable: None,
-    },
-    CatalogueApp {
-        id: "springboard",
-        name: "SpringBoard",
-        summary: "The existing Spring scenario editor",
-        description: "Runs on the Spring engine. Distributed as its own installer \
-with separate assets; Shiro can point you at it but does not manage it.",
-        kind: AppKind::Executable,
-        source: "github.com/Spring-SpringBoard/SpringBoard-Core",
-        download: None,
-        sha256: None,
-        version: None,
-        run: None,
-        unavailable: Some("Not managed by Shiro yet - install it from its own release page."),
     },
 ];
 
@@ -178,15 +172,6 @@ pub fn zka_catalogue() -> Vec<CatalogueApp> {
 pub fn zka_status(app: tauri::AppHandle) -> Result<Vec<AppStatus>, String> {
     let mut out = Vec::new();
     for a in CATALOGUE {
-        if a.kind == AppKind::Builtin {
-            out.push(AppStatus {
-                id: a.id.into(),
-                installed: true,
-                installed_version: None,
-                path: None,
-            });
-            continue;
-        }
         let dir = app_dir(&app, a.id)?;
         let exe = a.run.map(|r| dir.join(r));
         let installed = exe.as_deref().map(Path::is_file).unwrap_or(false);
@@ -335,9 +320,6 @@ pub fn zka_install(app: tauri::AppHandle, id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn zka_uninstall(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let a = entry(&id)?;
-    if a.kind == AppKind::Builtin {
-        return Err(format!("{} is part of Shiro", a.name));
-    }
     let dir = app_dir(&app, a.id)?;
     if dir.is_dir() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("could not remove {}: {e}", dir.display()))?;
@@ -352,10 +334,6 @@ mod tests {
     #[test]
     fn every_entry_is_installable_or_says_why_not() {
         for a in CATALOGUE {
-            if a.kind == AppKind::Builtin {
-                assert!(a.download.is_none(), "{} is built in", a.id);
-                continue;
-            }
             // An executable entry either has something to fetch and a hash to
             // check it against, or an explicit reason it cannot be installed.
             // Anything else is a row that fails when pressed.

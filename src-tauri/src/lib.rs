@@ -5,8 +5,6 @@ mod install;
 mod launch;
 mod relay;
 mod apps;
-mod scenario;
-mod profile;
 mod zkcontent;
 mod zkweb;
 
@@ -43,10 +41,6 @@ pub fn run() {
             apps::zka_install,
             apps::zka_launch,
             apps::zka_uninstall,
-            profile::zkp_profile,
-            scenario::zksc_script,
-            scenario::zksc_problems,
-            scenario::zksc_test,
             zkweb::zkw_profile,
             zkweb::zkw_ratings,
         ])

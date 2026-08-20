@@ -16,7 +16,6 @@ const label = {
 /** What this row can do, worked out once so the row and the panel agree. */
 export function appState(app, status) {
   if (app.unavailable) return "unavailable";
-  if (app.kind === "builtin") return "builtin";
   return status?.installed ? "installed" : "available";
 }
 
@@ -28,14 +27,13 @@ export function appState(app, status) {
    instead of a button. */
 
 const META = {
-  builtin: () => "Part of Shiro",
   available: app => app.version ? `Version ${app.version}` : "Not installed",
   installing: () => "Downloading and checking",
   installed: (app, status) => status?.installedVersion || app.version || "Installed",
   unavailable: app => app.unavailable,
 };
 
-const ACTION = { builtin: "Open", available: "Install", installed: "Launch" };
+const ACTION = { available: "Install", installed: "Launch" };
 
 function Row({ app, status, state, selected, onSelect, onAct, busy }) {
   const [hover, setHover] = React.useState(false);
@@ -66,7 +64,7 @@ function Row({ app, status, state, selected, onSelect, onAct, busy }) {
       <span style={{ width: 28, height: 28, flex: "0 0 auto", display: "inline-flex",
         alignItems: "center", justifyContent: "center", border: "1px solid var(--w-12)",
         color: "var(--text-mid)" }}>
-        <Icon name={app.kind === "builtin" ? "settings" : "package"} size={16} />
+        <Icon name="package" size={16} />
       </span>
 
       <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 3 }}>
@@ -100,7 +98,7 @@ function Row({ app, status, state, selected, onSelect, onAct, busy }) {
   );
 }
 
-export default function AppsScreen({ apps = [], statuses = [], onOpen, onLaunch, onInstall, installing, error }) {
+export default function AppsScreen({ apps = [], statuses = [], onLaunch, onInstall, installing, error }) {
   const [sel, setSel] = React.useState(undefined);
   const byId = React.useMemo(
     () => Object.fromEntries(statuses.map(s => [s.id, s])), [statuses]);
@@ -109,11 +107,7 @@ export default function AppsScreen({ apps = [], statuses = [], onOpen, onLaunch,
   const status = current ? byId[current.id] : undefined;
   const state = current ? appState(current, status) : undefined;
 
-  const open = app => {
-    const s = byId[app.id];
-    if (appState(app, s) === "builtin") onOpen?.(app.id);
-    else onLaunch?.(app.id);
-  };
+  const open = app => onLaunch?.(app.id);
 
   if (!apps.length) {
     return (
@@ -194,10 +188,8 @@ export default function AppsScreen({ apps = [], statuses = [], onOpen, onLaunch,
             )}
 
             <span style={{ flex: 1 }} />
-            {(state === "builtin" || state === "installed") && (
-              <Button variant="primary" size="lg" onClick={() => open(current)}>
-                {state === "builtin" ? "Open" : "Launch"}
-              </Button>
+            {state === "installed" && (
+              <Button variant="primary" size="lg" onClick={() => open(current)}>Launch</Button>
             )}
             {state === "available" && (
               <Button variant="primary" size="lg" disabled={installing === current.id}
