@@ -9,15 +9,19 @@ import { webProfile, webRatings } from "../net/zkweb.ts";
  * read the page). A player with no awards and a page we could not read must
  * not look the same.
  *
+ * `undefined` is a fifth thing and not one of them: nobody to look up, which
+ * includes the browser demo, where there is no Tauri to ask. Returning
+ * `loading` for it left the panel reading "Reading zero-k.info..." forever.
+ *
  * One request per name actually looked at; the Rust side caches, so switching
  * back to somebody costs nothing. Nothing here is prefetched - see
  * docs/PROFILES-WITHOUT-ENDPOINTS.md section 5.
  */
 export function useWebProfile(name) {
-  const [state, setState] = React.useState({ kind: "loading" });
+  const [state, setState] = React.useState(undefined);
 
   React.useEffect(() => {
-    if (!name) { setState({ kind: "loading" }); return undefined; }
+    if (!name) { setState(undefined); return undefined; }
     let live = true;
     setState({ kind: "loading" });
 

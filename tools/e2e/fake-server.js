@@ -279,9 +279,12 @@
         /* A player's zero-k.info page. `null` is "no such account" - the site
            says so in forty bytes - and is an answer, not a failure. */
         case "zkw_profile": {
-          if (args.who !== "hexed") return null;
+          /* "Gholam" is nobody the lobby knows - an account that exists on the
+             site but is not connected, which is the case the search exists for.
+             Anything else is a miss, so the not-found path is reachable too. */
+          if (args.who !== "hexed" && args.who !== "Gholam") return null;
           return {
-            accountId: 4242, name: "hexed", clan: "ZKF", level: 33,
+            accountId: 4242, name: args.who, clan: "ZKF", level: 33,
             rank: "Red Dwarf", rankIcon: "3_3",
             badges: ["Silver donator"],
             awards: [{ key: "pwn", name: "Complete Annihilation", count: 812 }],
