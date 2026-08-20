@@ -1,5 +1,5 @@
 import React from "react";
-import { Badge, Button, Input, UserChip, EmptyState } from "../ds/shiro.js";
+import { Badge, Button, Input, UserChip, EmptyState, Icon } from "../ds/shiro.js";
 
 /* Design 2A: one column, and searching turns the whole screen into whoever you
    picked. There is no separate "someone else" layout - the same panels render
@@ -135,7 +135,9 @@ function EloTrend({ points }) {
  * they were the same. See docs/PROFILES-WITHOUT-ENDPOINTS.md.
  */
 export function FromTheSite({ state }) {
-  if (!state || state.kind === "loading") {
+  // No reader outside the desktop app - the browser demo has no Tauri to ask.
+  if (!state) return null;
+  if (state.kind === "loading") {
     return (
       <div style={{ padding: "var(--sp-6) var(--sp-7)" }}>
         <span style={label}>Reading zero-k.info…</span>
@@ -144,8 +146,13 @@ export function FromTheSite({ state }) {
   }
   if (state.kind === "missing") {
     return (
-      <div style={{ padding: "var(--sp-6) var(--sp-7)" }}>
+      <div style={{ padding: "var(--sp-6) var(--sp-7)", display: "flex",
+        flexDirection: "column", gap: "var(--sp-2)" }}>
         <span style={label}>No zero-k.info account under that name</span>
+        {/* Their route is case-sensitive, and this is the failure it causes. */}
+        <span style={{ font: "var(--text-ui-sm)", color: "var(--text-faint)" }}>
+          Names are case-sensitive there.
+        </span>
       </div>
     );
   }
@@ -222,6 +229,9 @@ export default function ProfileScreen({ me, users = {}, profile, records = [], v
   onView, onMessage, onAddFriend, onIgnore, onExternal, matchRows = [], web }) {
   const [query, setQuery] = React.useState("");
   const hits = React.useMemo(() => rankHits(users, query), [users, query]);
+  /* What to look up on the site if the directory has nobody. Names there are
+     case-sensitive, so this is what was typed, not a normalised version. */
+  const typed = query.trim().length >= 2 ? query.trim() : "";
 
   const isMe = !viewing || viewing === me;
   const name = isMe ? me : viewing;
@@ -274,15 +284,21 @@ export default function ProfileScreen({ me, users = {}, profile, records = [], v
         <div style={{ position: "relative", width: 260 }}>
           <Input size="sm" placeholder="Find a player" value={query} icon="search"
             onChange={e => setQuery(e.target.value)}
-            onKeyDown={e => { if (e.key === "Enter" && hits[0]) open(hits[0].Name); }} />
-          {hits.length > 0 && (
+            /* Enter takes the top online hit, or looks up exactly what was
+               typed - which is the only way to reach somebody who is offline. */
+            onKeyDown={e => {
+              if (e.key !== "Enter") return;
+              if (hits[0]) open(hits[0].Name);
+              else if (typed) open(typed);
+            }} />
+          {(hits.length > 0 || typed) && (
             <div style={{ position: "absolute", top: "100%", right: 0, left: 0, zIndex: 40,
               marginTop: 4, background: "var(--surface-panel)",
               border: "1px solid var(--w-12)", boxShadow: "var(--elev-menu)" }}>
               <div style={{ display: "flex", justifyContent: "space-between",
                 padding: "var(--sp-3) var(--sp-4)", borderBottom: "1px solid var(--w-06)" }}>
                 <span style={label}>{hits.length} online</span>
-                <span style={label}>Enter opens top hit</span>
+                <span style={label}>{hits.length ? "Enter opens top hit" : "Enter looks up"}</span>
               </div>
               {hits.map(h => (
                 <div key={h.Name} onClick={() => open(h.Name)}
@@ -294,6 +310,26 @@ export default function ProfileScreen({ me, users = {}, profile, records = [], v
                   <span style={label}>{presenceOf(h)}</span>
                 </div>
               ))}
+              {/* The directory is only who is connected right now. Anyone else
+                  has to be looked up by name on zero-k.info, which is the whole
+                  reason that reader exists - without this row the profile of an
+                  offline player is unreachable. */}
+              {typed && (
+                /* A real button, not a clickable div: this is the only route to
+                   an offline player, and a div is unreachable by keyboard. */
+                <button type="button" onClick={() => open(typed)}
+                  style={{ display: "flex", alignItems: "center", gap: "var(--sp-4)",
+                    width: "100%", padding: "var(--sp-3) var(--sp-4)", cursor: "pointer",
+                    boxShadow: "var(--rule-inset)", background: "transparent",
+                    border: 0, textAlign: "left", font: "inherit", color: "inherit" }}>
+                  <Icon name="search" size={14} style={{ color: "var(--text-faint)" }} />
+                  <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)",
+                    flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
+                    Look up {typed}
+                  </span>
+                  <span style={label}>zero-k.info</span>
+                </button>
+              )}
             </div>
           )}
         </div>

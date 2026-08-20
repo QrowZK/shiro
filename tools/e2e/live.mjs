@@ -426,6 +426,25 @@ check("including awards with their counts",
 check("and when they were last seen, which is the point of looking someone up",
   await seeing(/LAST SEEN/) && await seeing(/20 minutes ago/));
 
+/* Somebody the lobby has never heard of. The directory is only who is
+   connected, so without a way to look a name up the profile of an offline
+   player is unreachable - which is what made the reader above pointless. */
+await page.getByPlaceholder("Find a player").fill("Gholam");
+check("a name the directory does not have is still offered",
+  await waitFor("offer", () => seeing(/Look up Gholam/)));
+await clickText(/Look up Gholam/);
+check("and opens as a profile",
+  await waitFor("offline", () => seeing(/VIEWING/) && seeing(/Gholam/)));
+check("filled in from their page rather than left blank",
+  await waitFor("offweb", () => seeing(/FROM ZERO-K\.INFO/) && seeing(/LAST SEEN/)));
+
+/* And a name that is nobody at all says so, rather than showing an empty
+   profile that reads as a player who has done nothing. */
+await page.getByPlaceholder("Find a player").fill("zzzznosuchplayerzzzz");
+await clickText(/Look up zzzznosuchplayerzzzz/);
+check("a name that is nobody says so",
+  await waitFor("nobody", () => seeing(/No zero-k\.info account under that name/)));
+
 await clickText(/My profile/);
 check("going back returns to your own", await waitFor("back2", () => seeing(/MY PROFILE/)));
 
