@@ -37,11 +37,19 @@ permissions:
   contents: write
 
 # The version every job stamps. `github.run_number` only ever increases for a
-# workflow, which is the one property an update check needs - and computing it
-# in each job rather than passing it around means the two platforms cannot
-# disagree about what they built.
+# workflow, and computing it in each job rather than passing it around means the
+# two platforms cannot disagree about what they built.
+#
+# The minor is 2 rather than 1 because run_number is scoped to a *workflow*, and
+# this file replaced windows-installer.yml - so its counter restarted at 1 and
+# published 0.1.2 over 0.1.46. Every version must be greater than every version
+# before it or an update check answers "no" forever, so the series moved up
+# instead of trying to resume a counter that is gone.
+#
+# Renaming this file again would restart it again. Bump the minor if that
+# happens; do not try to make run_number continue.
 env:
-  SHIRO_VERSION: 0.1.${{ github.run_number }}
+  SHIRO_VERSION: 0.2.${{ github.run_number }}
   # Whether this run is allowed to publish. Main only: a dev build is a public
   # download link, and publishing an unreviewed branch to it would be a way to
   # hand somebody code nobody has looked at.
@@ -211,6 +219,11 @@ jobs:
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-22.04
     steps:
+      # `gh release` resolves the repository from the checkout. Without this the
+      # publish step fails with "not a git repository" after both platforms have
+      # already built, which is a twenty-minute way to find out.
+      - uses: actions/checkout@v4
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
