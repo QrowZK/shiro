@@ -227,7 +227,7 @@ export interface UpdateUserBattleStatus {
   IsSpectator?: boolean;
   QueueOrder?: number;
   Name?: string;
-  Sync?: unknown;
+  Sync?: E.SyncStatuses;
   JoinTime?: string;
 }
 
@@ -581,5 +581,16 @@ export interface OnPartyInvite {
 export interface OnPartyStatus {
   PartyID: number;
   UserNames?: string[];
+}
+
+export interface UserBattleStatus {
+  AllyNumber: number;
+  IsSpectator: boolean;
+  QueueOrder: number;
+  JoinTime: string;
+  Name?: string;
+  ScriptPassword?: string;
+  SyncStatus: E.SyncStatuses;
+  LobbyUser?: User;
 }
 

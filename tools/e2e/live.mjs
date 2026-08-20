@@ -151,6 +151,27 @@ check("JoinBattle went out", await waitFor("join", () => sentAny(/^JoinBattle /)
 check("the roster arrives", await waitFor("roster", () => seeing(/CAI-Brutal/)));
 check("spectators are separated from players", await seeing(/SPECTATORS/) && await seeing(/lorelei/));
 check("mod options render", await seeing(/commshare/));
+/* Having the map is something the room has to be told. CmdStart gathers
+   everyone whose status is not Synced, announces them as "still downloading
+   the map" to the whole room, and delays the start by ten seconds - so a
+   client that never sends this is named every single game. */
+check("we tell the room we have the map",
+  await waitFor("synced", () => sentAny(/^UpdateUserBattleStatus \{.*"Sync":1/)));
+
+/* And the other half, so this is not a client that simply always claims to be
+   ready: a map we do not have is reported as unsynced, which is what makes the
+   server's warning name the people it is actually about. */
+await page.evaluate(() => {
+  window.__ZKS.missing = [{ kind: "map", name: "Nobody Has This v1" }];
+});
+const beforeUnsync = await mark();
+await page.evaluate(() => window.__ZKS.push("BattleUpdate " + JSON.stringify({
+  Header: { BattleID: 11, Map: "Nobody Has This v1" },
+})));
+check("and say so when we do not",
+  await waitFor("unsynced", () => sentSince(beforeUnsync, /^UpdateUserBattleStatus \{.*"Sync":2/)));
+await page.evaluate(() => { window.__ZKS.missing = []; });
+
 /* Ratings carry the colour their rank icon carries, so the number in the
    roster and the badge in the official client agree. Three players, three
    different bands: 1842 yellow, 1790 amber, 1588 orange. */

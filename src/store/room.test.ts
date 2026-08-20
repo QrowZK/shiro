@@ -8,7 +8,8 @@ import assert from "node:assert/strict";
 
 import type { Message } from "../protocol/registry.ts";
 import type * as T from "../protocol/types.ts";
-import { useRoom, freeBotName } from "./room.ts";
+import { useRoom, freeBotName, SYNC_UNKNOWN, SYNC_SYNCED, SYNC_UNSYNCED } from "./room.ts";
+
 import { roomModel } from "./adapters.ts";
 
 function msg<K extends string>(cmd: K, data: unknown): Message {
@@ -218,6 +219,39 @@ test("an option left at its default is not worth listing", () => {
   const s = useRoom.getState();
   const room = roomModel(HEADER, s.players, s.bots, USERS, s.modOptions)!;
   assert.deepEqual(room.options, [], "noelo defaults to off");
+});
+
+// ------------------------------------------------------------------ sync ---
+
+test("we start out having told the room nothing about the map", () => {
+  fresh();
+  assert.equal(useRoom.getState().sync, SYNC_UNKNOWN);
+});
+
+test("reporting sync outside a room says nothing", () => {
+  fresh();
+  useRoom.getState().reportSync(true);
+  assert.equal(useRoom.getState().sync, SYNC_UNKNOWN);
+});
+
+test("having the content is Synced, missing it is Unsynced", () => {
+  /* Not cosmetic: CmdStart names everyone who is not Synced as "still
+     downloading the map" and delays the start ten seconds. Unknown counts. */
+  fresh();
+  useRoom.getState().applyMessage(JOINED);
+  useRoom.getState().reportSync(true);
+  assert.equal(useRoom.getState().sync, SYNC_SYNCED);
+  useRoom.getState().reportSync(false);
+  assert.equal(useRoom.getState().sync, SYNC_UNSYNCED);
+});
+
+test("leaving forgets what we told the room, so a rejoin says it again", () => {
+  fresh();
+  useRoom.getState().applyMessage(JOINED);
+  useRoom.getState().reportSync(true);
+  useRoom.getState().leave();
+  assert.equal(useRoom.getState().sync, SYNC_UNKNOWN,
+    "a new room has not been told anything yet");
 });
 
 // ------------------------------------------------------------------ bots ---

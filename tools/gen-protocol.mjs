@@ -33,7 +33,20 @@ const FILES = [
   // Same story for SetAccountRelation.Relation, which is how friends and
   // ignores are set - guessing at those numbers would be unforgivable.
   "Shared/PlasmaShared/Relation.cs",
+  // And for UpdateUserBattleStatus.Sync, which is how you tell the room you
+  // have the map. Left as `unknown` it looks optional; it is not - a client
+  // that never sends it stays Unknown forever, and the server announces you as
+  // still downloading every time somebody starts a game.
+  "Shared/LobbyClient/UserBattleStatus.cs",
 ];
+
+/* Files we read for their enums alone. The protocol files declare commands at
+   the top level, so a top-level class in one of them is something the server
+   sends; that is not true of these, whose classes are ordinary server types
+   and would otherwise be published as commands nobody can ever receive. */
+const ENUMS_ONLY = new Set([
+  "Shared/LobbyClient/UserBattleStatus.cs",
+]);
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUT = join(ROOT, "src", "protocol");
@@ -268,6 +281,7 @@ for (const d of discovered) {
     classes.push({
       qualified: d.qualified,
       name: d.name,
+      path: d.path,
       topLevel: d.topLevel,
       isAttribute,
       members: parseMembers(d.inner, { known, enums: enumSet, self: d.qualified }),
@@ -277,7 +291,7 @@ for (const d of discovered) {
 
 // Wire commands are the top-level classes; nested types are payload DTOs.
 const commands = classes
-  .filter(c => c.topLevel && !c.isAttribute)
+  .filter(c => c.topLevel && !c.isAttribute && !ENUMS_ONLY.has(c.path))
   .map(c => c.name)
   .sort();
 
