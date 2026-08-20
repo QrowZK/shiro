@@ -9,7 +9,8 @@ one step that is not automated because it must not be.
 
 1. **CI stamps a version.** `0.1.<run number>`, at build time, not in the repo -
    so every build published from `main` is strictly newer than the last, which
-   is the only reason "is there an update" has an answer.
+   is the only reason "is there an update" has an answer. Both platforms take
+   the number from the same run, so they cannot disagree about what they built.
 2. **The update is signed, and the signature is the security.** The download is
    a public release asset over HTTPS; anybody can serve a copy of that URL. What
    they cannot do is sign it with a key we hold, and the app refuses anything
@@ -89,6 +90,23 @@ refuse anyway, and publishing a manifest pointing at it would strand people on
 a broken check.
 
 ---
+
+## 3a. Linux
+
+The same release carries the deb, the rpm and the AppImage, all stamped with the
+same version as the Windows build - they used to all claim `0.1.0`, which meant
+`apt` considered a newer one already installed.
+
+**Only the AppImage self-updates.** It is the one Tauri can replace in place;
+deb and rpm are managed by the system package manager and Shiro has no business
+writing to `/usr/bin`. So a deb or rpm install checks, finds a newer version,
+and can tell you about it - but installing it is `apt install` by hand.
+
+Both platforms are built by one workflow, and one job publishes both. That is
+not tidiness: there is a single `latest.json`, and two workflows writing it
+would race, with the loser's platform silently missing from the manifest.
+
+`linux-build.yml` still exists and is the pull request check.
 
 ## 4. The channel
 
