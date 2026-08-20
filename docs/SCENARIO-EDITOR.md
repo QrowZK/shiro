@@ -951,3 +951,47 @@ crate manifests, `LICENSE`, tree listing).
 `docs/APPS.md`, `docs/PLUGINS.md` §2, §10; `docs/ARCHITECTURE.md` §6, §7, §9,
 §11; `docs/DOWNLOADS-ZK-CONTENT.md`; `docs/MODOPTIONS-EDITOR.md` §5;
 `src-tauri/src/{launch,zkcontent,content,game_files}.rs`.
+
+---
+
+## Appendix: SpringBoard's `.sdd` projects
+
+Asked whether Splaunch should read the old SpringBoard files. Measured against
+`Spring-SpringBoard/SpringBoard-Core@master` on 2026-08-21.
+
+**They are `.sdd` *directories*, not `.ssd` files.** A `.sdd` is Spring's
+directory archive - a folder the engine mounts as if it were a `.sdz`.
+`scen_edit/model/project.lua` puts these inside one:
+
+| file | what it is |
+|---|---|
+| `project.lua` | name, map, game, mutators |
+| `model.lua` | the scenario: placed objects, plus `meta` with triggers, variables, teams, scenarioInfo |
+| `heightmap.data`, `metal.data`, `grass.data` | terrain edits |
+| `script.txt` | **a start script** |
+| `gui.lua`, `textures/`, `screenshot.jpg` | editor state |
+
+Three things follow.
+
+**`model.lua` is parseable with what we already have.** `Model:Save` calls
+`table.save`, which is Spring's own `savetable.lua` - "a human friendly table
+writer", the same one Chobby's configs use. Its output is a Lua table literal
+with `key =`, `["quoted key"] =` and `[n] =` forms, which is exactly the grammar
+`tools/lua.mjs` reads for the settings menu and the modoptions table. An
+importer would need that reader at runtime rather than build time, which is a
+port rather than a piece of research.
+
+**SpringBoard writes a `script.txt` into the project.** Two tools arriving
+independently at "a scenario is a start script" is the best evidence available
+that §0's finding is right.
+
+**What could not come across, and should be said rather than dropped:** the
+triggers would arrive as data nothing interprets yet, and the terrain edits
+belong to the *map* rather than the scenario - importing them means rebuilding
+the map, not placing units.
+
+**Not built, deliberately.** There is no `.sdd` on this machine to test against,
+and the last time this project wrote a reader against a format it had only read
+about rather than held - Tauri's `.nsis.zip` - it shipped silently doing nothing.
+The format above is from the serialiser's own source, which is the authority,
+but a real project from somebody's SpringBoard is what should pin the tests.
