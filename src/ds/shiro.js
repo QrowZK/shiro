@@ -1190,6 +1190,10 @@ function MapImage({
   caption,
   saturate = 0.9,
   link,
+  /* VENDOR PATCH: zero-k.info addresses a map's page by numeric ResourceID.
+     Supplied by the caller from the site's catalogue; absent for a map the
+     catalogue does not list, which falls back to a search. */
+  resourceId,
   style
 }) {
   const [failed, setFailed] = React.useState(false);
@@ -1212,9 +1216,10 @@ function MapImage({
        by zero-k.info - a real map, a nonsense one and an empty one all return
        a byte-identical generic page, which is why these links appeared to go
        "only to the maps page". The detail page is addressed by numeric
-       ResourceID, which is not knowable from the name alone; ?search= is
-       relevance-ordered and puts the right map first. */
-    href: "https://zero-k.info/Maps?search=" + encodeURIComponent(String(map).replace(/_/g, " ")),
+       ResourceID, which the site's own catalogue supplies (see
+       src/net/zkcatalogue.ts). Without an id - an unlisted or brand new map -
+       ?search= is relevance-ordered and puts the right map first. */
+    href: resourceId ? "https://zero-k.info/Maps/Detail/" + resourceId : "https://zero-k.info/Maps?search=" + encodeURIComponent(String(map).replace(/_/g, " ")),
     target: "_blank",
     rel: "noreferrer",
     title: "Open " + map + " on zero-k.info"

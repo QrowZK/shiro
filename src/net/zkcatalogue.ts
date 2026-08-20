@@ -41,3 +41,40 @@ export async function gameModes(): Promise<GameMode[]> {
   if (!inTauri()) return [];
   return invoke<GameMode[]>("zks_game_modes");
 }
+
+// -------------------------------------------------------------- map pages ---
+
+export interface CatalogueMap {
+  name: string;
+  resourceId: number;
+}
+
+/**
+ * Every featured and supported map, with the id that addresses its page.
+ *
+ * A map's detail page on zero-k.info is `/Maps/Detail/<ResourceID>`; `?name=`
+ * is ignored, which is why map links used to land on a search. The id is not
+ * derivable from a name, and asking `FindResourceData` per map would be a
+ * request per minimap - so the whole catalogue is fetched once instead.
+ *
+ * Memoised for the session. It changes when maps are added, not while you play.
+ */
+let catalogue: Promise<Map<string, number>> | undefined;
+
+export function mapCatalogue(): Promise<Map<string, number>> {
+  if (!catalogue) {
+    catalogue = (async () => {
+      if (!inTauri()) return new Map<string, number>();
+      const maps = await invoke<CatalogueMap[]>("zks_map_catalogue");
+      /* Keyed by the normalised name. The lobby sends "Comet Catcher Redux"
+         and the catalogue says "Comet_Catcher_Redux" for the same map. */
+      return new Map(maps.map(m => [normaliseMapName(m.name), m.resourceId]));
+    })().catch(() => new Map<string, number>());   // offline is not an error here
+  }
+  return catalogue;
+}
+
+/** Underscores and spaces are the same separator as far as a map name goes. */
+export function normaliseMapName(name: string): string {
+  return String(name).replace(/_/g, " ").trim().toLowerCase();
+}

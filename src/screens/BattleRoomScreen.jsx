@@ -2,6 +2,7 @@ import React from "react";
 import { Button, Badge, Tag, PlayerRow, ChatLine, MapImage, Input,
   IconButton, Icon, UserChip, Meter, Tooltip } from "../ds/shiro.js";
 import { useStickyScroll } from "../hooks/useStickyScroll.js";
+import { useMapResourceId } from "../hooks/useMapResourceId.js";
 
 /* Screen 4 - the largest and densest screen. Teams, spectators, bots, map,
    options, chat, ready/start. Team columns are a grid so 1v1 and 16-way FFA
@@ -193,6 +194,7 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
   onTeam, onSpectate, sync, phase, poll, pollOutcome, onVote, onKick, onAddBot, onPlayer,
   download, onEditOptions, optionsLocked, chatHeight = 200, onChatHeight }) {
   const [msg, setMsg] = React.useState("");
+  const mapId = useMapResourceId(room.map);
   /* The pane may not grow so far that the teams it sits under disappear. The
      ceiling is the window rather than the container because the container's
      height is what we are changing - measuring it would chase itself. */
@@ -281,7 +283,7 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
 
       <div style={{ borderLeft: "1px solid var(--w-12)", background: "var(--surface-panel)",
         display: "flex", flexDirection: "column", minHeight: 0 }}>
-        <MapImage map={room.map} kind="minimap" ratio="1" caption link saturate={1} style={{ flex: "0 0 auto" }} />
+        <MapImage map={room.map} resourceId={mapId} kind="minimap" ratio="1" caption link saturate={1} style={{ flex: "0 0 auto" }} />
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "var(--sp-5)",
           display: "flex", flexDirection: "column", gap: "var(--sp-6)" }}>
           {poll && <PollPanel poll={poll} onVote={onVote} />}

@@ -496,6 +496,60 @@ pub fn zks_game_modes() -> Result<Vec<GameMode>, String> {
 // ------------------------------------------------------------- filenames ----
 
 /// The file name a URL implies, refused if it could escape the target folder.
+/// One map in the site's own catalogue.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct CatalogueMap {
+    pub name: String,
+    pub resource_id: u32,
+}
+
+/// Read the `MapItems` out of a `GetPublicCommunityInfo` response.
+pub fn parse_catalogue(xml: &str) -> Result<Vec<CatalogueMap>, String> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(i) = xml[at..].find("<a:MapItem>") {
+        let start = at + i;
+        let Some(end) = xml[start..].find("</a:MapItem>") else { break };
+        let item = &xml[start..start + end];
+        let name = element_text(item, "Name").map(xml_unescape);
+        let id = element_text(item, "ResourceID").and_then(|s| s.trim().parse().ok());
+        if let (Some(name), Some(resource_id)) = (name, id) {
+            if !name.is_empty() && resource_id != 0 {
+                out.push(CatalogueMap { name, resource_id });
+            }
+        }
+        at = start + end;
+    }
+    Ok(out)
+}
+
+/// The site's map catalogue: every featured and supported map, with the
+/// `ResourceID` that addresses its detail page.
+///
+/// One call answers for the whole catalogue, which is the point. `DownloadFile`
+/// and `FindResourceData` answer for one name at a time, so a link that wants
+/// to reach a map's own page cannot afford them - it would be a request per
+/// minimap. This is fetched once and kept.
+#[tauri::command]
+pub fn zks_map_catalogue() -> Result<Vec<CatalogueMap>, String> {
+    let body = "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><GetPublicCommunityInfo xmlns=\"http://tempuri.org/\"/></s:Body></s:Envelope>";
+    let res = client()?
+        .post(ENDPOINT)
+        .header("Content-Type", "text/xml; charset=utf-8")
+        .header(
+            "SOAPAction",
+            "\"http://tempuri.org/IContentService/GetPublicCommunityInfo\"",
+        )
+        .body(body)
+        .send()
+        .map_err(|e| format!("could not reach the Zero-K content service: {e}"))?;
+    if !res.status().is_success() {
+        return Err(format!("the content service answered {}", res.status()));
+    }
+    let text = res.text().map_err(|e| format!("unreadable response: {e}"))?;
+    parse_catalogue(&text)
+}
+
 pub fn file_name_for(url: &str) -> Result<String, String> {
     let path = url
         .split_once("://")
@@ -644,6 +698,7 @@ mod tests {
     const MOD: &str = include_str!("fixtures/downloadfile-mod.xml");
     const NO_LINKS: &str = include_str!("fixtures/downloadfile-nolinks.xml");
     const UNKNOWN: &str = include_str!("fixtures/downloadfile-unknown.xml");
+    const COMMUNITY: &str = include_str!("fixtures/communityinfo.xml");
 
     #[test]
     fn a_map_resolves_to_one_https_url() {
@@ -883,5 +938,19 @@ word".into()], "Map").is_err());
         let r = parse_response(MAP).unwrap().unwrap();
         assert_eq!(r.urls.len(), 1);
         assert!(!r.urls[0].contains("torrent"));
+    }
+
+    #[test]
+    fn the_catalogue_is_names_with_the_ids_that_address_them() {
+        let maps = parse_catalogue(COMMUNITY).unwrap();
+        assert!(!maps.is_empty());
+        assert_eq!(maps[0].name, "Aberdeen3v3v3");
+        assert_eq!(maps[0].resource_id, 7116);
+        assert!(maps.iter().all(|m| m.resource_id != 0 && !m.name.is_empty()));
+    }
+
+    #[test]
+    fn a_response_without_maps_is_empty_rather_than_an_error() {
+        assert!(parse_catalogue("<s:Envelope/>").unwrap().is_empty());
     }
 }

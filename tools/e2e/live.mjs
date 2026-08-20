@@ -155,6 +155,16 @@ check("mod options render", await seeing(/commshare/));
    everyone whose status is not Synced, announces them as "still downloading
    the map" to the whole room, and delays the start by ten seconds - so a
    client that never sends this is named every single game. */
+/* The map link reaches the map, not a search. `?name=` is ignored by
+   zero-k.info - a real map, a nonsense one and an empty one all return a
+   byte-identical page - so the detail page needs the numeric ResourceID, which
+   the site's own catalogue supplies. */
+check("the map links to its own page rather than a search",
+  await waitFor("maplink", async () => {
+    const href = await page.locator('a[title^="Open "]').first().getAttribute("href");
+    return href && /\/Maps\/Detail\/55646$/.test(href);
+  }));
+
 check("we tell the room we have the map",
   await waitFor("synced", () => sentAny(/^UpdateUserBattleStatus \{.*"Sync":1/)));
 
@@ -405,6 +415,17 @@ check("another player shows no Planetwars rating, because there is none to show"
   !(await seeing(/PLANETWARS/)));
 check("and says why the history is missing rather than showing an empty table",
   await seeing(/only available for your own account/));
+
+/* What the protocol will not tell us about another player, read off their
+   zero-k.info page instead. The developers were asked for an endpoint and
+   declined; see docs/PROFILES-WITHOUT-ENDPOINTS.md. */
+check("their zero-k.info page fills in what the protocol will not",
+  await waitFor("web", () => seeing(/FROM ZERO-K\.INFO/)));
+check("including awards with their counts",
+  await seeing(/Complete Annihilation/) && await seeing(/812/));
+check("and when they were last seen, which is the point of looking someone up",
+  await seeing(/LAST SEEN/) && await seeing(/20 minutes ago/));
+
 await clickText(/My profile/);
 check("going back returns to your own", await waitFor("back2", () => seeing(/MY PROFILE/)));
 

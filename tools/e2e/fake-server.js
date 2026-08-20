@@ -268,6 +268,34 @@
            preflight rejected and prefetchForBattle swallowed it - which is how
            "we never tell the room we have the map" went unnoticed. Default is
            a complete install; `state.missing` makes it incomplete. */
+        /* The site's map catalogue. One call answers for every map, which is
+           what makes a link to a map's own page affordable. */
+        case "zks_map_catalogue":
+          return [
+            { name: "TartarusV7", resourceId: 4242 },
+            { name: "Comet_Catcher_Redux", resourceId: 55646 },
+          ];
+
+        /* A player's zero-k.info page. `null` is "no such account" - the site
+           says so in forty bytes - and is an answer, not a failure. */
+        case "zkw_profile": {
+          if (args.who !== "hexed") return null;
+          return {
+            accountId: 4242, name: "hexed", clan: "ZKF", level: 33,
+            rank: "Red Dwarf", rankIcon: "3_3",
+            badges: ["Silver donator"],
+            awards: [{ key: "pwn", name: "Complete Annihilation", count: 812 }],
+            battlesPlayed: 1904, battlesWatched: 233,
+            firstLogin: "6 years ago", lastLogin: "20 minutes ago",
+            forumKarma: 12, recent: [],
+          };
+        }
+        case "zkw_ratings":
+          return [
+            { date: "2026-08-01", elo: 1750 },
+            { date: "2026-08-10", elo: 1790 },
+          ];
+
         case "zks_content_preflight":
           return {
             install: { root: state.installRoot || "C:\Zero-K", source: "Steam" },

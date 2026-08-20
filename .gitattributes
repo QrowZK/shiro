@@ -20,3 +20,7 @@
 *.dll    binary
 *.sdz    binary
 *.sd7    binary
+
+# Saved responses, kept byte-for-byte as the server sent them. Normalising line
+# endings would edit the evidence the parsers are pinned against.
+src-tauri/src/fixtures/** -text

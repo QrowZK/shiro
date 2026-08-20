@@ -130,7 +130,16 @@ Sketch:
 
 ---
 
-## 4. The offline case — decide before building
+## 4. The offline case — superseded
+
+> **Superseded by [PROFILES-WITHOUT-ENDPOINTS.md](PROFILES-WITHOUT-ENDPOINTS.md).**
+> The recommendation below was to ask the Zero-K developers for an endpoint
+> before scraping. They were asked, and declined without giving a reason, so
+> that route is closed. The measurements that replace this section are in the
+> new document; `GetPublicCommunityInfo`, named below as unexplored, has since
+> been called and returns the top ten ladder entries — not profiles.
+
+## 4a. The offline case — decide before building
 
 Everything above works only for someone currently connected. Looking up a
 player who is not online needs zero-k.info.

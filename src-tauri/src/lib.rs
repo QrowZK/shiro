@@ -5,6 +5,7 @@ mod install;
 mod launch;
 mod relay;
 mod zkcontent;
+mod zkweb;
 
 pub fn run() {
     tauri::Builder::default()
@@ -31,6 +32,9 @@ pub fn run() {
             content::zks_content_preflight,
             zkcontent::zks_find_maps,
             zkcontent::zks_game_modes,
+            zkcontent::zks_map_catalogue,
+            zkweb::zkw_profile,
+            zkweb::zkw_ratings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
