@@ -1565,6 +1565,10 @@ function UserChip({
   admin,
   level,
   elo,
+  /* VENDOR PATCH: the colour Zero-K's rank icon carries for this player's
+     rating, so the number agrees with the badge the official client shows.
+     Computed in src/net/ranks.ts; absent when we have no rating. */
+  eloTint,
   size = "md",
   muted,
   style
@@ -1626,7 +1630,7 @@ function UserChip({
   }, "L", level), elo != null && /*#__PURE__*/React.createElement("span", {
     style: {
       font: "var(--w-medium) var(--size-tiny)/1 var(--font-mono)",
-      color: "var(--text-mid)",
+      color: eloTint || "var(--text-mid)",   // VENDOR PATCH: see eloTint above
       fontVariantNumeric: "tabular-nums"
     }
   }, elo));

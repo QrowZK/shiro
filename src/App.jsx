@@ -431,11 +431,15 @@ export default function App() {
          and an autohost's founder is never a person. */
       optionsLocked={canEditOptions(liveRoom.founder, me)
         ? undefined : "Only the room's host can change these"}
+      chatHeight={settings.roomChatHeight}
+      onChatHeight={h => useSettings.getState().set({ roomChatHeight: h })}
       onStart={startRoom} />
   );
   else if (room) body = <BattleRoomScreen room={D.room} onLeave={() => setRoom(null)}
     // The demo room belongs to somebody else, so the options are theirs to set.
     optionsLocked="Only the room's host can change these"
+    chatHeight={settings.roomChatHeight}
+    onChatHeight={h => useSettings.getState().set({ roomChatHeight: h })}
     onStart={() => { setLaunching(true); setTimeout(() => { setLaunching(false); setRoom(null); setView("debrief"); }, 1600); }} />;
   else if (view === "battles") body = <BattleListScreen battles={battles} empty={empty}
     occupants={live ? occupantsOf : null}

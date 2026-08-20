@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 
 import type { Message } from "../protocol/registry.ts";
 import type * as T from "../protocol/types.ts";
-import { useRoom } from "./room.ts";
+import { useRoom, freeBotName } from "./room.ts";
 import { roomModel } from "./adapters.ts";
 
 function msg<K extends string>(cmd: K, data: unknown): Message {
@@ -218,6 +218,21 @@ test("an option left at its default is not worth listing", () => {
   const s = useRoom.getState();
   const room = roomModel(HEADER, s.players, s.bots, USERS, s.modOptions)!;
   assert.deepEqual(room.options, [], "noelo defaults to off");
+});
+
+// ------------------------------------------------------------------ bots ---
+
+test("a bot is named by us, because the server will not name it", () => {
+  /* UpdateBotStatus without a Name reached the server as a null dictionary
+     key: "error processing line UpdateBotStatus ... ArgumentNullException:
+     Parameter name: key". Nothing was added, and the room saw no error. */
+  assert.equal(freeBotName("CAI", {}), "CAI (1)");
+});
+
+test("and the name steps past the bots already in the room", () => {
+  const bots = { "CAI (1)": {}, "CAI (2)": {}, "Circuit (1)": {} };
+  assert.equal(freeBotName("CAI", bots), "CAI (3)");
+  assert.equal(freeBotName("Circuit", bots), "Circuit (2)");
 });
 
 test("no header means no room, rather than a half-rendered one", () => {
