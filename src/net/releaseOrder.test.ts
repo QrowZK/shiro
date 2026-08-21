@@ -42,6 +42,37 @@ test("nothing is swept until the new manifest is published", () => {
   );
 });
 
+test("a version already published is not published again", () => {
+  /* A re-run keeps `run_number`, so it rebuilds the same version and would
+     clobber the very assets the live manifest names - each one deleted and
+     re-uploaded, which is a 404 while it happens and a signature mismatch for
+     anything caught mid-replacement. Nothing is gained: the release already
+     carries that build. */
+  assert.ok(
+    at('if [ "$live" = "$SHIRO_VERSION" ]') < at('gh release upload dev "${packages[@]}"'),
+    "the re-run guard runs after the upload it is meant to prevent",
+  );
+});
+
+test("a slow older run does not walk the release backwards", () => {
+  /* `concurrency` serialises publishes without ordering them, so a run that
+     started earlier can reach the publish step after a newer one. Republishing
+     regresses the manifest and the sweep then takes the newer packages with it
+     as stale. */
+  assert.ok(
+    at('if [ "$newest" = "$live" ]') < at('gh release upload dev "${packages[@]}"'),
+    "the ordering guard runs after the upload it is meant to prevent",
+  );
+});
+
+test("the live version is read from the manifest, not the packages", () => {
+  /* The two disagree exactly when it matters: an upload that died after the
+     packages and before the manifest leaves new packages under an old
+     manifest, and that is the run a re-run should be allowed to finish. */
+  assert.ok(/live=\$\(curl [^\n]*latest\.json/.test(yml.replace(/\\\n\s*/g, " ")),
+    "the guard no longer reads the live version out of latest.json");
+});
+
 test("the manifest is not swept as stale", () => {
   /* The sweep keeps whatever `keep` lists. Package names change every build,
      so they are listed from the build; latest.json never changes, so it has to
