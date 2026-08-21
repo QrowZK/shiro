@@ -322,6 +322,49 @@ jobs:
           set -euo pipefail
           test -n "$SHIRO_VERSION"
 
+          # What the app is being offered right now, if anything.
+          #
+          # Two ways to make the published manifest name files that are not
+          # there, both of which this answers.
+          #
+          # A re-run keeps `run_number`, so it rebuilds the same version and
+          # would clobber the very assets the live manifest names - deleting and
+          # re-uploading each one, which is a 404 while it happens and a
+          # signature mismatch for anything caught mid-replacement. Nothing is
+          # gained by it: the release already carries this build.
+          #
+          # And `concurrency` serialises publishes without ordering them, so a
+          # slow older run can reach this step after a newer one and walk the
+          # release backwards - the manifest regresses to the older version, and
+          # the sweep takes the newer packages with it as stale.
+          #
+          # Both are the same question: is what is live already this version or
+          # past it? Safe to trust, because the manifest is uploaded after the
+          # packages it names (below) - so a version being live means that
+          # build's upload got all the way through.
+          # Read out of the manifest rather than off the packages beside it.
+          # Those two can disagree: an upload that died after the packages and
+          # before the manifest leaves new packages under an old manifest, and
+          # that is exactly the run a re-run should be allowed to finish.
+          #
+          # sed rather than jq only because the manifest is written a few lines
+          # below by this same file, so its shape is not something to guess at.
+          live=$(curl -sfL \
+            "https://github.com/${{ github.repository }}/releases/download/dev/latest.json" \
+            | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 || true)
+          if [ -n "$live" ]; then
+            newest=$(printf '%s\n%s\n' "$live" "$SHIRO_VERSION" | sort -V | tail -1)
+            if [ "$live" = "$SHIRO_VERSION" ]; then
+              echo "::notice::$SHIRO_VERSION is already published; nothing to do."
+              exit 0
+            fi
+            if [ "$newest" = "$live" ]; then
+              echo "::warning::$live is already published and is newer than $SHIRO_VERSION."
+              echo "::warning::Not walking the release backwards."
+              exit 0
+            fi
+          fi
+
           # Everything a person downloads, plus the manifest the app reads.
           # The .sig files are not uploaded: their contents are already in the
           # manifest, and a stray signature beside a release is just confusing.
