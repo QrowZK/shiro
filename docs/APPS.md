@@ -318,6 +318,24 @@ unavailable, with the reason on screen - which is the state the launcher was
 designed around, so it earns its place by proving that state reads as a fact
 rather than a fault.
 
+**The apps are told where Zero-K is.** §2 assumed an app that needs the game
+could find it the way Shiro did, by looking in the places Zero-K installers use.
+That stopped being true when Shiro started installing the game itself, into
+`%APPDATA%\info.zero-k.shiro\zk` - a directory chosen by Tauri for Shiro, which
+no other program has any reason to know about. Sprofiler read that as "no Zero-K
+installed" and reported it as an error, at people whose game was working.
+
+So `zka_launch` sets `SHIRO_ZK_ROOT` to the directory Shiro plays from. A
+variable rather than an argument, because an app can ignore one without being
+taught to parse anything, and only one of the three cares. Detection failing
+does not refuse the launch: the app somebody with a broken install most wants to
+open is the one that explains why installs break.
+
+It is a hand-off, not the only route. Sprofiler probes for Shiro's directory as
+well, because somebody who runs it from its own shortcut has the same question
+and no lobby to ask. The hand-off is what settles the case the probe cannot:
+two installations on one machine, where only Shiro knows which is being played.
+
 **Splaunch has not been launched.** The script writer's output is compared
 against Zero-K's own `_missionScript.txt` - sections, keys, and the way values
 terminate - but no game has been started from one. That is the next thing, and

@@ -55,10 +55,17 @@ export async function installApp(id: string): Promise<void> {
   await invoke("zka_install", { id });
 }
 
-/** Start an installed app. Only ever in response to a person pressing Launch. */
-export async function launchApp(id: string): Promise<void> {
+/**
+ * Start an installed app. Only ever in response to a person pressing Launch.
+ *
+ * `installRoot` is passed so the app can be told where Zero-K is. Shiro now
+ * installs the game into a directory of its own, which a separate program has
+ * no way of guessing - and Shiro is the one that knows, including when the
+ * answer is somebody's Steam copy. See `ROOT_ENV` in `src-tauri/src/apps.rs`.
+ */
+export async function launchApp(id: string, installRoot?: string): Promise<void> {
   if (!inTauri()) return;
-  await invoke("zka_launch", { id });
+  await invoke("zka_launch", { id, installRoot });
 }
 
 export async function uninstallApp(id: string): Promise<void> {
