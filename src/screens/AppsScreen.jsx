@@ -167,6 +167,15 @@ export default function AppsScreen({ apps = [], statuses = [], onLaunch, onInsta
               {current.description}
             </span>
 
+            {/* Worth saying, because otherwise "why is this already here" and
+                "is it safe to remove" are both unanswered. */}
+            {current.bundled && (
+              <span style={{ font: "var(--text-ui-sm)", color: "var(--text-mid)" }}>
+                Ships with Shiro, so it is here on first run. Removing it is
+                fine - it can be downloaded again.
+              </span>
+            )}
+
             {status?.path && (
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
                 <span style={label}>Installed at</span>

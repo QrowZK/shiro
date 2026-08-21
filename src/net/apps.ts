@@ -22,6 +22,8 @@ export interface CatalogueApp {
   run?: string;
   /** Set when it cannot be installed, and says why in a sentence. */
   unavailable?: string;
+  /** Present when Shiro carries a copy and places it on first run. */
+  bundled?: string;
 }
 
 export interface AppStatus {

@@ -10,6 +10,16 @@ mod zkweb;
 
 pub fn run() {
     tauri::Builder::default()
+        /* Bundled apps are put in place before the window opens, so the
+           launcher's first paint is already the truth. A failure here is not
+           worth refusing to start the lobby over - the app simply shows as not
+           installed, which is what it is. */
+        .setup(|app| {
+            if let Err(e) = apps::seed_bundled(app.handle()) {
+                eprintln!("could not place the bundled apps: {e}");
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_opener::init())
         .manage(relay::Relay::default())
         .manage(launch::Game::default())
