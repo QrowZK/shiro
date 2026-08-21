@@ -21,10 +21,43 @@ pub struct Install {
     pub source: String,
 }
 
+/// The file that says Shiro made this directory and is filling it.
+///
+/// A folder Shiro created is not recognisable as a Zero-K install until an
+/// engine and a game have landed in it, which is a problem when the whole point
+/// is to hand that folder to the thing that installs them. Rather than relax
+/// what counts as an install - and start accepting any folder at all - a
+/// directory we made says so, in writing, where anyone can look.
+pub const MANAGED_MARKER: &str = ".shiro-managed";
+
+pub fn is_managed(root: &Path) -> bool {
+    root.join(MANAGED_MARKER).is_file()
+}
+
+/// Create a data directory for Shiro to fill, and mark it as ours.
+pub fn make_managed(root: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(root).map_err(|e| format!("could not create {}: {e}", root.display()))?;
+    let marker = root.join(MANAGED_MARKER);
+    if !marker.is_file() {
+        std::fs::write(
+            &marker,
+            "This directory is a Zero-K installation managed by Shiro.\n             Deleting it removes the engine, the game and any maps downloaded here.\n",
+        )
+        .map_err(|e| format!("could not write {}: {e}", marker.display()))?;
+    }
+    Ok(())
+}
+
 /// Directories that make a folder recognisably a Zero-K data dir rather than
 /// some unrelated folder that happens to be called Zero-K. `engine` alone is
 /// not enough - a bare engine checkout has one too.
+///
+/// A directory Shiro created counts from the moment it exists, because the
+/// engine and the game are on their way into it.
 fn looks_like_zk_root(root: &Path) -> bool {
+    if is_managed(root) {
+        return true;
+    }
     root.join("engine").is_dir()
         && (root.join("games").is_dir() || root.join("pool").is_dir() || root.join("packages").is_dir())
 }
@@ -124,7 +157,8 @@ pub fn detect_with(override_root: Option<&str>) -> Result<Install, String> {
     if let Some(root) = override_root.map(str::trim).filter(|r| !r.is_empty()) {
         let path = PathBuf::from(root);
         if looks_like_zk_root(&path) {
-            return Ok(Install { root: path, source: "settings".into() });
+            let source = if is_managed(&path) { "Shiro" } else { "settings" };
+            return Ok(Install { root: path, source: source.into() });
         }
         return Err(format!(
             "{} is not a Zero-K installation - no engine/ with games, maps or pool beside it.",

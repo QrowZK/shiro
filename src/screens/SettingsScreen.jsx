@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Input, Select, Checkbox, Badge, Icon, IconButton } from "../ds/shiro.js";
+import { Button, Input, Select, Checkbox, Badge, Icon, IconButton, Meter } from "../ds/shiro.js";
 import {
   ENGINE_FIELDS, readEngineSettings, writeEngineSettings,
   loadGameSettings, saveGameSettings,
@@ -301,8 +301,80 @@ function EngineSection({ installRoot, disabled }) {
   );
 }
 
+/**
+ * Zero-K, installed by Shiro rather than found.
+ *
+ * Offered when there is no installation, and available afterwards for anyone
+ * who would rather Shiro kept its own. The engine is a 45 MB download from
+ * Zero-K's own server with `pr-downloader` inside it, so one fetch turns an
+ * empty folder into something that can pull the game and every map after it.
+ *
+ * Nothing here runs by itself. This is gigabytes, and it starts because
+ * somebody pressed the button.
+ */
+function ManagedInstallSection({ engine, managed, onPrepare, onRemove, busy, progress, error }) {
+  if (!managed) return null;
+  const pct = progress && progress.total
+    ? Math.round((progress.received / progress.total) * 100)
+    : undefined;
+
+  return (
+    <Section title="Let Shiro install Zero-K">
+      <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)", lineHeight: 1.5 }}>
+        Shiro can keep its own copy of the game, separate from Steam. It fetches
+        the engine Zero-K's own launcher uses, then the game, then maps as
+        battles need them.
+      </span>
+      <Row label="Would live in" value={managed.root} />
+      {managed.prepared && (
+        <Row label="Archives installed" value={String(managed.archives)} />
+      )}
+      {engine && (
+        <Row label="Engine" value={managed.engineInstalled ? `${engine} - installed` : engine} />
+      )}
+
+      {busy && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
+          <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)" }}>
+            {pct === undefined ? "Downloading the engine…" : `Downloading the engine - ${pct}%`}
+          </span>
+          <Meter value={pct ?? 0} />
+        </div>
+      )}
+      {error && (
+        <span style={{ font: "var(--text-ui-sm)", color: "var(--signal-warn)" }}>{error}</span>
+      )}
+
+      {/* Said plainly, because the engine is the small half. The game is
+          about a gigabyte and lands through the ordinary download queue, so
+          Downloads is where it can be watched or cancelled. */}
+      {managed.engineInstalled && (
+        <span style={{ font: "var(--text-ui-sm)", color: "var(--text-low)", lineHeight: 1.5 }}>
+          The game itself downloads through the normal queue - see Downloads for
+          progress. Maps arrive as battles need them.
+        </span>
+      )}
+
+      <div style={{ display: "flex", gap: "var(--sp-4)", alignItems: "center" }}>
+        <Button variant="primary" size="sm" disabled={busy || !engine}
+          onClick={onPrepare}>
+          {managed.engineInstalled ? "Check for engine updates" : "Set up an install here"}
+        </Button>
+        {managed.prepared && (
+          <Button variant="ghost" size="sm" disabled={busy} onClick={onRemove}>Remove it</Button>
+        )}
+        {!engine && (
+          <span style={{ font: "var(--text-ui-sm)", color: "var(--text-low)" }}>
+            Log in first - the server names the engine version to install.
+          </span>
+        )}
+      </div>
+    </Section>
+  );
+}
+
 export default function SettingsScreen({ me, install, installError, engine, settings, onSettings,
-  onRedetect, onLogout, onPreview, away, onAway, version = "0.1.0", update }) {
+  onRedetect, onLogout, onPreview, away, onAway, version = "0.1.0", update, managed }) {
   const [host, setHost] = React.useState((settings && settings.host) || "");
   const [port, setPort] = React.useState((settings && settings.port) ? String(settings.port) : "");
   const [root, setRoot] = React.useState((settings && settings.installRoot) || "");
@@ -423,6 +495,12 @@ export default function SettingsScreen({ me, install, installError, engine, sett
             </>
           )}
         </Section>
+
+        <ManagedInstallSection engine={engine} managed={managed && managed.state}
+          busy={managed && managed.busy} progress={managed && managed.progress}
+          error={managed && managed.error}
+          onPrepare={managed && managed.onPrepare}
+          onRemove={managed && managed.onRemove} />
 
         <Section title="Server">
           <div style={{ display: "flex", gap: "var(--sp-4)", alignItems: "flex-end" }}>

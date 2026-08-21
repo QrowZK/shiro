@@ -38,6 +38,7 @@ import { useUpdate } from "./store/update.ts";
 import { appVersion } from "./net/update.ts";
 import { catalogue, statuses as appStatuses, launchApp, installApp, uninstallApp } from "./net/apps.ts";
 import { openExternal } from "./net/external.ts";
+import { managedState, installEngine, removeManaged, onEngine } from "./net/managed.ts";
 import { useSite, channelOf, isExternalUrl } from "./store/site";
 import { useHistory, buildDebriefView } from "./store/history";
 import { AutohostModeLabel } from "./protocol/enums";
@@ -129,6 +130,31 @@ export default function App() {
   /* The live battle room. `useRoom` holds membership; the header it decorates
      still comes from the public battle directory in `useLobby`. */
   const liveRoomID = useRoom(s => s.battleID);
+
+  /* Zero-K installed by Shiro rather than found. Only ever started by pressing
+     the button in Settings: this is gigabytes, and the engine version comes
+     from the server rather than from a guess. */
+  const [managedInfo, setManagedInfo] = React.useState(undefined);
+  const [managedBusy, setManagedBusy] = React.useState(false);
+  const [managedProgress, setManagedProgress] = React.useState(undefined);
+  const [managedError, setManagedError] = React.useState(undefined);
+
+  const refreshManaged = React.useCallback(version => {
+    managedState(version).then(setManagedInfo, () => setManagedInfo(undefined));
+  }, []);
+
+  React.useEffect(() => {
+    if (!live) return undefined;
+    let stop;
+    onEngine(s => {
+      if (s.kind === "progress") setManagedProgress({ received: s.received, total: s.total });
+      if (s.kind === "failed") setManagedError(s.reason);
+    }).then(fn => { stop = fn; }, () => {});
+    return () => { if (stop) stop(); };
+  }, [live]);
+
+  React.useEffect(() => { if (live) refreshManaged(welcome?.Engine); },
+    [live, welcome?.Engine, refreshManaged]);
 
   /* Joining is a request, not an arrival - the room only exists once the server
      answers - so following it has to happen when it turns up rather than when
@@ -648,6 +674,57 @@ export default function App() {
           launchPreview(welcome?.Engine ?? "", me ?? ""))
         : undefined}
       onLogout={handleLogout}
+      managed={live ? {
+        state: managedInfo,
+        busy: managedBusy,
+        progress: managedProgress,
+        error: managedError,
+        onPrepare: () => {
+          const version = welcome?.Engine;
+          if (!version) return;
+          setManagedError(undefined);
+          setManagedProgress(undefined);
+          setManagedBusy(true);
+          installEngine(version)
+            .then(async root => {
+              /* Point the rest of the app at the directory we just filled.
+                 `installRoot` is already threaded through detection, the
+                 content preflight, the archive reader and the launcher, so
+                 setting it here is what turns an engine on disk into the
+                 installation Shiro actually uses - there is no second path to
+                 build. */
+              const dir = managedInfo?.root;
+              if (dir) useSettings.getState().set({ installRoot: dir });
+              if (redetect) redetect();
+
+              /* And pull the game in now rather than at the first battle. The
+                 pr-downloader that does it is the one that arrived inside the
+                 engine, in that same directory. */
+              const game = welcome?.Game;
+              if (dir && game) {
+                await useContent.getState()
+                  .fetch(version, [{ kind: "game", name: game }], dir)
+                  .catch(e => setManagedError(String(e?.message ?? e)));
+              }
+              refreshManaged(version);
+              return root;
+            }, e => setManagedError(String(e?.message ?? e)))
+            .finally(() => setManagedBusy(false));
+        },
+        onRemove: () => {
+          setManagedError(undefined);
+          removeManaged()
+            .then(() => {
+              /* Stop pointing at a directory that is no longer there, or the
+                 launcher keeps naming it in error messages. */
+              if (settings.installRoot === managedInfo?.root) {
+                useSettings.getState().set({ installRoot: undefined });
+                if (redetect) redetect();
+              }
+              refreshManaged(welcome?.Engine);
+            }, e => setManagedError(String(e?.message ?? e)));
+        },
+      } : undefined}
       away={away}
       onAway={live ? next => { setAway(next); void send("ChangeUserStatus", { IsAfk: next }); } : undefined} />
   );

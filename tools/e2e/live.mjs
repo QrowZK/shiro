@@ -741,6 +741,37 @@ check("a finished match pulls you to the debriefing",
 check("both sides are listed", await seeing(/hexed/) && await seeing(/Qrow/));
 await shot("live-07-debrief");
 
+/* Zero-K installed by Shiro rather than found. The engine version is never
+   chosen here - it is the one the server named in Welcome, so the only engine
+   ever fetched is the one a game is about to need. */
+console.log("installing zero-k ourselves");
+await page.locator("nav button").last().click();
+await waitFor("settings-again", () => seeing(/Zero-K installation/));
+check("the option to have Shiro install it is offered",
+  await seeing(/Let Shiro install Zero-K/i));
+check("and it says where it would go", await seeing(/AppData/i));
+await clickText(/Set up an install here/);
+check("the engine the server asked for is the one requested",
+  await waitFor("engine-asked", async () =>
+    (await page.evaluate(() => window.__ZKS.engineAsked)) === "2025.06.21"));
+check("and the install reports itself as ready",
+  await waitFor("engine-done", () => seeing(/2025\.06\.21 - installed/)));
+/* An engine on disk is not an installation until the rest of the app is
+   pointed at it. `installRoot` is already threaded through detection, the
+   content preflight, the archive reader and the launcher, so this is the one
+   thing that has to happen - and the game download proves it did. */
+check("the game is fetched into the directory Shiro just filled",
+  await waitFor("game-fetch", async () => {
+    const f = await page.evaluate(() => window.__ZKS.lastFetch);
+    return Boolean(f) && f.installRoot === "C:\\Users\\test\\AppData\\Roaming\\shiro\\zk"
+      && f.items.some(i => i.name === "Zero-K v1.14.8.0");
+  }));
+check("and the launcher is pointed at it too",
+  await waitFor("root-set", () => seeing(/AppData\\Roaming\\shiro\\zk|AppData.Roaming.shiro.zk/)));
+await clickText(/Remove it/);
+check("removing it goes back to offering a set-up",
+  await waitFor("removed", () => seeing(/Set up an install here/)));
+
 console.log("logging out");
 await page.locator("nav button").last().click();
 await waitFor("settings", () => seeing(/Zero-K installation/));

@@ -1,9 +1,11 @@
 mod archives;
 mod content;
+mod engine;
 mod engine_settings;
 mod game_files;
 mod install;
 mod launch;
+mod managed;
 mod relay;
 mod apps;
 mod zkcontent;
@@ -47,6 +49,11 @@ pub fn run() {
             zkcontent::zks_find_maps,
             zkcontent::zks_game_modes,
             zkcontent::zks_map_catalogue,
+            managed::zks_managed_root,
+            managed::zks_managed_state,
+            managed::zks_managed_prepare,
+            managed::zks_managed_install_engine,
+            managed::zks_managed_remove,
             apps::zka_catalogue,
             apps::zka_status,
             apps::zka_install,
