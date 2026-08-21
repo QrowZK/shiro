@@ -1,11 +1,16 @@
 -- Shiro's loading screen.
 --
--- This file is placed by Shiro at <datadir>/LuaIntro/addons/main.lua. It is not
+-- This file is placed by Shiro at <datadir>/LuaIntro/Addons/main.lua. It is not
 -- part of any archive and it does not modify one: Zero-K's own
 -- luaintro/main.lua sets `VFS.DEF_MODE = VFS.RAW_FIRST`, so the raw data
 -- directory is searched before the game archive and this is found first. The
 -- game's checksum is untouched, which is the whole point - a modified archive
 -- would desync from the server.
+--
+-- The capitals in that path are the engine's, not a preference: the addon
+-- handler looks for `LuaIntro/Addons/`, and a raw file is only found by the
+-- exact name asked for. Every path in this file is spelled the same way, for
+-- the same reason - Linux will not forgive it and Windows will.
 --
 -- It replaces Zero-K's addon of the same name rather than drawing beside it, so
 -- the progress bar below is ours and has to work. Deleting this file restores

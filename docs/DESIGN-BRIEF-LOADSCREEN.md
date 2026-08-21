@@ -21,9 +21,14 @@ VFS.DEF_MODE = VFS.RAW_FIRST
 ```
 
 The raw data directory is searched **before** any archive. Shiro writes
-`<datadir>/LuaIntro/addons/main.lua`, the engine finds it first, and it replaces
+`<datadir>/LuaIntro/Addons/main.lua`, the engine finds it first, and it replaces
 Zero-K's addon of the same name. Nothing is patched and the game's checksum is
 untouched.
+
+The capitals in that path are the engine's: its addon handler scans
+`LuaIntro/Addons/`, and a raw file is found only under the exact name asked
+for. Windows does not mind the difference; Linux does, and a lowercase
+`addons/` is how this screen came to be invisible there.
 
 Two consequences design should know:
 

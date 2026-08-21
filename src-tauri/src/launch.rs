@@ -94,6 +94,12 @@ pub struct SpawnPlan {
 /// unrecognised flag aborts startup, whereas `SPRING_DATADIR` has been stable
 /// for a decade. Without it the engine writes to the user's Documents folder
 /// and finds none of the installed games or maps.
+///
+/// `SPRING_WRITEDIR` is set to the same place and is not a duplicate: the
+/// engine builds its data directory list write-dir first and `SPRING_DATADIR`
+/// last, after `~/.config/spring` and `~/.spring`. Setting both is what puts
+/// the installation Shiro is pointed at ahead of a Zero-K the machine may
+/// already have - which decides, among other things, whose `LuaIntro/` is read.
 pub fn spawn_plan(exe: &Path, root: &Path, script: &Path) -> SpawnPlan {
     let mut args: Vec<OsString> = Vec::new();
     let config = root.join("springsettings.cfg");
@@ -384,10 +390,13 @@ mod tests {
         );
         assert_eq!(plan.cwd, Path::new("/zk/engine/linux64/2025.06.21"));
         assert_eq!(plan.args, vec![OsString::from("/tmp/shiro/connect_script.txt")]);
-        assert!(plan
-            .env
-            .iter()
-            .any(|(k, v)| k == "SPRING_DATADIR" && v == "/zk"));
+        /* Both, not either. The engine reads the write dir first and
+           SPRING_DATADIR last, so on a machine with a Zero-K in ~/.spring the
+           second alone would leave that one's data ahead of ours - including
+           the LuaIntro the loading screen is written into. */
+        for key in ["SPRING_DATADIR", "SPRING_WRITEDIR"] {
+            assert!(plan.env.iter().any(|(k, v)| k == key && v == "/zk"), "{key} is not set");
+        }
     }
 
     #[test]
