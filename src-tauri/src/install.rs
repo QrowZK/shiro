@@ -114,10 +114,46 @@ fn home_dir() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// Where Shiro puts an install it manages itself, once anything has told us.
+///
+/// Set at startup from the app handle rather than worked out here, because the
+/// answer is Tauri's `app_data_dir` and there should be one copy of it. `None`
+/// until then, which is only the case in tests and before `setup` runs.
+static MANAGED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+
+/// Tell detection where a managed install would be. Ignored if already set.
+pub fn set_managed_root(dir: PathBuf) {
+    let _ = MANAGED.set(dir);
+}
+
 /// Every place a Zero-K data dir plausibly lives, most specific first.
 /// Returned in probe order; the first hit that `looks_like_zk_root` wins.
 fn candidates() -> Vec<(PathBuf, String)> {
+    candidates_with(MANAGED.get().map(PathBuf::as_path))
+}
+
+/// The list, given where a managed install would be.
+///
+/// Split out so it can be tested without a running app, and so the one place
+/// that knows the managed directory stays the one place that decides it.
+fn candidates_with(managed: Option<&Path>) -> Vec<(PathBuf, String)> {
     let mut out: Vec<(PathBuf, String)> = Vec::new();
+
+    /* The install Shiro made itself, ahead of everything else.
+     *
+     * It was missing entirely: the only thing that knew about a managed
+     * install was `settings.installRoot` in the browser's local storage. Clear
+     * that - a profile reset, cleared site data - and several gigabytes of
+     * engine and game went invisible, while `zks_managed_state` went on
+     * reporting it as prepared on disk. Somebody would have been told to
+     * install Zero-K on top of the Zero-K they already had.
+     *
+     * First because it is the only candidate that exists because someone asked
+     * for it. Everything below is a guess about where an installer might have
+     * put something. */
+    if let Some(dir) = managed {
+        out.push((dir.to_path_buf(), "Shiro".into()));
+    }
 
     // The standalone installer's default, and where our own NSIS package goes.
     if let Ok(local) = std::env::var("LOCALAPPDATA") {
@@ -248,6 +284,30 @@ pub fn find_engine(root: &Path, version: &str) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_install_shiro_made_is_looked_for_first() {
+        /* It was not looked for at all. The only thing that knew about a
+           managed install was `settings.installRoot` in the browser's local
+           storage; lose that and gigabytes of engine and game went invisible
+           while `zks_managed_state` still reported them as prepared. */
+        let managed = PathBuf::from("/somewhere/info.zero-k.shiro/zk");
+        let got = candidates_with(Some(&managed));
+        assert_eq!(got.first().map(|(p, _)| p.as_path()), Some(managed.as_path()),
+            "a directory somebody asked for should not queue behind guesses");
+        assert_eq!(got.first().map(|(_, s)| s.as_str()), Some("Shiro"));
+    }
+
+    #[test]
+    fn without_one_the_rest_of_the_list_is_unchanged() {
+        /* The managed entry is an addition, not a replacement: somebody with a
+           Steam or installer copy and no managed one must probe exactly what
+           they probed before. */
+        let with = candidates_with(Some(Path::new("/somewhere/zk")));
+        let without = candidates_with(None);
+        assert_eq!(with.len(), without.len() + 1);
+        assert_eq!(&with[1..], &without[..]);
+    }
 
     #[test]
     fn parses_the_nested_libraryfolders_layout() {
