@@ -23,6 +23,7 @@ use serde::Serialize;
 use tauri::{Emitter, Manager};
 
 use crate::engine;
+use crate::loadscreen;
 use crate::install;
 
 /// Where the engine download reports itself.
@@ -104,6 +105,12 @@ fn managed_state_blocking(
 pub fn zks_managed_prepare(app: tauri::AppHandle) -> Result<String, String> {
     let dir = root(&app)?;
     install::make_managed(&dir)?;
+    /* Placed with the install rather than on first launch, so it is there
+       before anything can need it - and removable from Settings, since what the
+       game looks like is the player's call, not the launcher's. */
+    if let Err(e) = loadscreen::install(&dir) {
+        eprintln!("could not place the loading screen: {e}");
+    }
     Ok(dir.display().to_string())
 }
 
@@ -144,6 +151,32 @@ pub async fn zks_managed_install_engine(
     .map_err(|e| format!("the engine install did not finish: {e}"))??;
 
     Ok(done.display().to_string())
+}
+
+/// Is Shiro's loading screen in place, and could it be?
+///
+/// Only offered for an install Shiro owns. Somebody else's Zero-K directory is
+/// theirs, and writing a file into it uninvited is not something a launcher
+/// should do quietly.
+#[tauri::command]
+pub fn zks_loadscreen_state(app: tauri::AppHandle) -> Result<bool, String> {
+    let dir = root(&app)?;
+    Ok(install::is_managed(&dir) && loadscreen::installed(&dir))
+}
+
+/// Turn Shiro's loading screen on or off.
+#[tauri::command]
+pub fn zks_loadscreen_set(app: tauri::AppHandle, enabled: bool) -> Result<bool, String> {
+    let dir = root(&app)?;
+    if !install::is_managed(&dir) {
+        return Err("Shiro only writes into an installation it made.".into());
+    }
+    if enabled {
+        loadscreen::install(&dir)?;
+    } else {
+        loadscreen::remove(&dir)?;
+    }
+    Ok(loadscreen::installed(&dir))
 }
 
 /// Remove a managed install.

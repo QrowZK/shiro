@@ -39,7 +39,8 @@ import { useUpdate } from "./store/update.ts";
 import { appVersion } from "./net/update.ts";
 import { catalogue, statuses as appStatuses, launchApp, installApp, uninstallApp } from "./net/apps.ts";
 import { openExternal } from "./net/external.ts";
-import { managedState, managedRoot, installEngine, removeManaged, onEngine } from "./net/managed.ts";
+import { managedState, managedRoot, installEngine, removeManaged, onEngine,
+  loadScreenState, setLoadScreen } from "./net/managed.ts";
 import { useSite, channelOf, isExternalUrl } from "./store/site";
 import { useHistory, buildDebriefView } from "./store/history";
 import { AutohostModeLabel } from "./protocol/enums";
@@ -137,6 +138,7 @@ export default function App() {
      from the server rather than from a guess. */
   const [managedInfo, setManagedInfo] = React.useState(undefined);
   const [managedBusy, setManagedBusy] = React.useState(false);
+  const [loadScreen, setLoadScreenOn] = React.useState(false);
   const [managedProgress, setManagedProgress] = React.useState(undefined);
   const [managedError, setManagedError] = React.useState(undefined);
 
@@ -147,6 +149,7 @@ export default function App() {
 
   const refreshManaged = React.useCallback(version => {
     managedState(version).then(setManagedInfo, () => setManagedInfo(undefined));
+    loadScreenState().then(setLoadScreenOn, () => setLoadScreenOn(false));
   }, []);
 
 
@@ -761,6 +764,14 @@ export default function App() {
         busy: managedBusy,
         progress: managedProgress,
         error: managedError,
+        loadScreen,
+        /* What the game looks like is the player's call, not the launcher's,
+           so this is a switch rather than something that just happens. */
+        onLoadScreen: on => {
+          setManagedError(undefined);
+          setLoadScreen(on).then(setLoadScreenOn,
+            e => setManagedError(String(e?.message ?? e)));
+        },
         onPrepare: () => void installManaged(welcome?.Engine),
         onRemove: () => {
           setManagedError(undefined);
@@ -795,7 +806,8 @@ export default function App() {
           ? buildDebriefView(records[recordIndex], me, n => liveUsers[n], profiles)
           : null)
         : D.debrief}
-      onBack={() => setView("battles")} />
+      inRoom={Boolean(liveRoom || room)}
+      onBack={() => setView(liveRoom || room ? "room" : "battles")} />
   );
 
   const mmSeconds = secondsLeft(mmCheck, Date.now());
@@ -965,7 +977,14 @@ export default function App() {
   );
 
   return (
-    <AppShell view={view} onView={setView} inRoom={Boolean(liveRoom || room)} {...shell}
+    <AppShell view={view} inRoom={Boolean(liveRoom || room)} {...shell}
+      /* Battles, pressed from the debriefing while still in a room, means the
+         room - that is where the match came from and where the next one starts.
+         Only from there: once you are in the room, Battles means the list
+         again, so the "first press goes back" behaviour needs no flag to
+         remember it. */
+      onView={v => setView(
+        v === "battles" && view === "debrief" && (liveRoom || room) ? "room" : v)}
       overlay={overlay} me={me}>
         <FirstRunInstallDialog
           open={askInstall}

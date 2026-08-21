@@ -68,3 +68,20 @@ export async function removeManaged(): Promise<void> {
 export function onEngine(cb: (s: EngineStatus) => void): Promise<UnlistenFn> {
   return listen<EngineStatus>("zks://engine", e => cb(e.payload));
 }
+
+/**
+ * Shiro's loading screen: the file Zero-K's own LuaIntro finds before its own.
+ *
+ * Only offered for an install Shiro made. Somebody else's Zero-K directory is
+ * theirs, and a launcher writing files into it uninvited is not something to do
+ * quietly.
+ */
+export async function loadScreenState(): Promise<boolean> {
+  if (!inTauri()) return false;
+  return invoke<boolean>("zks_loadscreen_state");
+}
+
+export async function setLoadScreen(enabled: boolean): Promise<boolean> {
+  if (!inTauri()) return false;
+  return invoke<boolean>("zks_loadscreen_set", { enabled });
+}

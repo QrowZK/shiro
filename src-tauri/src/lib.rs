@@ -5,6 +5,7 @@ mod engine_settings;
 mod game_files;
 mod install;
 mod launch;
+mod loadscreen;
 mod managed;
 mod relay;
 mod apps;
@@ -55,6 +56,8 @@ pub fn run() {
             managed::zks_managed_prepare,
             managed::zks_managed_install_engine,
             managed::zks_managed_remove,
+            managed::zks_loadscreen_state,
+            managed::zks_loadscreen_set,
             apps::zka_catalogue,
             apps::zka_status,
             apps::zka_install,

@@ -312,7 +312,8 @@ function EngineSection({ installRoot, disabled }) {
  * Nothing here runs by itself. This is gigabytes, and it starts because
  * somebody pressed the button.
  */
-function ManagedInstallSection({ engine, managed, onPrepare, onRemove, busy, progress, error }) {
+function ManagedInstallSection({ engine, managed, onPrepare, onRemove, busy, progress, error,
+  loadScreen, onLoadScreen }) {
   if (!managed) return null;
   const pct = progress && progress.total
     ? Math.round((progress.received / progress.total) * 100)
@@ -353,6 +354,17 @@ function ManagedInstallSection({ engine, managed, onPrepare, onRemove, busy, pro
           The game itself downloads through the normal queue - see Downloads for
           progress. Maps arrive as battles need them.
         </span>
+      )}
+
+      {/* Only for an install Shiro made. Zero-K's own loading screen looks in
+          the data directory before its archive, so this is a file placed there
+          rather than a patched game - the checksum the server checks is
+          untouched. Off puts the original back. */}
+      {managed.prepared && onLoadScreen && (
+        <Checkbox label="Use Shiro's loading screen"
+          hint="Replaces the screen shown while a match loads. The game itself is not modified."
+          checked={Boolean(loadScreen)}
+          onChange={e => onLoadScreen(e.target.checked)} />
       )}
 
       <div style={{ display: "flex", gap: "var(--sp-4)", alignItems: "center" }}>
@@ -497,6 +509,8 @@ export default function SettingsScreen({ me, install, installError, engine, sett
         </Section>
 
         <ManagedInstallSection engine={engine} managed={managed && managed.state}
+          loadScreen={managed && managed.loadScreen}
+          onLoadScreen={managed && managed.onLoadScreen}
           busy={managed && managed.busy} progress={managed && managed.progress}
           error={managed && managed.error}
           onPrepare={managed && managed.onPrepare}
