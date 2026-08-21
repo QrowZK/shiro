@@ -27,8 +27,25 @@
 //!   here", and the caller treats that as needing a download. That is the safe
 //!   direction: at worst we re-check something already present.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+/// How long a reading of the caches is reused.
+///
+/// The caches run to megabytes and the preflight reads them twice per join -
+/// once on the prefetch, once on the launch - so parsing them every time is a
+/// stutter on the join. Short on purpose: the file-exists check is what keeps a
+/// deleted archive from counting, and a memo defers that check for as long as
+/// it lives. Twenty seconds covers a join and forgets long before anyone could
+/// delete a map and wonder why the lobby had not noticed.
+const MEMO_TTL: Duration = Duration::from_secs(20);
+
+/// What the caches looked like: path, mtime and length of every file read.
+type Stamp = (PathBuf, SystemTime, u64);
+
+static MEMO: Mutex<Option<HashMap<PathBuf, (Vec<Stamp>, Instant, Installed)>>> = Mutex::new(None);
 
 /// Every archive the engine has scanned and which is still on disk, by the
 /// display name a battle would use.
@@ -122,11 +139,35 @@ fn read_cache(path: &Path, out: &mut Installed) {
 }
 
 /// `key = "value"` at any indentation, first occurrence.
+///
+/// Anchored to the start of a line, because a bare substring for `name = "`
+/// also matches inside `shortname = "` and `mapfile = "`. It holds today only
+/// because the engine's writer emits fields alphabetically and `name` comes
+/// first; a field-order change upstream would silently redirect every lookup
+/// to a neighbour's value.
 fn field(block: &str, key: &str) -> Option<String> {
     let needle = format!("{key} = \"");
-    let start = block.find(&needle)? + needle.len();
-    let end = block[start..].find('"')? + start;
-    Some(block[start..end].to_string())
+    let mut from = 0;
+    loop {
+        let at = block[from..].find(&needle)? + from;
+        if at == 0 || starts_the_key(block, at) {
+            let start = at + needle.len();
+            let end = block[start..].find('"')? + start;
+            return Some(block[start..end].to_string());
+        }
+        from = at + needle.len();
+    }
+}
+
+/// Is this match the whole key, rather than the tail of a longer one?
+///
+/// Everything before it on the line has to be indentation.
+fn starts_the_key(block: &str, at: usize) -> bool {
+    block[..at]
+        .rsplit(|c| c == '\n' || c == '\r')
+        .next()
+        .map(|line| line.chars().all(|c| c == ' ' || c == '\t'))
+        .unwrap_or(true)
 }
 
 /// `key = [[value]]`, which is how the engine writes paths so backslashes
@@ -170,6 +211,34 @@ pub fn remember_downloaded(root: &Path, name: &str) {
     }
     seen.push(name.to_string());
     let _ = std::fs::write(root.join(DOWNLOADED), seen.join("\n") + "\n");
+    // Our own write, so do not wait for a stamp to notice it: a download that
+    // just landed is the one thing the next preflight is asking about.
+    forget(root);
+}
+
+/// Drop any memo for this data directory.
+pub fn forget(root: &Path) {
+    if let Ok(mut memo) = MEMO.lock() {
+        if let Some(map) = memo.as_mut() {
+            map.remove(root);
+        }
+    }
+}
+
+/// Identify the files a reading would be built from, without reading them.
+fn stamps(root: &Path) -> Vec<Stamp> {
+    let mut files = cache_files(root);
+    files.push(root.join(DOWNLOADED));
+    files.sort();
+    files
+        .into_iter()
+        .map(|path| {
+            let meta = std::fs::metadata(&path).ok();
+            let when = meta.as_ref().and_then(|m| m.modified().ok()).unwrap_or(UNIX_EPOCH);
+            let size = meta.map(|m| m.len()).unwrap_or(0);
+            (path, when, size)
+        })
+        .collect()
 }
 
 fn read_downloaded(root: &Path) -> Vec<String> {
@@ -185,6 +254,15 @@ fn read_downloaded(root: &Path) -> Vec<String> {
 /// and has downloaded nothing. The caller reads that as "nothing known to be
 /// here", which results in a download rather than a false claim.
 pub fn installed(root: &Path) -> Installed {
+    let now = stamps(root);
+    if let Ok(memo) = MEMO.lock() {
+        if let Some((seen, at, cached)) = memo.as_ref().and_then(|m| m.get(root)) {
+            if *seen == now && at.elapsed() < MEMO_TTL {
+                return cached.clone();
+            }
+        }
+    }
+
     let mut out = Installed::default();
     for file in cache_files(root) {
         read_cache(&file, &mut out);
@@ -192,12 +270,40 @@ pub fn installed(root: &Path) -> Installed {
     for name in read_downloaded(root) {
         out.insert(&name);
     }
+
+    if let Ok(mut memo) = MEMO.lock() {
+        memo.get_or_insert_with(HashMap::new)
+            .insert(root.to_path_buf(), (now, Instant::now(), out.clone()));
+    }
     out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_field_lookup_does_not_match_the_tail_of_a_longer_key() {
+        // `shortname` ends in `name`, and a bare substring search finds it.
+        // Today the engine writes fields alphabetically, so `name` happens to
+        // come first and the bug is invisible - which is exactly the kind of
+        // thing that changes upstream without anyone here noticing.
+        let block = "\t\tshortname = \"zk\",\n\t\tname = \"Zero-K v1.14\",\n";
+        assert_eq!(field(block, "name").as_deref(), Some("Zero-K v1.14"));
+        assert_eq!(field(block, "shortname").as_deref(), Some("zk"));
+    }
+
+    #[test]
+    fn a_field_lookup_still_works_when_the_key_leads_the_block() {
+        let block = "name = \"first thing\",\n";
+        assert_eq!(field(block, "name").as_deref(), Some("first thing"));
+    }
+
+    #[test]
+    fn a_key_that_is_not_there_is_not_invented() {
+        let block = "\t\tmapfile = \"maps/x.sd7\",\n";
+        assert_eq!(field(block, "name"), None);
+    }
 
     fn write(dir: &Path, name: &str, body: &str) -> PathBuf {
         std::fs::create_dir_all(dir).unwrap();
@@ -310,6 +416,39 @@ mod tests {
     fn a_directory_with_no_cache_is_empty_rather_than_an_error() {
         let root = temp("fresh");
         assert!(installed(&root).is_empty());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_download_is_visible_immediately_rather_than_when_the_memo_expires() {
+        // The reading is memoised - the caches are megabytes and the preflight
+        // reads them twice per join - so our own writes have to invalidate it.
+        // Otherwise the download that just landed is invisible to the preflight
+        // that asked for it.
+        let root = temp("memo");
+        assert!(!installed(&root).has("Comet Catcher Redux"));
+        remember_downloaded(&root, "Comet Catcher Redux");
+        assert!(
+            installed(&root).has("Comet Catcher Redux"),
+            "a fresh download must not wait for the memo to expire"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_second_reading_of_unchanged_caches_agrees_with_the_first() {
+        let root = temp("memo-stable");
+        let maps = root.join("maps");
+        write(&maps, "ArgentStrata1.1.sd7", "x");
+        write(
+            &root.join("cache"),
+            "ArchiveCache1.lua",
+            &cache_entry("ArgentStrata1.1.sd7", &maps, "Argent Strata 1.1"),
+        );
+        let first = installed(&root);
+        let second = installed(&root);
+        assert_eq!(first.len(), second.len());
+        assert!(second.has("Argent Strata 1.1"));
         let _ = std::fs::remove_dir_all(&root);
     }
 }

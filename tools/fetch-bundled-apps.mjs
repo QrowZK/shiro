@@ -46,6 +46,18 @@ function bundledEntries() {
        platforms, so the resource path stays written the way Tauri wants it. */
     out.push({ id, url, sha256, run, dest: join(ROOT, "src-tauri", bundled[1]) });
   }
+
+  /* A regex that stops matching is the quiet failure here: the loop above would
+     find nothing, the build would carry no bundled app, and nothing would say
+     so. Count what the file declares and insist the parse found all of it. */
+  const declared = (source.match(/bundled: Some\(/g) ?? []).length;
+  if (out.length !== declared) {
+    throw new Error(
+      `apps.rs declares ${declared} bundled app(s) but only ${out.length} could be read.\n`
+      + "The catalogue's formatting has probably changed - fix the patterns in this file "
+      + "rather than shipping an installer with the bundled app silently missing.",
+    );
+  }
   return out;
 }
 
@@ -60,8 +72,16 @@ for (const app of bundledEntries()) {
 
   const got = createHash("sha256").update(zip).digest("hex");
   if (got !== app.sha256) {
+    /* Almost always a republished asset rather than a corrupted download: these
+       releases hang on a `dev` tag, which is mutable, so the bytes behind a URL
+       can change without the URL changing. Say so, because "hash mismatch" on
+       its own reads like an attack and sends people looking in the wrong place. */
     throw new Error(
-      `${app.id} did not match the catalogue's hash\n  expected ${app.sha256}\n  got      ${got}`,
+      `${app.id} did not match the catalogue's hash\n  expected ${app.sha256}\n  got      ${got}\n`
+      + `  ${app.url}\n`
+      + "  If that release was republished, verify the new file by hand and update\n"
+      + "  sha256 (and version) in src-tauri/src/apps.rs. Until then this build is\n"
+      + "  refusing to bundle a binary it cannot vouch for.",
     );
   }
   process.stdout.write(`  hash ok, ${zip.length.toLocaleString()} bytes\n`);

@@ -41,7 +41,10 @@ pub fn make_managed(root: &Path) -> Result<(), String> {
     if !marker.is_file() {
         std::fs::write(
             &marker,
-            "This directory is a Zero-K installation managed by Shiro.\n             Deleting it removes the engine, the game and any maps downloaded here.\n",
+            concat!(
+                "This directory is a Zero-K installation managed by Shiro.\n",
+                "Deleting it removes the engine, the game and any maps downloaded here.\n",
+            ),
         )
         .map_err(|e| format!("could not write {}: {e}", marker.display()))?;
     }

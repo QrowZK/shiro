@@ -93,6 +93,13 @@ pub const CATALOGUE: &[CatalogueApp] = &[
         // out why downloads are slow is a poor first experience.
         bundled: Some("resources/sprofiler/Sprofiler.exe"),
     },
+    /* All three of these hang on a `dev` tag, which is mutable: republishing
+       one changes the bytes behind a URL that did not change. The hash is what
+       makes that safe rather than silent - the launcher refuses to install a
+       download that does not match, and tools/fetch-bundled-apps.mjs refuses to
+       bundle one - but it does mean a republish needs a hash bump here before
+       either path will accept the new file. Immutable per-version tags upstream
+       would remove the coupling entirely. */
     CatalogueApp {
         id: "splaunch",
         name: "Splaunch",

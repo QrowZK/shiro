@@ -293,7 +293,12 @@ export async function teardown(): Promise<void> {
   attempt = 0;
   for (const fn of unlisten) fn();
   unlisten = [];
+  // Both halves of the batcher. Cancelling only the frame left the fallback
+  // timer to fire into a torn-down session - harmless while `flush` no-ops on
+  // an empty queue, and exactly the asymmetry that stops being harmless the
+  // day flush does something else.
   if (frame) { cancelAnimationFrame(frame); frame = 0; }
+  if (timer) { clearTimeout(timer); timer = 0; }
   queue = [];
   await disconnect().catch(() => {});
 }

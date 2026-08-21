@@ -315,6 +315,13 @@ struct Job {
     id: String,
     engine: String,
     items: Vec<ContentItem>,
+    /// The data directory this job was queued for.
+    ///
+    /// Carried on the job rather than read off whichever call happened to start
+    /// it: a job can sit in the queue across a settings change, and running it
+    /// against the new root downloads into one directory while recording it in
+    /// another - after which the next preflight fetches it all over again.
+    root: Option<String>,
 }
 
 struct ActiveJob {
@@ -555,7 +562,7 @@ fn try_zk_content(
 fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), String> {
     use tauri::Emitter;
 
-    let install = install::detect_with(state.root.as_deref())?;
+    let install = install::detect_with(job.root.as_deref().or(state.root.as_deref()))?;
     let exe = find_pr_downloader(&install.root, &job.engine)?;
     let plan = download_plan(&exe, &install.root, &job.items)?;
 
@@ -604,7 +611,9 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
     let state_w = state.clone();
     let id = job.id.clone();
     let items_w = job.items.clone();
-    let root_w = state.root.clone();
+    // The job's own root, so a settings change while it waited cannot send the
+    // download and its record to two different places.
+    let root_w = job.root.clone().or_else(|| state.root.clone());
     std::thread::spawn(move || {
         let code = loop {
             std::thread::sleep(std::time::Duration::from_millis(120));
@@ -827,7 +836,12 @@ pub fn zks_content_fetch(
             Dedup::Fetch(fresh) => fresh,
         };
 
-        q.push_back(Job { id: id.clone(), engine, items: fresh.clone() });
+        q.push_back(Job {
+            id: id.clone(),
+            engine,
+            items: fresh.clone(),
+            root: install_root.clone(),
+        });
         let _ = app.emit(CONTENT_EVENT, ContentStatus::Queued { id: id.clone(), items: fresh });
     }
 
@@ -966,6 +980,7 @@ mod tests {
                 id: (*id).into(),
                 engine: "2025.06.21".into(),
                 items: items.to_vec(),
+                root: None,
             })
             .collect()
     }

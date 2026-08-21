@@ -673,23 +673,45 @@ pub fn fetch_to(
     /* Already there, and in use.
        Windows refuses to replace a file another process has open, and the
        obvious other process is the game: the map being fetched is often the one
-       currently loaded. If a full-sized archive is already sitting at the
-       destination then it is the thing we were about to write, and failing here
-       would report "could not download" about content that is installed and
-       working.
+       currently loaded. If the archive already sitting at the destination is
+       the thing we were about to write, then failing here would report "could
+       not download" about content that is installed and working.
 
-       Only when the existing file is a plausible archive rather than a stub -
-       a zero-length leftover should still be replaced, and if the replace fails
-       for that, the error is real. */
+       Two ways to be sure of that, in order of how sure they are:
+
+       - the file there hashes to the checksum we just verified, so it *is* the
+         content, whatever went wrong with the rename; or
+       - the rename failed the way an in-use file fails, and something
+         full-sized is there.
+
+       Anything else - a full disk, a missing directory, a cross-device move -
+       is a real error, and taking the fallback for it would silently prefer an
+       unverified file already on disk over the verified one just downloaded. */
     if let Err(e) = std::fs::rename(&part, dest) {
         let already = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
-        if already > 0 {
+        let is_the_same = expect_md5.is_some_and(|want| {
+            md5_of(dest).is_ok_and(|got| got.eq_ignore_ascii_case(want))
+        });
+        if is_the_same || (already > 0 && looks_like_in_use(&e)) {
             let _ = std::fs::remove_file(&part);
             return Ok(());
         }
         return Err(format!("could not put {} in place: {e}", dest.display()));
     }
     Ok(())
+}
+
+/// Did this rename fail because something else has the file open?
+///
+/// Windows says so with ERROR_SHARING_VIOLATION (32) or ERROR_ACCESS_DENIED
+/// (5). Rust has no stable `ErrorKind` for the first, so the raw codes are
+/// checked as well as the kind - a wrong guess here would turn a real failure
+/// into a silent success.
+fn looks_like_in_use(e: &std::io::Error) -> bool {
+    if matches!(e.kind(), std::io::ErrorKind::PermissionDenied) {
+        return true;
+    }
+    matches!(e.raw_os_error(), Some(5) | Some(32) | Some(33))
 }
 
 fn md5_of(path: &Path) -> Result<String, String> {
@@ -970,5 +992,19 @@ word".into()], "Map").is_err());
     #[test]
     fn a_response_without_maps_is_empty_rather_than_an_error() {
         assert!(parse_catalogue("<s:Envelope/>").unwrap().is_empty());
+    }
+
+    #[test]
+    fn only_an_in_use_failure_is_treated_as_one() {
+        use std::io::{Error, ErrorKind};
+        // What Windows says when the game has the map open.
+        assert!(looks_like_in_use(&Error::from_raw_os_error(32)));
+        assert!(looks_like_in_use(&Error::from_raw_os_error(5)));
+        assert!(looks_like_in_use(&Error::new(ErrorKind::PermissionDenied, "denied")));
+        // A full disk or a missing directory is a real failure, and accepting
+        // it would keep an unverified file already on disk in preference to the
+        // verified one just downloaded.
+        assert!(!looks_like_in_use(&Error::new(ErrorKind::NotFound, "gone")));
+        assert!(!looks_like_in_use(&Error::new(ErrorKind::Other, "no space left on device")));
     }
 }

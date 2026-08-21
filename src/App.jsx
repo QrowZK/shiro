@@ -39,7 +39,7 @@ import { useUpdate } from "./store/update.ts";
 import { appVersion } from "./net/update.ts";
 import { catalogue, statuses as appStatuses, launchApp, installApp, uninstallApp } from "./net/apps.ts";
 import { openExternal } from "./net/external.ts";
-import { managedState, installEngine, removeManaged, onEngine } from "./net/managed.ts";
+import { managedState, managedRoot, installEngine, removeManaged, onEngine } from "./net/managed.ts";
 import { useSite, channelOf, isExternalUrl } from "./store/site";
 import { useHistory, buildDebriefView } from "./store/history";
 import { AutohostModeLabel } from "./protocol/enums";
@@ -149,6 +149,7 @@ export default function App() {
     managedState(version).then(setManagedInfo, () => setManagedInfo(undefined));
   }, []);
 
+
   React.useEffect(() => {
     if (!live) return undefined;
     let stop;
@@ -213,6 +214,51 @@ export default function App() {
   /* Where Zero-K lives. A disk scan, so it is asked once - and again only when
      the settings screen asks, or the override changes. */
   const [detectNonce, redetect] = React.useReducer(n => n + 1, 0);
+
+  /* Install the engine, point the app at the directory it went into, and pull
+     the game in behind it.
+     
+     One copy, because Settings and the first-run dialog do exactly the same
+     thing and the two had already started to drift. The root is asked for
+     rather than read off `managedInfo`: that comes from an earlier
+     `managedState()` call, and if that call had failed the engine installed,
+     `installRoot` was never set, and the game fetch silently skipped - leaving
+     an install the rest of the app could not see. */
+  const installManaged = React.useCallback(async version => {
+    if (!version) return;
+    setManagedError(undefined);
+    setManagedProgress(undefined);
+    setManagedBusy(true);
+    try {
+      await installEngine(version);
+      const dir = await managedRoot().catch(() => "");
+      if (dir) {
+        /* `installRoot` is already threaded through detection, the content
+           preflight, the archive reader and the launcher, so setting it here is
+           what turns an engine on disk into the installation Shiro actually
+           uses - there is no second path to build. */
+        useSettings.getState().set({ installRoot: dir });
+        if (redetect) redetect();
+
+        /* And pull the game in now rather than at the first battle. The
+           pr-downloader that does it is the one that arrived inside the
+           engine, in that same directory. */
+        const game = useLobby.getState().welcome?.Game;
+        if (game) {
+          await useContent.getState()
+            .fetch(version, [{ kind: "game", name: game }], dir)
+            .catch(e => setManagedError(String(e?.message ?? e)));
+        }
+      } else {
+        setManagedError("The engine installed, but its folder could not be located.");
+      }
+      refreshManaged(version);
+    } catch (e) {
+      setManagedError(String(e?.message ?? e));
+    } finally {
+      setManagedBusy(false);
+    }
+  }, [redetect, refreshManaged]);
   const [installError, setInstallError] = React.useState("");
   /* Only once detection has actually run - asking before that would tell
      somebody with Zero-K installed that they have not got it. */
@@ -715,38 +761,7 @@ export default function App() {
         busy: managedBusy,
         progress: managedProgress,
         error: managedError,
-        onPrepare: () => {
-          const version = welcome?.Engine;
-          if (!version) return;
-          setManagedError(undefined);
-          setManagedProgress(undefined);
-          setManagedBusy(true);
-          installEngine(version)
-            .then(async root => {
-              /* Point the rest of the app at the directory we just filled.
-                 `installRoot` is already threaded through detection, the
-                 content preflight, the archive reader and the launcher, so
-                 setting it here is what turns an engine on disk into the
-                 installation Shiro actually uses - there is no second path to
-                 build. */
-              const dir = managedInfo?.root;
-              if (dir) useSettings.getState().set({ installRoot: dir });
-              if (redetect) redetect();
-
-              /* And pull the game in now rather than at the first battle. The
-                 pr-downloader that does it is the one that arrived inside the
-                 engine, in that same directory. */
-              const game = welcome?.Game;
-              if (dir && game) {
-                await useContent.getState()
-                  .fetch(version, [{ kind: "game", name: game }], dir)
-                  .catch(e => setManagedError(String(e?.message ?? e)));
-              }
-              refreshManaged(version);
-              return root;
-            }, e => setManagedError(String(e?.message ?? e)))
-            .finally(() => setManagedBusy(false));
-        },
+        onPrepare: () => void installManaged(welcome?.Engine),
         onRemove: () => {
           setManagedError(undefined);
           removeManaged()
@@ -964,25 +979,7 @@ export default function App() {
           onSettings={() => setView("settings")}
           onInstall={() => {
             setView("settings");
-            const version = welcome?.Engine;
-            if (!version) return;
-            setManagedError(undefined);
-            setManagedProgress(undefined);
-            setManagedBusy(true);
-            installEngine(version)
-              .then(async () => {
-                const dir = managedInfo?.root;
-                if (dir) useSettings.getState().set({ installRoot: dir });
-                if (redetect) redetect();
-                const game = welcome?.Game;
-                if (dir && game) {
-                  await useContent.getState()
-                    .fetch(version, [{ kind: "game", name: game }], dir)
-                    .catch(e => setManagedError(String(e?.message ?? e)));
-                }
-                refreshManaged(version);
-              }, e => setManagedError(String(e?.message ?? e)))
-              .finally(() => setManagedBusy(false));
+            void installManaged(welcome?.Engine);
           }} />
       <ErrorBoundary>{body}</ErrorBoundary>
     </AppShell>
