@@ -38,6 +38,7 @@ import { useUpdate } from "./store/update.ts";
 import { appVersion } from "./net/update.ts";
 import { catalogue, statuses as appStatuses, launchApp, installApp, uninstallApp } from "./net/apps.ts";
 import { openExternal } from "./net/external.ts";
+import { managedState, installEngine, removeManaged, onEngine } from "./net/managed.ts";
 import { useSite, channelOf, isExternalUrl } from "./store/site";
 import { useHistory, buildDebriefView } from "./store/history";
 import { AutohostModeLabel } from "./protocol/enums";
@@ -129,6 +130,31 @@ export default function App() {
   /* The live battle room. `useRoom` holds membership; the header it decorates
      still comes from the public battle directory in `useLobby`. */
   const liveRoomID = useRoom(s => s.battleID);
+
+  /* Zero-K installed by Shiro rather than found. Only ever started by pressing
+     the button in Settings: this is gigabytes, and the engine version comes
+     from the server rather than from a guess. */
+  const [managedInfo, setManagedInfo] = React.useState(undefined);
+  const [managedBusy, setManagedBusy] = React.useState(false);
+  const [managedProgress, setManagedProgress] = React.useState(undefined);
+  const [managedError, setManagedError] = React.useState(undefined);
+
+  const refreshManaged = React.useCallback(version => {
+    managedState(version).then(setManagedInfo, () => setManagedInfo(undefined));
+  }, []);
+
+  React.useEffect(() => {
+    if (!live) return undefined;
+    let stop;
+    onEngine(s => {
+      if (s.kind === "progress") setManagedProgress({ received: s.received, total: s.total });
+      if (s.kind === "failed") setManagedError(s.reason);
+    }).then(fn => { stop = fn; }, () => {});
+    return () => { if (stop) stop(); };
+  }, [live]);
+
+  React.useEffect(() => { if (live) refreshManaged(welcome?.Engine); },
+    [live, welcome?.Engine, refreshManaged]);
 
   /* Joining is a request, not an arrival - the room only exists once the server
      answers - so following it has to happen when it turns up rather than when
@@ -648,6 +674,29 @@ export default function App() {
           launchPreview(welcome?.Engine ?? "", me ?? ""))
         : undefined}
       onLogout={handleLogout}
+      managed={live ? {
+        state: managedInfo,
+        busy: managedBusy,
+        progress: managedProgress,
+        error: managedError,
+        onPrepare: () => {
+          const version = welcome?.Engine;
+          if (!version) return;
+          setManagedError(undefined);
+          setManagedProgress(undefined);
+          setManagedBusy(true);
+          installEngine(version)
+            .then(() => refreshManaged(version),
+              e => setManagedError(String(e?.message ?? e)))
+            .finally(() => setManagedBusy(false));
+        },
+        onRemove: () => {
+          setManagedError(undefined);
+          removeManaged()
+            .then(() => refreshManaged(welcome?.Engine),
+              e => setManagedError(String(e?.message ?? e)));
+        },
+      } : undefined}
       away={away}
       onAway={live ? next => { setAway(next); void send("ChangeUserStatus", { IsAfk: next }); } : undefined} />
   );

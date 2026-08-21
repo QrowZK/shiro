@@ -741,6 +741,25 @@ check("a finished match pulls you to the debriefing",
 check("both sides are listed", await seeing(/hexed/) && await seeing(/Qrow/));
 await shot("live-07-debrief");
 
+/* Zero-K installed by Shiro rather than found. The engine version is never
+   chosen here - it is the one the server named in Welcome, so the only engine
+   ever fetched is the one a game is about to need. */
+console.log("installing zero-k ourselves");
+await page.locator("nav button").last().click();
+await waitFor("settings-again", () => seeing(/Zero-K installation/));
+check("the option to have Shiro install it is offered",
+  await seeing(/Let Shiro install Zero-K/i));
+check("and it says where it would go", await seeing(/AppData/i));
+await clickText(/Set up an install here/);
+check("the engine the server asked for is the one requested",
+  await waitFor("engine-asked", async () =>
+    (await page.evaluate(() => window.__ZKS.engineAsked)) === "2025.06.21"));
+check("and the install reports itself as ready",
+  await waitFor("engine-done", () => seeing(/2025\.06\.21 - installed/)));
+await clickText(/Remove it/);
+check("removing it goes back to offering a set-up",
+  await waitFor("removed", () => seeing(/Set up an install here/)));
+
 console.log("logging out");
 await page.locator("nav button").last().click();
 await waitFor("settings", () => seeing(/Zero-K installation/));

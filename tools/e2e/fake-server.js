@@ -41,6 +41,10 @@
        stands in for the supervisor's events. */
     missing: [],
     lastJobId: null,
+    /** A Shiro-managed install that nothing has been downloaded into. */
+    managed: { root: "C:\\Users\\test\\AppData\\Roaming\\shiro\\zk",
+      prepared: false, engineInstalled: false, archives: 0 },
+    engineAsked: null,
     emitContent: status => emit("zks://content", status),
   };
   window.__ZKS = state;
@@ -375,6 +379,32 @@
 
         case "zks_content_cancel":
           state.emitContent({ kind: "finished", id: args.id, outcome: "killed" });
+          return null;
+
+        /* Zero-K installed by Shiro rather than found. The real ones create
+           a directory and fetch a 45 MB engine; here the test drives the
+           state so the screen can be checked without downloading anything. */
+        case "zks_managed_root":
+          return state.managed.root;
+
+        case "zks_managed_state":
+          return { ...state.managed, engineInstalled: state.managed.engineInstalled };
+
+        case "zks_managed_prepare":
+          state.managed.prepared = true;
+          return state.managed.root;
+
+        case "zks_managed_install_engine":
+          state.engineAsked = args.version;
+          emit("zks://engine", { kind: "progress", received: 22, total: 44 });
+          state.managed.prepared = true;
+          state.managed.engineInstalled = true;
+          return state.managed.root + "\\engine";
+
+        case "zks_managed_remove":
+          state.managed.prepared = false;
+          state.managed.engineInstalled = false;
+          state.managed.archives = 0;
           return null;
 
         case "zks_launch_preview": {
