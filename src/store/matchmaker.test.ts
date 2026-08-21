@@ -15,6 +15,16 @@ function msg(cmd: string, data: unknown): Message {
 
 const T0 = 1_700_000_000_000;
 
+/* Anything that sends reaches `net/session`, which reaches Tauri at import time
+   and so cannot resolve under `node --test`. The store logs that and carries on,
+   which is the right behaviour and the wrong thing to print here - a stack trace
+   in a passing run reads as a failure. Drop that one line and nothing else. */
+const realError = console.error;
+console.error = (...args: unknown[]) => {
+  if (typeof args[0] === "string" && args[0].startsWith("matchmaker: ")) return;
+  realError(...args);
+};
+
 function fresh() {
   useMatchmaker.getState().reset();
   return useMatchmaker.getState();
@@ -46,6 +56,20 @@ test("status is the authority on which queues we are in", () => {
   assert.equal(s.counts.Teams, 21);
   assert.equal(s.ingame.Teams, 14);
   assert.equal(s.joinedTime, "2026-08-18T10:00:00Z");
+});
+
+/* The screen is switches because of this: the request is the whole set, so
+   there is no join and no leave to send, only "these are the ones I want". */
+test("setting the queues replaces the set rather than adding to it", () => {
+  fresh();
+  useMatchmaker.getState().setQueues(["Teams"]);
+  assert.deepEqual(useMatchmaker.getState().joined, ["Teams"]);
+  useMatchmaker.getState().setQueues(["Teams", "1v1"]);
+  assert.deepEqual(useMatchmaker.getState().joined, ["Teams", "1v1"]);
+  useMatchmaker.getState().setQueues(["1v1"]);
+  assert.deepEqual(useMatchmaker.getState().joined, ["1v1"], "the others are dropped, not kept");
+  useMatchmaker.getState().setQueues([]);
+  assert.deepEqual(useMatchmaker.getState().joined, [], "and empty leaves the matchmaker");
 });
 
 test("a zero ban is no ban, not a zero-second one", () => {

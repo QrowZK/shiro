@@ -466,11 +466,44 @@ await shot("live-04-chat");
 console.log("matchmaker");
 await page.locator("nav button").nth(2).click();
 check("the server's queues are listed", await waitFor("queues", () => seeing(/Teams/) && seeing(/1v1/)));
-await page.getByText(/^Teams$/).last().click();
-await clickText(/^Join queue$/);
-check("joining sends the queue names",
-  await waitFor("mmq", () => sentAny(/^MatchMakerQueueRequest \{.*"Teams"/)));
-check("the screen switches to searching", await waitFor("searching", () => seeing(/Searching/)));
+const teams = page.getByRole("switch", { name: "Teams" });
+const duel = page.getByRole("switch", { name: "1v1" });
+check("each queue is a switch that says whether you are in it",
+  (await teams.getAttribute("aria-checked")) === "false");
+/* The counts are how somebody picks a queue, so they belong on the row the
+   switch is on, not somewhere else on the screen. */
+check("and the row still carries the counts that queue reports",
+  /waiting\s*21[\s\S]*in game\s*14/i.test(await teams.innerText()));
+
+let from = await mark();
+await teams.click();
+check("turning one on sends that queue",
+  await waitFor("mmq", () => sentSince(from, /^MatchMakerQueueRequest \{"Queues":\["Teams"\]\}$/)));
+/* `seeing` is case-insensitive against the whole screen, so "Searching" alone
+   would also match a sentence sitting in the idle panel. Leaving is only
+   offered while there is something to leave. */
+check("the screen switches to searching",
+  await waitFor("searching", async () => (await seeing(/Searching/)) && (await seeing(/Leave all queues/))));
+
+/* The reason the screen is switches at all: MatchMakerQueueRequest carries the
+   whole set you want to be in, so a second queue joins the first instead of
+   replacing it - and there is no request that could say otherwise. */
+from = await mark();
+await duel.click();
+check("turning a second on sends both, not just the new one",
+  await waitFor("mmq2", () => sentSince(from, /^MatchMakerQueueRequest \{"Queues":\["Teams","1v1"\]\}$/)));
+check("and both switches read as on", await waitFor("both", async () =>
+  (await teams.getAttribute("aria-checked")) === "true"
+  && (await duel.getAttribute("aria-checked")) === "true"));
+
+from = await mark();
+await teams.click();
+check("turning one back off sends the rest, rather than dropping out entirely",
+  await waitFor("mmq3", () => sentSince(from, /^MatchMakerQueueRequest \{"Queues":\["1v1"\]\}$/)));
+check("so the search carries on in what is left",
+  await waitFor("still", async () =>
+    (await seeing(/Leave all queues/)) && (await teams.getAttribute("aria-checked")) === "false"
+    && (await duel.getAttribute("aria-checked")) === "true"));
 
 await page.evaluate(() => window.__ZKS.push('AreYouReady {"MinimumWinChance":0.4,"QuickPlay":false,"SecondsRemaining":30}'));
 check("the ready check interrupts", await waitFor("ready", () => seeing(/Match found\. Ready\?/)));
