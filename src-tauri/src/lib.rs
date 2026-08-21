@@ -19,6 +19,7 @@ pub fn run() {
            worth refusing to start the lobby over - the app simply shows as not
            installed, which is what it is. */
         .setup(|app| {
+            managed::seed_loadscreen(app.handle());
             if let Err(e) = apps::seed_bundled(app.handle()) {
                 eprintln!("could not place the bundled apps: {e}");
             }

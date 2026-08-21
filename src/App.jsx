@@ -41,6 +41,7 @@ import { catalogue, statuses as appStatuses, launchApp, installApp, uninstallApp
 import { openExternal } from "./net/external.ts";
 import { managedState, managedRoot, installEngine, removeManaged, onEngine,
   loadScreenState, setLoadScreen } from "./net/managed.ts";
+import { seedDefaultSettings } from "./net/engineSettings.ts";
 import { useSite, channelOf, isExternalUrl } from "./store/site";
 import { useHistory, buildDebriefView } from "./store/history";
 import { AutohostModeLabel } from "./protocol/enums";
@@ -227,6 +228,18 @@ export default function App() {
      `managedState()` call, and if that call had failed the engine installed,
      `installRoot` was never set, and the game fetch silently skipped - leaving
      an install the rest of the app could not see. */
+  /* An install made before this existed has the same gap, and it will not be
+     set up again - so the same pass runs once a session against whatever
+     directory Shiro is pointed at. It writes only absent keys, so on a
+     configured install it writes nothing at all. */
+  const seededSettings = React.useRef(false);
+  React.useEffect(() => {
+    if (!live || seededSettings.current) return;
+    if (!managedInfo?.prepared || settings.installRoot !== managedInfo.root) return;
+    seededSettings.current = true;
+    void seedDefaultSettings(managedInfo.root).catch(() => {});
+  }, [live, managedInfo, settings.installRoot]);
+
   const installManaged = React.useCallback(async version => {
     if (!version) return;
     setManagedError(undefined);
@@ -242,6 +255,17 @@ export default function App() {
            uses - there is no second path to build. */
         useSettings.getState().set({ installRoot: dir });
         if (redetect) redetect();
+
+        /* Give it Zero-K's own settings before anything runs in it. A fresh
+           directory has never met Zero-K's settings screen, so everything
+           performance-related falls back to the *engine's* defaults - and the
+           engine defaults vsync to adaptive, which Zero-K turns off in all five
+           of its presets. Adaptive is the one that gets reported as a stuttery
+           camera: it syncs while the frame rate holds and stops when it does
+           not, so the pacing oscillates rather than being consistently wrong.
+           Only keys that are absent are written, so this never overrules
+           somebody who has set something. */
+        await seedDefaultSettings(dir).catch(() => {});
 
         /* And pull the game in now rather than at the first battle. The
            pr-downloader that does it is the one that arrived inside the

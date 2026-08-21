@@ -108,7 +108,7 @@ pub fn zks_managed_prepare(app: tauri::AppHandle) -> Result<String, String> {
     /* Placed with the install rather than on first launch, so it is there
        before anything can need it - and removable from Settings, since what the
        game looks like is the player's call, not the launcher's. */
-    if let Err(e) = loadscreen::install(&dir) {
+    if let Err(e) = loadscreen::ensure_default(&dir) {
         eprintln!("could not place the loading screen: {e}");
     }
     Ok(dir.display().to_string())
@@ -177,6 +177,19 @@ pub fn zks_loadscreen_set(app: tauri::AppHandle, enabled: bool) -> Result<bool, 
         loadscreen::remove(&dir)?;
     }
     Ok(loadscreen::installed(&dir))
+}
+
+/// Put the loading screen in place for an install Shiro owns, unless it was
+/// turned off. Called at startup, so an install made before the screen existed
+/// gets it too rather than needing the switch found and pressed.
+pub fn seed_loadscreen(app: &tauri::AppHandle) {
+    let Ok(dir) = root(app) else { return };
+    if !install::is_managed(&dir) {
+        return;
+    }
+    if let Err(e) = loadscreen::ensure_default(&dir) {
+        eprintln!("could not place the loading screen: {e}");
+    }
 }
 
 /// Remove a managed install.
