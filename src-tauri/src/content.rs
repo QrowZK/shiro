@@ -320,6 +320,10 @@ struct Job {
 struct ActiveJob {
     id: String,
     child: std::process::Child,
+    /// What this job is downloading, so a request for the same thing can be
+    /// told it is already happening. The queue is not enough: this job was
+    /// popped off it to start.
+    items: Vec<ContentItem>,
 }
 
 /// One pr-downloader at a time, with a queue rather than a rejection.
@@ -586,7 +590,11 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
     }
 
     if let Ok(mut slot) = state.active.lock() {
-        *slot = Some(ActiveJob { id: job.id.clone(), child });
+        *slot = Some(ActiveJob {
+            id: job.id.clone(),
+            child,
+            items: job.items.clone(),
+        });
     }
     let _ = app.emit(CONTENT_EVENT, ContentStatus::Started { id: job.id.clone() });
 
@@ -732,6 +740,58 @@ impl Content {
 }
 
 /// Queue an acquisition. Progress arrives on `zks://content`.
+/// What a fetch request should do about work that is already under way.
+#[derive(Debug, PartialEq, Eq)]
+enum Dedup {
+    /// Nothing new: wait on this job instead.
+    Existing(String),
+    /// Download these; the rest is already covered.
+    Fetch(Vec<ContentItem>),
+}
+
+/// Decide against both the running job and the queue.
+///
+/// The running job is the one that matters most and the one that used to be
+/// missed: it was popped off the queue to start, so a queue-only check says
+/// "not happening" about the download in progress. Joining at the whistle -
+/// prefetch queues the map, then the launch asks for it again - then queues a
+/// full duplicate run, and the launch waits behind its own second copy.
+fn dedup_fetch(
+    running: Option<(&str, &[ContentItem])>,
+    queued: &std::collections::VecDeque<Job>,
+    items: &[ContentItem],
+) -> Dedup {
+    let same = |a: &ContentItem, b: &ContentItem| a.kind == b.kind && a.name == b.name;
+    let covered = |i: &ContentItem| {
+        running.map(|(_, r)| r.iter().any(|e| same(e, i))).unwrap_or(false)
+            || queued.iter().any(|j| j.items.iter().any(|e| same(e, i)))
+    };
+
+    let fresh: Vec<ContentItem> = items.iter().filter(|i| !covered(i)).cloned().collect();
+    if !fresh.is_empty() {
+        return Dedup::Fetch(fresh);
+    }
+
+    /* Everything asked for is already happening, so hand back the id of the job
+       doing it rather than a sentinel. The running job is preferred: it is the
+       one that will finish first. */
+    let from_running = running
+        .filter(|(_, r)| r.iter().any(|e| items.iter().any(|i| same(i, e))))
+        .map(|(id, _)| id.to_string());
+    let existing = from_running.or_else(|| {
+        queued
+            .iter()
+            .find(|j| j.items.iter().any(|e| items.iter().any(|i| same(i, e))))
+            .map(|j| j.id.clone())
+    });
+    match existing {
+        Some(id) => Dedup::Existing(id),
+        // Nothing covers it and nothing is fresh only if `items` was empty,
+        // which the caller has already refused.
+        None => Dedup::Fetch(items.to_vec()),
+    }
+}
+
 #[tauri::command]
 pub fn zks_content_fetch(
     app: tauri::AppHandle,
@@ -749,37 +809,24 @@ pub fn zks_content_fetch(
         check_name(&item.name)?;
     }
 
-    // Deduplicate against what is already queued or running. Joining two battles
-    // on the same map, or a BattleUpdate flapping between maps, must not enqueue
-    // the same download twice.
+    // Deduplicate against what is already queued *or running*. Joining two
+    // battles on the same map, or a BattleUpdate flapping between maps, must not
+    // enqueue the same download twice.
     let id = next_job_id();
     {
+        /* Both locks, in the order start_next takes them, so the decision is
+           atomic against a job starting underneath it. Holding `active` also
+           means the supervisor cannot retire the job between deciding to wait
+           on it and returning its id. */
+        let active = self_lock(&content.active)?;
         let mut q = self_lock(&content.queue)?;
-        let already: Vec<&ContentItem> = q.iter().flat_map(|j| j.items.iter()).collect();
-        let fresh: Vec<ContentItem> = items
-            .iter()
-            .filter(|i| !already.iter().any(|e| e.kind == i.kind && e.name == i.name))
-            .cloned()
-            .collect();
-        if fresh.is_empty() {
-            /* Everything asked for is already queued, so hand back the id of
-               the job doing it rather than a sentinel.
 
-               This used to return the literal "already-queued", which the
-               caller then used as a job id: it waited on a job that would never
-               exist, and Cancel aimed at nothing. Returning the real id means a
-               second caller waits for the first one's download, which is what
-               "it is already happening" should mean. */
-            let existing = q
-                .iter()
-                .find(|j| {
-                    j.items
-                        .iter()
-                        .any(|e| items.iter().any(|i| i.kind == e.kind && i.name == e.name))
-                })
-                .map(|j| j.id.clone());
-            return existing.ok_or_else(|| "already queued, but the job is gone".to_string());
-        }
+        let running = active.as_ref().map(|a| (a.id.as_str(), a.items.as_slice()));
+        let fresh = match dedup_fetch(running, &q, &items) {
+            Dedup::Existing(existing) => return Ok(existing),
+            Dedup::Fetch(fresh) => fresh,
+        };
+
         q.push_back(Job { id: id.clone(), engine, items: fresh.clone() });
         let _ = app.emit(CONTENT_EVENT, ContentStatus::Queued { id: id.clone(), items: fresh });
     }
@@ -908,6 +955,75 @@ pub fn zks_content_preflight(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn item(kind: ContentKind, name: &str) -> ContentItem {
+        ContentItem { kind, name: name.into() }
+    }
+
+    fn queue_of(jobs: &[(&str, &[ContentItem])]) -> std::collections::VecDeque<Job> {
+        jobs.iter()
+            .map(|(id, items)| Job {
+                id: (*id).into(),
+                engine: "2025.06.21".into(),
+                items: items.to_vec(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_job_already_downloading_counts_as_covered() {
+        // It was popped off the queue to start, so a queue-only check calls it
+        // "not happening" and queues a second copy of the same download - which
+        // the launch then waits behind.
+        let map = [item(ContentKind::Map, "Comet Catcher Redux")];
+        let empty = queue_of(&[]);
+        assert_eq!(
+            dedup_fetch(Some(("dl-1", &map)), &empty, &map),
+            Dedup::Existing("dl-1".into())
+        );
+    }
+
+    #[test]
+    fn a_queued_job_still_counts() {
+        let map = [item(ContentKind::Map, "Barren v3")];
+        let q = queue_of(&[("dl-7", &map)]);
+        assert_eq!(dedup_fetch(None, &q, &map), Dedup::Existing("dl-7".into()));
+    }
+
+    #[test]
+    fn the_running_job_is_preferred_over_a_queued_one() {
+        // It finishes first, so waiting on it is the shorter wait.
+        let map = [item(ContentKind::Map, "TartarusV7")];
+        let q = queue_of(&[("dl-9", &map)]);
+        assert_eq!(
+            dedup_fetch(Some(("dl-4", &map)), &q, &map),
+            Dedup::Existing("dl-4".into())
+        );
+    }
+
+    #[test]
+    fn only_the_parts_that_are_not_covered_are_fetched() {
+        let map = item(ContentKind::Map, "Comet Catcher Redux");
+        let game = item(ContentKind::Game, "zk:stable");
+        let running = [map.clone()];
+        let empty = queue_of(&[]);
+        assert_eq!(
+            dedup_fetch(Some(("dl-1", &running)), &empty, &[map, game.clone()]),
+            Dedup::Fetch(vec![game])
+        );
+    }
+
+    #[test]
+    fn a_different_kind_of_the_same_name_is_not_the_same_thing() {
+        let as_map = item(ContentKind::Map, "Titan");
+        let as_game = item(ContentKind::Game, "Titan");
+        let running = [as_map];
+        let empty = queue_of(&[]);
+        assert_eq!(
+            dedup_fetch(Some(("dl-1", &running)), &empty, &[as_game.clone()]),
+            Dedup::Fetch(vec![as_game])
+        );
+    }
 
     fn items() -> Vec<ContentItem> {
         vec![

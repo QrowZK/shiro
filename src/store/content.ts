@@ -223,13 +223,25 @@ export async function prefetchForBattle(
     useRoom.getState().reportSync(pre.items.length === 0);
 
     if (fetchedBefore || !pre.items.length || !pre.downloader || !pre.writable) return;
-    await useContent.getState().fetch(engine, pre.items, installRoot);   // one job per item
+
+    /* `fetch` resolves when the jobs are *queued*, not when they are done, so
+       the re-check below has to wait for them. Without this it ran against the
+       state before the download and reported Unsynced - and nothing ran when
+       the job finished, so the player who actually downloaded the map stayed
+       UNSYNCED to everyone else until they rejoined the room. */
+    const ids = await useContent.getState().fetch(engine, pre.items, installRoot);
+    await useContent.getState().settledAll(ids);
 
     /* Ask again rather than trusting the download. pr-downloader exits 0 when
        *any* item in a batch succeeded, so "the job finished" and "the map is
        there" are different claims - and this one is the one the room acts on. */
     const after = await contentPreflight(engine, game, map, installRoot);
-    useRoom.getState().reportSync(after.items.length === 0);
+    /* Only if we are still in the room we downloaded for: a download outlives a
+       quick leave, and reporting sync into a room we left is a lie about
+       somebody else's battle. */
+    if (useRoom.getState().battleID === battleID) {
+      useRoom.getState().reportSync(after.items.length === 0);
+    }
   } catch {
     // Nothing to say here: the launch preflight will report it properly if it
     // still matters by then.

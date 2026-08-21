@@ -310,8 +310,10 @@ export default function App() {
     const { host, port } = useSettings.getState();
     setLoadingIn(true);
     try {
-      await login({ name, password }, host || undefined, port || undefined);
-      const c = useLobby.getState().connection;
+      /* The outcome login settled on, not whatever the store says now: a
+         refusal is followed by the server dropping the connection, and reading
+         afterwards reported the drop instead of the refusal. */
+      const c = await login({ name, password }, host || undefined, port || undefined);
       if (c.kind !== "online") throw new Error(describeFailure(c));
     } catch (e) {
       // A rejected login goes back to the form; nothing is loading any more.
@@ -467,11 +469,27 @@ export default function App() {
   const liveRoom = live && liveRoomID != null
     ? roomModel(liveBattles[liveRoomID], roomPlayers, roomBots, liveUsers, roomOptions)
     : null;
+  /* The room on screen, whichever mode we are in. The demo path is supported -
+     every screen has one - and reading `liveRoom` directly in this branch threw
+     the moment somebody opened a room in the browser. */
+  const roomView = liveRoom || (room ? D.room : null);
 
   /* Not running: the host decides when to start, and every Zero-K autohost
      takes `!start` in room chat - which is exactly what a player types today.
      Running: ask for connect details and launch straight into it. */
   const startRoom = () => {
+    /* The demo click-through ends at the debriefing, which is the whole point
+       of it - and this guarded on `liveRoom`, so in the browser the button did
+       nothing at all. */
+    if (!live) {
+      setLaunching(true);
+      setTimeout(() => {
+        setLaunching(false);
+        setRoom(null);
+        setView("debrief");
+      }, 1600);
+      return;
+    }
     if (!liveRoom) return;
     if (liveRoom.running) useGame.getState().requestStart(liveRoom.id);
     else void say("!start", 1);
@@ -517,8 +535,8 @@ export default function App() {
      of the battle list. It used to render whenever `view` was "battles", which
      meant the only way to look at what else was open was to leave - and nothing
      on screen said you were still in one. */
-  if ((liveRoom || room) && view === "room") body = (
-    <BattleRoomScreen room={liveRoom || D.room}
+  if (roomView && view === "room") body = (
+    <BattleRoomScreen room={roomView}
       download={activeDownload}
       chat={battleChat ? chatLines(battleChat.messages, liveUsers, ignored) : []}
       onLeave={() => { if (live) useRoom.getState().leave(); setRoom(null); setView("battles"); }}
@@ -536,7 +554,7 @@ export default function App() {
       onEditOptions={() => setEditingOptions(true)}
       /* The server's rule, read backwards: only the founder may set options,
          and an autohost's founder is never a person. */
-      optionsLocked={canEditOptions(liveRoom.founder, me)
+      optionsLocked={canEditOptions(roomView.founder, me)
         ? undefined : "Only the room's host can change these"}
       chatHeight={settings.roomChatHeight}
       onChatHeight={h => useSettings.getState().set({ roomChatHeight: h })}
@@ -746,6 +764,15 @@ export default function App() {
       away={away}
       onAway={live ? next => { setAway(next); void send("ChangeUserStatus", { IsAfk: next }); } : undefined} />
   );
+  /* Without this, being on "room" with no room to show fell through to the
+     bottom of the chain and rendered the debriefing. Leaving from anywhere but
+     the room itself - a kick, the host closing it - lands here. */
+  else if (view === "room") body = <BattleListScreen battles={battles} empty={empty}
+    occupants={live ? occupantsOf : null}
+    onToggleEmpty={e => setEmpty(e.target.checked)}
+    onHost={() => setHosting(true)}
+    onSpectate={b => (live ? useRoom.getState().join(b.id, undefined, true) : setRoom(b))}
+    onJoin={joinBattle} />;
   else body = (
     <DebriefingScreen
       d={live

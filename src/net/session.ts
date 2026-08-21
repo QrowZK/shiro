@@ -7,7 +7,8 @@ import {
 } from "./connection";
 import { parseLine, serialize } from "../protocol/wire";
 import type { CommandName, Message, MessageMap } from "../protocol/registry";
-import { useLobby } from "../store/lobby";
+import type * as T from "../protocol/types";
+import { useLobby, type ConnectionState } from "../store/lobby";
 import { describeRegisterFailure } from "../store/adapters";
 import { useRoom } from "../store/room";
 import { fanout } from "../store/slices";
@@ -137,7 +138,7 @@ export async function login(
   creds: Credentials,
   host: string = LIVE.host,
   port: number = LIVE.port,
-): Promise<void> {
+): Promise<ConnectionState> {
   await teardown();
 
   const store = useLobby.getState();
@@ -147,12 +148,16 @@ export async function login(
   session = { creds, hash, host, port };
   attempt = 0;
 
-  const settled = new Promise<void>(resolve => {
+  /* Resolves with the state it settled on, not just "it settled". Re-reading
+     the store afterwards is a race: a refusal is followed by a drop, and the
+     caller would report whichever arrived last rather than the one that
+     decided the outcome. */
+  const settled = new Promise<ConnectionState>(resolve => {
     const stop = useLobby.subscribe(s => {
       const k = s.connection.kind;
       if (k === "online" || k === "rejected" || k === "disconnected") {
         stop();
-        resolve();
+        resolve(s.connection);
       }
     });
   });
@@ -188,6 +193,18 @@ export async function login(
     if (m.cmd === "LoginResponse" && (m.data as { ResultCode?: number }).ResultCode !== 0) {
       session = null;
       cancelRetry();
+      /* And say so now rather than on the next frame. Inbound messages are
+         batched, but the drop that follows a refusal arrives on the status
+         channel and is applied immediately - so the batch that would have
+         recorded "rejected" landed after "disconnected" had already overwritten
+         it, and the player was told they had lost the connection instead of
+         being told their password was wrong. */
+      const d = m.data as T.LoginResponse;
+      useLobby.getState().setConnection({
+        kind: "rejected",
+        code: d.ResultCode,
+        message: d.BanReason ?? "",
+      });
     }
 
     // The server sends Welcome unprompted on connect; that is our cue to log in.
@@ -206,7 +223,7 @@ export async function login(
   }));
 
   await connect(host, port);
-  await settled;
+  return settled;
 }
 
 /**
