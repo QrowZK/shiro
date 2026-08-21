@@ -89,6 +89,16 @@ check("the demo room opens rather than throwing",
 check("and it is the demo room", await seeing(/Shadowfury/));
 check("the room names whoever is still downloading",
   await seeing(/Waiting on lorelei, vexatiousmachinist/));
+/* The room is the one screen you always reach having just seen its map in
+   the list, so it is the one screen whose picture is always already in hand
+   - and the only screen the minimap was reported black on. Present is not
+   the same as visible here: the picture is drawn transparent until it is
+   known to have arrived, so ask what is on screen, not what is in the DOM. */
+check("the room's minimap is visible, not a black panel", await waitFor(() =>
+  page.evaluate(() => {
+    const i = [...document.querySelectorAll("img")].find(x => /minimap/.test(x.src));
+    return !!i && i.naturalWidth > 0 && getComputedStyle(i).opacity === "1";
+  })));
 await shot("demo-02-room");
 
 console.log("the click-through ends where it should");
