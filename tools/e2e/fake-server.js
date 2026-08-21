@@ -36,6 +36,14 @@
     onSend: null,
     /** Pull the socket out from under the client. */
     drop: reason => emit("zks://status", { kind: "disconnected", reason: reason || "reset by peer" }),
+    /* What the peer does when the client dials. "ok" accepts and talks; "hang
+       up" accepts and closes at once, which the relay reports as a connection
+       followed immediately by a drop; "refuse" never completes, which it
+       reports by failing the command instead. The last two are the two ways a
+       connection can end before a login has begun. */
+    connectAs: "ok",
+    /** Dials so far, so a retry nobody asked for can be seen. */
+    connects: 0,
     /* Content downloads. `missing` is what the preflight reports as absent, so
        a test can put the launcher through the download gate; `emitContent`
        stands in for the supervisor's events. */
@@ -293,8 +301,21 @@
           handlers.delete(args.eventId);
           return;
         case "zks_connect":
+          state.connects++;
+          if (state.connectAs === "refuse") {
+            throw new Error("connect " + args.host + ":" + args.port
+              + " failed: connection refused");
+          }
           soon(() => {
             emit("zks://status", { kind: "connected" });
+            /* A socket the server closes the moment it accepts. The relay
+               announces the connection it made and then the drop, in that
+               order - a reader that leaves without saying anything is the bug
+               this mode exists for. */
+            if (state.connectAs === "hang up") {
+              soon(() => state.drop("closed by server"));
+              return;
+            }
             state.push(line("Welcome", { Engine: "2025.06.21", Game: "Zero-K v1.14.8.0",
               UserCount: 100, Version: "1.0", UserCountLimited: false }));
           });

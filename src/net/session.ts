@@ -117,12 +117,19 @@ function cancelRetry(): void {
 /**
  * Re-establish a session that dropped underneath us.
  *
- * Only ever called after a login the server accepted: a *rejected* login is
+ * Only for a session that got as far as being logged in. A *rejected* login is
  * never retried, because LoginChecker.LogIpFailure() fires on a bad name and
  * repeated failures earn BannedTooManyConnectionAttempts.
+ *
+ * A drop *before* any login is the attempt failing rather than a session
+ * dropping, and this used to retry those too - which nobody could see, because
+ * `login()` had already handed the failure back and the login screen was up
+ * again. The dialling carried on behind it, and a server that came back logged
+ * the player in with nothing on screen saying so. It only stayed hidden while
+ * the relay could lose the disconnect entirely; see src-tauri/src/relay.rs.
  */
 function scheduleReconnect(): void {
-  if (!session || retry) return;
+  if (!session || !loggedInBefore || retry) return;
   const delay = BACKOFF[Math.min(attempt, BACKOFF.length - 1)];
   attempt += 1;
   useLobby.getState().setReconnect(attempt);
@@ -269,7 +276,20 @@ export async function login(
     enqueue(m);
   }));
 
-  await connect(host, port);
+  try {
+    await connect(host, port);
+  } catch (e) {
+    /* A dial that never completes is reported by the command failing, and the
+       relay has already said `connecting` by then - so without this the store
+       sits on `connecting` for ever and the subscription above is never taken
+       off. The attempt is over; the store has to be told, the same as it would
+       be for a socket that opened and then died. */
+    useLobby.getState().setConnection({
+      kind: "disconnected",
+      reason: String((e as { message?: string })?.message ?? e),
+    });
+    throw e;
+  }
   return settled;
 }
 
