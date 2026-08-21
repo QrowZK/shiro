@@ -90,10 +90,31 @@ pub fn declined(root: &Path) -> bool {
 /// `installed` below counts the pictures, so an install left behind by a Shiro
 /// that predated them is repaired here rather than reported as fine.
 pub fn ensure_default(root: &Path) -> Result<(), String> {
-    if declined(root) || installed(root) {
+    if declined(root) || current(root) {
         return Ok(());
     }
     install(root)
+}
+
+/// Is what is on disk what this build ships?
+///
+/// `installed` asks whether *a* screen is there; this asks whether it is *this*
+/// one. The difference was a real bug: startup only wrote the addon when none
+/// was present, so the first version ever installed stayed forever. Somebody
+/// who had the screen before the match roster existed kept a screen that could
+/// not read the roster file - Shiro wrote it faithfully every launch and the
+/// addon on disk had no idea it was there.
+///
+/// Compared by content rather than a version stamp. A stamp is a second thing
+/// to remember to change, and this costs one read of a file that is already
+/// being opened.
+fn current(root: &Path) -> bool {
+    if std::fs::read_to_string(path(root)).map(|t| t != ADDON).unwrap_or(true) {
+        return false;
+    }
+    IMAGES.iter().all(|(name, bytes)| {
+        std::fs::read(image(root, name)).map(|b| b == *bytes).unwrap_or(false)
+    })
 }
 
 /// Where a picture goes. `LuaIntro/Images` is the directory the addon's
@@ -270,6 +291,35 @@ mod tests {
         std::fs::write(&theirs, b"not ours").unwrap();
         remove(&root).unwrap();
         assert!(theirs.is_file());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_screen_from_an_older_shiro_is_replaced() {
+        /* The reported failure, from the other end: Shiro wrote the match file
+           every launch and the screen never showed it, because the addon on
+           disk predated the code that reads it. Startup only wrote the addon
+           when none was there, so the first version installed stayed forever. */
+        let root = temp("stale");
+        install(&root).unwrap();
+        std::fs::write(path(&root), "-- Shiro's loading screen, an older one\n").unwrap();
+        assert!(installed(&root), "it is still a screen of ours");
+        ensure_default(&root).unwrap();
+        assert_eq!(std::fs::read_to_string(path(&root)).unwrap(), ADDON,
+            "startup left an old screen in place");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_stale_picture_is_replaced_too() {
+        // Same trap, other file: the addon can be current while the art it
+        // draws is the previous design's.
+        let root = temp("stale-art");
+        install(&root).unwrap();
+        let (name, bytes) = IMAGES[0];
+        std::fs::write(image(&root, name), b"not the picture").unwrap();
+        ensure_default(&root).unwrap();
+        assert_eq!(std::fs::read(image(&root, name)).unwrap(), bytes);
         let _ = std::fs::remove_dir_all(&root);
     }
 
