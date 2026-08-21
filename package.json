@@ -18,7 +18,9 @@
     "gen:icons": "node tools/gen-icons.mjs",
     "check:icons": "node tools/gen-icons.mjs --check",
     "gen:settings": "node tools/gen-settings.mjs",
-    "gen:modoptions": "node tools/gen-modoptions.mjs"
+    "gen:modoptions": "node tools/gen-modoptions.mjs",
+    "typecheck": "tsc --noEmit",
+    "check:names": "node tools/check-names.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",
@@ -31,6 +33,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
+    "@types/node": "^22.20.1",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
