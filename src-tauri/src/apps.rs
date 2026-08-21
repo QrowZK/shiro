@@ -100,10 +100,10 @@ pub const CATALOGUE: &[CatalogueApp] = &[
         description: "Scenario editor for the Spring and Recoil RTS engines",
         kind: AppKind::Executable,
         download: Some(
-            "https://github.com/QrowZK/Splaunch/releases/download/dev/Splaunch_0.1.9_x64.zip",
+            "https://github.com/QrowZK/Splaunch/releases/download/dev/Splaunch_0.1.10_x64.zip",
         ),
-        sha256: Some("67938ce82b0f147657a28d3e188d284ff9406eeaa59095c12a8dab57e9908ed4"),
-        version: Some("0.1.9"),
+        sha256: Some("60ecd61d47fce268d9f7645dc72535888ae24b2488bf77532aa7d04bc7e7645c"),
+        version: Some("0.1.10"),
         run: Some("Splaunch.exe"),
         unavailable: None,
         bundled: None,

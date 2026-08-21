@@ -146,7 +146,7 @@ check("the status bar shows the server's numbers", await seeing(/100 online/));
 
 /* Busiest first, spectators counted. The running 12-player game is the busiest
    room on this server, so it leads - and the default selection deliberately
-   skips it, because "Join battle" is the point of this screen and you cannot
+   skips it, because joining is the point of this screen and you cannot
    join a game already under way. */
 check("the busiest room leads the list",
   await waitFor("order", async () => {
@@ -157,13 +157,20 @@ check("the busiest room leads the list",
     });
     return first >= 0 && second >= 0 && first < second;
   }));
+/* The primary button says "Join room" whatever is selected, so its label no
+   longer reveals which room that is. The selected one is the room whose title
+   appears twice: once in the list, once in the detail panel beside it. */
 check("but the default selection is a room you can actually join",
-  await seeing(/Join battle/) && !(await seeing(/^Watch$/)));
+  await waitFor("default-selection", async () => {
+    const seen = await page.evaluate(() =>
+      (document.body.innerText.match(/Teams 8v8 - all welcome/g) || []).length);
+    return seen >= 2;
+  }));
 
 await shot("live-01-battles");
 
 console.log("battle room");
-await clickText(/^Join battle$/);
+await clickText(/^Join room$/);
 check("JoinBattle went out", await waitFor("join", () => sentAny(/^JoinBattle /)));
 check("the roster arrives", await waitFor("roster", () => seeing(/CAI-Brutal/)));
 check("spectators are separated from players", await seeing(/SPECTATORS/) && await seeing(/lorelei/));
@@ -278,10 +285,38 @@ check("the log follows new messages to the bottom",
 await clickText(/^Start game$/);
 check("start asks the host", await waitFor("start", () => sentAny(/^Say \{.*"!start"/)));
 
+/* Being in a room used to hide the battle list behind it, so the only way to
+   see what else was open was to leave - and nothing on screen said you were
+   still in one. */
+console.log("looking around while in a room");
+await page.locator("nav button").nth(0).click();
+check("the battle list is reachable from inside a room",
+  await waitFor("list-while-in-room", () => seeing(/Host a battle/)));
+check("and it says which room you are still in",
+  (await seeing(/In a room/)) && (await seeing(/Teams 8v8 - all welcome/)));
+const lookMark = await mark();
+await clickText(/^Back to room$/);
+check("going back does not rejoin anything",
+  !(await sentSince(lookMark, /^JoinBattle /)));
+check("and the room is on screen again",
+  await waitFor("back-in-room", () => seeing(/SPECTATORS/)));
+
 console.log("leaving");
 await clickText(/^Leave$/);
 check("LeaveBattle went out", await waitFor("leave", () => sentAny(/^LeaveBattle /)));
 check("we are back on the battle list", await waitFor("back", () => seeing(/Host a battle/)));
+
+/* Double-click joins. BattleRow accepts an `onJoin` and never calls it, so this
+   worked in nobody's hands until the handler moved to a wrapper at the call
+   site. */
+const dblMark = await mark();
+await page.getByText(/^Teams 8v8 - all welcome$/).first().dblclick();
+check("double-clicking a row joins it",
+  await waitFor("dblclick-join", () => sentSince(dblMark, /^JoinBattle /)));
+check("and it opens the room", await waitFor("dbl-room", () => seeing(/SPECTATORS/)));
+await clickText(/^Leave$/);
+check("and leaving that returns to the list",
+  await waitFor("dbl-back", () => seeing(/Host a battle/)));
 
 console.log("hosting");
 await clickText(/Host a battle/);
@@ -375,7 +410,7 @@ await waitFor("back", () => seeing(/Host a battle/));
 
 console.log("passworded battles");
 await page.getByText(/^private - do not join$/).first().click();
-await clickText(/^Join battle$/);
+await clickText(/^Join room$/);
 check("a locked battle asks for the password first",
   await waitFor("prompt", () => seeing(/This battle is locked/)));
 await page.locator("input").last().fill("hunter2");
@@ -506,7 +541,7 @@ await shot("live-06-friends");
 console.log("launching a game");
 await page.locator("nav button").nth(0).click();
 await page.getByText(/^running match$/).first().click();
-await clickText(/^Watch$/);
+await clickText(/^Join room$/);
 await waitFor("joined running", () => seeing(/CAI-Brutal/));
 await clickText(/^Join game$/);
 check("connect details are requested",
