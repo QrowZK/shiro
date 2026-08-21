@@ -671,7 +671,7 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
            strangely - no progress, far too fast, a fallback nobody expected -
            is exactly the one worth reading afterwards. */
         if let Ok(mut logs) = state_w.logs.lock() {
-            if let Some(text) = tail_w.lock().ok().map(|t| t.clone()) {
+            if let Some(text) = state_w.tail_of(&tail) {
                 logs.insert(id.clone(), text);
                 /* A handful, so a long session does not accumulate megabytes of
                    download chatter. */
