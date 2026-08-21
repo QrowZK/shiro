@@ -457,51 +457,105 @@ fn pump<R: std::io::Read + Send + 'static>(
     });
 }
 
+/// Why a job never reached a running downloader.
+///
+/// Two cases, because they read differently to the person waiting: a cancel is
+/// something they asked for, and announcing it as a failure sent people looking
+/// for a problem they had just caused on purpose.
+enum StartFailed {
+    /// Nothing ran and nothing will - no install, no pr-downloader for that
+    /// engine, a name the plan refuses, a spawn the system would not do.
+    Failed(String),
+    /// Cancelled while it was starting.
+    Cancelled,
+}
+
+impl From<String> for StartFailed {
+    fn from(why: String) -> Self {
+        StartFailed::Failed(why)
+    }
+}
+
+impl StartFailed {
+    fn report(self) -> (Outcome, String) {
+        match self {
+            StartFailed::Failed(why) => (Outcome::NotFoundOrFailed, why),
+            StartFailed::Cancelled => (Outcome::Killed, Outcome::Killed.message()),
+        }
+    }
+}
+
+/// Take the slot for the next queued job, if nothing is running.
+///
+/// Reserving here, under the same lock that found the slot empty, is what stops
+/// two callers both seeing nothing running, both popping a job, and both
+/// starting a downloader - two processes writing `pool/` and `packages/`, which
+/// rapid's non-atomic `.sdp` writes do not survive.
+fn reserve_next(state: &Content2) -> Option<Job> {
+    let mut slot = state.active.lock().ok()?; // poisoned - do not start another
+    if slot.is_some() {
+        return None; // busy
+    }
+    let mut q = state.queue.lock().ok()?;
+    let job = q.pop_front()?;
+    *slot = Some(ActiveJob {
+        id: job.id.clone(),
+        child: None,
+        items: job.items.clone(),
+        cancelled: false,
+    });
+    Some(job)
+}
+
+/// Give the slot back, if this job is still the one holding it.
+///
+/// Guarded by the id because a slot that belongs to somebody else must not be
+/// cleared: the next job is already writing to the pool by then.
+fn release_slot(state: &Content2, id: &str) {
+    if let Ok(mut slot) = state.active.lock() {
+        if slot.as_ref().map(|a| a.id.as_str()) == Some(id) {
+            *slot = None;
+        }
+    }
+}
+
+/// Reserve, start, and keep going until something is running or the queue is
+/// empty.
+///
+/// Split out from [`start_next`] and generic over the spawn because the part
+/// worth testing needs neither a downloader nor a running app: every early
+/// return in [`spawn_job`] happens after the slot is reserved and before there
+/// is a supervisor to hand it back, so a reservation nobody releases is a queue
+/// that never moves again - not for this job, but for every download for the
+/// rest of the session, since the recovery pass finds the slot still taken and
+/// concludes something is running.
+fn drain_queue(
+    state: &Content2,
+    mut spawn: impl FnMut(&Job) -> Result<(), StartFailed>,
+    mut failed: impl FnMut(&Job, StartFailed),
+) {
+    while let Some(job) = reserve_next(state) {
+        let Err(why) = spawn(&job) else { return };
+        release_slot(state, &job.id);
+        failed(&job, why);
+    }
+}
+
 /// Start the next queued job if nothing is running.
 fn start_next(app: tauri::AppHandle, state: Content2) {
     use tauri::Emitter;
 
-    let job = {
-        let mut slot = match state.active.lock() {
-            Ok(s) => s,
-            Err(_) => return, // poisoned - do not start another
-        };
-        if slot.is_some() {
-            return; // busy
-        }
-        let mut q = match state.queue.lock() {
-            Ok(q) => q,
-            Err(_) => return,
-        };
-        let Some(job) = q.pop_front() else { return };
-        /* Reserve the slot here, under the same lock that found it empty. The
-           check and the spawn used to be separate, so two callers could both
-           see nothing running, both pop a job, and both start a downloader -
-           two processes writing `pool/` and `packages/`, which rapid's
-           non-atomic `.sdp` writes do not survive. */
-        *slot = Some(ActiveJob {
-            id: job.id.clone(),
-            child: None,
-            items: job.items.clone(),
-            cancelled: false,
-        });
-        job
-    };
-
-    let started = spawn_job(&app, &job, &state);
-    if let Err(reason) = started {
-        let _ = app.emit(
-            CONTENT_EVENT,
-            ContentStatus::Finished {
-                id: job.id.clone(),
-                outcome: Outcome::NotFoundOrFailed,
-                message: reason,
-                log: None,
-            },
-        );
-        // A failure to start must not wedge the queue.
-        start_next(app, state);
-    }
+    drain_queue(
+        &state,
+        |job| spawn_job(&app, job, &state),
+        |job, why| {
+            let (outcome, message) = why.report();
+            let _ = app.emit(
+                CONTENT_EVENT,
+                ContentStatus::Finished { id: job.id.clone(), outcome, message, log: None },
+            );
+        },
+    );
 }
 
 /// What Zero-K's own content service could do for an item pr-downloader missed.
@@ -515,11 +569,17 @@ enum Fallback {
 }
 
 /// Try the ContentService for one item, reporting progress under the same job.
+///
+/// `cancelled` is carried all the way down to the transfer. By the time this
+/// runs there is no process left for `zks_content_cancel` to kill, and the
+/// resolve and the download between them can be minutes - all of it holding the
+/// slot, so a stop that only took effect afterwards was no stop at all.
 fn try_zk_content(
     app: &tauri::AppHandle,
     id: &str,
     item: &ContentItem,
     root: Option<&str>,
+    cancelled: &dyn Fn() -> bool,
 ) -> Fallback {
     use tauri::Emitter;
 
@@ -579,14 +639,27 @@ fn try_zk_content(
         }
     };
 
-    match zkcontent::fetch_to(url, &dest, resolved.md5.as_deref(), progress) {
+    match zkcontent::fetch_to(url, &dest, resolved.md5.as_deref(), cancelled, progress) {
         Ok(()) => Fallback::Installed(format!("Downloaded {name} from zero-k.info.")),
         Err(e) => Fallback::Failed(e),
     }
 }
 
+/// Whether a freshly spawned downloader belongs in the slot.
+///
+/// No if the slot is somebody else's now, and no if this job was cancelled
+/// while it was starting: `zks_content_cancel` kills the child it finds, and in
+/// the window between the reservation and this moment there is no child to
+/// find, so it records the cancel and leaves the killing to here. Without that
+/// second condition a cancel in that window stopped nothing - pr-downloader
+/// went on to fetch the whole thing, holding the slot, and only when it
+/// finished was the job announced as cancelled.
+fn slot_accepts_child(slot: Option<&ActiveJob>, id: &str) -> bool {
+    matches!(slot, Some(a) if a.id == id && !a.cancelled)
+}
+
 /// Resolve, spawn, and wire up the three threads.
-fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), String> {
+fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), StartFailed> {
     use tauri::Emitter;
 
     let install = install::detect_with(job.root.as_deref().or(state.root.as_deref()))?;
@@ -595,7 +668,7 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
 
     // Bare pr-downloader with nothing queued exits 1, so never spawn an empty job.
     if job.items.is_empty() {
-        return Err("nothing to download".into());
+        return Err(StartFailed::Failed("nothing to download".into()));
     }
 
     let mut cmd = std::process::Command::new(&plan.exe);
@@ -624,16 +697,17 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
     }
 
     if let Ok(mut slot) = state.active.lock() {
-        match slot.as_mut() {
+        if slot_accepts_child(slot.as_ref(), &job.id) {
             // The reservation start_next made. Fill it in.
-            Some(a) if a.id == job.id => a.child = Some(child),
-            // Reserved by somebody else, or cancelled out from under us while
-            // the process was starting: do not leave an orphan running.
-            _ => {
-                let mut child = child;
-                let _ = child.kill();
-                return Err("the download was cancelled".into());
+            if let Some(a) = slot.as_mut() {
+                a.child = Some(child);
             }
+        } else {
+            // Somebody else's slot, or cancelled while the process was
+            // starting: do not leave an orphan running.
+            let mut child = child;
+            let _ = child.kill();
+            return Err(StartFailed::Cancelled);
         }
     }
     let _ = app.emit(CONTENT_EVENT, ContentStatus::Started { id: job.id.clone() });
@@ -716,7 +790,7 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
         };
         if !matches!(outcome, Outcome::Ok | Outcome::Killed) && !cancelled_since() {
             if let Some(item) = items_w.first() {
-                match try_zk_content(&app_w, &id, item, root_w.as_deref()) {
+                match try_zk_content(&app_w, &id, item, root_w.as_deref(), &cancelled_since) {
                     Fallback::Installed(what) => {
                         outcome = Outcome::Ok;
                         message = what;
@@ -736,6 +810,15 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
                             format!("{} {why}", outcome.message())
                         };
                     }
+                }
+                /* Asked again on the way out, because the fallback is the long
+                   part: a 90 MB archive over HTTP, minutes of it, with no
+                   process for cancel to kill. The stop reaches it as a flag, so
+                   whatever it managed to say on its way out, a job the player
+                   cancelled ended cancelled. */
+                if cancelled_since() {
+                    outcome = Outcome::Killed;
+                    message = outcome.message();
                 }
             }
         }
@@ -769,11 +852,7 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
         }
 
         // Done writing: release the slot, then let the queue move on.
-        if let Ok(mut slot) = state_w.active.lock() {
-            if slot.as_ref().map(|a| a.id.as_str()) == Some(id.as_str()) {
-                *slot = None;
-            }
-        }
+        release_slot(&state_w, &id);
 
         let _ = app_w.emit(
             CONTENT_EVENT,
@@ -1077,6 +1156,128 @@ mod tests {
                 root: None,
             })
             .collect()
+    }
+
+    // --- the slot ----------------------------------------------------------
+
+    fn state_with(jobs: &[(&str, &[ContentItem])]) -> Content2 {
+        Content2 {
+            active: Default::default(),
+            queue: std::sync::Arc::new(std::sync::Mutex::new(queue_of(jobs))),
+            logs: Default::default(),
+            root: None,
+        }
+    }
+
+    fn held_by(state: &Content2) -> Option<String> {
+        state.active.lock().unwrap().as_ref().map(|a| a.id.clone())
+    }
+
+    fn reservation(id: &str, cancelled: bool) -> ActiveJob {
+        ActiveJob { id: id.into(), child: None, items: Vec::new(), cancelled }
+    }
+
+    /// `spawn_job` reserves the slot and then has half a dozen ways to return
+    /// before there is a supervisor to give it back: no install, no
+    /// pr-downloader beside that engine, a spawn the system refused. The cost of
+    /// keeping the reservation is not one dead job - the recovery pass finds the
+    /// slot taken, concludes something is running, and every download for the
+    /// rest of the session sits in the queue behind a job that ended long ago.
+    #[test]
+    fn a_start_that_fails_hands_the_slot_back() {
+        let map = [item(ContentKind::Map, "Comet Catcher Redux")];
+        let state = state_with(&[("dl-1", &map)]);
+
+        let mut reported = Vec::new();
+        drain_queue(
+            &state,
+            |_| Err(StartFailed::Failed("pr-downloader.exe is missing".into())),
+            |job, why| reported.push((job.id.clone(), why.report())),
+        );
+
+        assert_eq!(held_by(&state), None, "the reservation outlived the job");
+        assert_eq!(reported.len(), 1);
+        assert_eq!(reported[0].1 .0, Outcome::NotFoundOrFailed);
+        assert_eq!(reported[0].1 .1, "pr-downloader.exe is missing");
+    }
+
+    /// The half that matters to the player: the next download still runs.
+    #[test]
+    fn a_download_queued_behind_a_failed_start_still_runs() {
+        let map = [item(ContentKind::Map, "Barren v3")];
+        let game = [item(ContentKind::Game, "zk:stable")];
+        let state = state_with(&[("dl-1", &map), ("dl-2", &game)]);
+
+        let mut tried = Vec::new();
+        drain_queue(
+            &state,
+            |job| {
+                tried.push(job.id.clone());
+                match job.id.as_str() {
+                    "dl-1" => Err(StartFailed::Failed("no pr-downloader".into())),
+                    _ => Ok(()),
+                }
+            },
+            |_, _| {},
+        );
+
+        assert_eq!(tried, ["dl-1", "dl-2"], "the queue stopped moving");
+        assert_eq!(held_by(&state).as_deref(), Some("dl-2"));
+    }
+
+    /// Two processes writing `pool/` is the thing the slot exists to prevent.
+    #[test]
+    fn nothing_else_starts_while_a_download_holds_the_slot() {
+        let map = [item(ContentKind::Map, "TartarusV7")];
+        let state = state_with(&[("dl-1", &map), ("dl-2", &map)]);
+
+        drain_queue(&state, |_| Ok(()), |_, _| {});
+        assert_eq!(held_by(&state).as_deref(), Some("dl-1"));
+        assert_eq!(state.queue.lock().unwrap().len(), 1, "dl-2 should still be waiting");
+
+        drain_queue(&state, |_| panic!("a second downloader in the same pool"), |_, _| {});
+    }
+
+    /// Somebody else's slot is not yours to clear: by then the next job is
+    /// already writing to the pool.
+    #[test]
+    fn releasing_clears_only_your_own_slot() {
+        let map = [item(ContentKind::Map, "Barren v3")];
+        let state = state_with(&[("dl-1", &map)]);
+        drain_queue(&state, |_| Ok(()), |_, _| {});
+
+        release_slot(&state, "dl-9");
+        assert_eq!(held_by(&state).as_deref(), Some("dl-1"));
+        release_slot(&state, "dl-1");
+        assert_eq!(held_by(&state), None);
+    }
+
+    /// A cancel arriving in the window between the reservation and the spawn
+    /// finds no child to kill, so it records the stop and leaves the killing to
+    /// the moment the child appears. Taking the child anyway let pr-downloader
+    /// fetch the whole thing after the player had stopped it - holding the slot
+    /// throughout, and announced as cancelled only once the download it was
+    /// meant to prevent had finished.
+    #[test]
+    fn a_cancelled_reservation_does_not_take_the_child() {
+        assert!(!slot_accepts_child(Some(&reservation("dl-1", true)), "dl-1"));
+    }
+
+    #[test]
+    fn a_live_reservation_takes_its_own_child_and_nobody_elses() {
+        assert!(slot_accepts_child(Some(&reservation("dl-1", false)), "dl-1"));
+        assert!(!slot_accepts_child(Some(&reservation("dl-2", false)), "dl-1"));
+        assert!(!slot_accepts_child(None, "dl-1"));
+    }
+
+    /// Cancelling is not failing. Reported as one, it sent people looking for a
+    /// problem they had just caused on purpose.
+    #[test]
+    fn a_cancel_while_starting_is_reported_as_a_cancel() {
+        assert_eq!(
+            StartFailed::Cancelled.report(),
+            (Outcome::Killed, "Download cancelled.".to_string())
+        );
     }
 
     #[test]
