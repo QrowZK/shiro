@@ -57,6 +57,15 @@ pub struct CatalogueApp {
     /// Set when the app cannot be installed at all, and says why in a sentence
     /// a person can act on. A row that is merely broken is the failure to avoid.
     pub unavailable: Option<&'static str>,
+    /// Shipped inside Shiro and copied into place on first run, rather than
+    /// downloaded. Still uninstallable, and still re-downloadable afterwards -
+    /// bundling changes where the first copy comes from, not who is in charge
+    /// of it.
+    ///
+    /// The path is inside Shiro's resource directory. It is `None` in a build
+    /// that did not fetch the resource, and the app simply behaves like every
+    /// other entry then.
+    pub bundled: Option<&'static str>,
 }
 
 /// The catalogue: the tools Shiro can install and run.
@@ -79,6 +88,10 @@ pub const CATALOGUE: &[CatalogueApp] = &[
         version: Some("0.1.8"),
         run: Some("Sprofiler.exe"),
         unavailable: None,
+        // Small enough to travel with the lobby, and the first thing somebody
+        // with a broken install needs - asking them to download a tool to find
+        // out why downloads are slow is a poor first experience.
+        bundled: Some("resources/sprofiler/Sprofiler.exe"),
     },
     CatalogueApp {
         id: "splaunch",
@@ -93,6 +106,7 @@ pub const CATALOGUE: &[CatalogueApp] = &[
         version: Some("0.1.9"),
         run: Some("Splaunch.exe"),
         unavailable: None,
+        bundled: None,
     },
     CatalogueApp {
         id: "springen",
@@ -111,6 +125,7 @@ pub const CATALOGUE: &[CatalogueApp] = &[
         version: Some("0.1.1"),
         run: Some("springen-app.exe"),
         unavailable: None,
+        bundled: None,
     },
 ];
 
@@ -182,6 +197,60 @@ pub fn zka_status(app: tauri::AppHandle) -> Result<Vec<AppStatus>, String> {
         });
     }
     Ok(out)
+}
+
+/// Where we remember that somebody removed a bundled app on purpose.
+///
+/// A sibling of the app's directory rather than a file inside it, because
+/// uninstalling deletes that directory - the note has to outlive the thing it
+/// is about. Without it, every launch would helpfully reinstall the app the
+/// user just removed, which is the kind of helpfulness nobody asks for twice.
+fn removal_marker(app: &tauri::AppHandle, id: &str) -> Result<PathBuf, String> {
+    Ok(apps_dir(app)?.join(format!("{id}.removed")))
+}
+
+/// Put bundled apps in place, once, on startup.
+///
+/// Three things stop this: the app is already there, the user removed it, or
+/// this build has no bundled copy to place. A version mismatch does *not* stop
+/// it - a Shiro carrying a newer Sprofiler should hand it over rather than make
+/// the user download what it already has.
+pub fn seed_bundled(app: &tauri::AppHandle) -> Result<(), String> {
+    for a in CATALOGUE {
+        let (Some(rel), Some(run)) = (a.bundled, a.run) else {
+            continue;
+        };
+        if removal_marker(app, a.id)?.exists() {
+            continue;
+        }
+
+        let dir = app_dir(app, a.id)?;
+        let exe = dir.join(run);
+        let installed_version = std::fs::read_to_string(dir.join("installed-version"))
+            .ok()
+            .map(|s| s.trim().to_string());
+        if exe.is_file() && installed_version.as_deref() == a.version {
+            continue;
+        }
+
+        // Absent in a local build that skipped the fetch, which is not an error
+        // - it just means this copy of Shiro carries no Sprofiler.
+        let Ok(src) = app.path().resolve(rel, tauri::path::BaseDirectory::Resource) else {
+            continue;
+        };
+        if !src.is_file() {
+            continue;
+        }
+
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+        std::fs::copy(&src, &exe)
+            .map_err(|e| format!("could not place {}: {e}", exe.display()))?;
+        if let Some(v) = a.version {
+            let _ = std::fs::write(dir.join("installed-version"), v);
+        }
+    }
+    Ok(())
 }
 
 /// Start an installed app.
@@ -308,6 +377,10 @@ pub fn zka_install(app: tauri::AppHandle, id: String) -> Result<(), String> {
     if let Some(v) = a.version {
         let _ = std::fs::write(dir.join("installed-version"), v);
     }
+    // Asking for it back cancels the note that said not to put it there.
+    if a.bundled.is_some() {
+        let _ = std::fs::remove_file(removal_marker(&app, a.id)?);
+    }
     Ok(())
 }
 
@@ -319,12 +392,72 @@ pub fn zka_uninstall(app: tauri::AppHandle, id: String) -> Result<(), String> {
     if dir.is_dir() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("could not remove {}: {e}", dir.display()))?;
     }
+    // Windows has been known to report success while the directory is still
+    // going away, and a launcher that says "removed" about something still
+    // there is worse than one that admits it failed.
+    if dir.exists() {
+        return Err(format!("{} could not be removed - is it running?", a.name));
+    }
+    if a.bundled.is_some() {
+        let marker = removal_marker(&app, a.id)?;
+        if let Some(parent) = marker.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&marker, "removed by the user\n")
+            .map_err(|e| format!("could not record the removal: {e}"))?;
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_bundled_app_is_still_downloadable() {
+        /* Bundling is where the first copy comes from, not a replacement for
+           the download. An entry that shipped inside Shiro with no way to fetch
+           it again could be removed once and never recovered. */
+        for a in CATALOGUE {
+            if a.bundled.is_some() {
+                assert!(a.download.is_some(), "{} is bundled with nothing to re-fetch", a.id);
+                assert!(a.sha256.is_some(), "{} is bundled with no hash", a.id);
+                assert!(a.run.is_some(), "{} is bundled with nothing to run", a.id);
+                assert!(a.version.is_some(), "{} is bundled with no version", a.id);
+            }
+        }
+    }
+
+    #[test]
+    fn a_bundled_path_stays_inside_the_resource_directory() {
+        // It is joined onto Shiro's resource directory at runtime, so a `..`
+        // here would read from wherever the installer happens to sit.
+        for a in CATALOGUE {
+            let Some(rel) = a.bundled else { continue };
+            assert!(!rel.contains(".."), "{} escapes the resource directory", a.id);
+            assert!(!rel.starts_with('/'), "{} is an absolute path", a.id);
+            assert!(
+                rel.starts_with("resources/"),
+                "{} is not under resources/",
+                a.id
+            );
+        }
+    }
+
+    #[test]
+    fn the_bundled_file_is_the_file_we_run() {
+        /* The build fetches the pinned zip and copies out `run`; the seeding
+           code writes it to `run`. If those two names ever disagree the app
+           installs itself into a file nothing launches. */
+        for a in CATALOGUE {
+            let (Some(rel), Some(run)) = (a.bundled, a.run) else { continue };
+            assert!(
+                rel.ends_with(run),
+                "{} bundles {rel} but runs {run}",
+                a.id
+            );
+        }
+    }
 
     #[test]
     fn every_entry_is_installable_or_says_why_not() {

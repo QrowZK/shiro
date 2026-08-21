@@ -112,6 +112,12 @@ jobs:
       # been found, but no private key" - which would break every pull request
       # from a fork and every checkout without the secret. So it lives in an
       # overlay applied here, on the runs that have the key.
+      # The bundled Sprofiler, fetched from the release the catalogue pins and
+      # checked against the hash it pins. A mismatch fails the build rather
+      # than shipping a binary we cannot vouch for.
+      - name: Fetch the bundled apps
+        run: npm run fetch:apps
+
       - name: Build
         shell: pwsh
         env:
@@ -201,6 +207,12 @@ jobs:
       - name: Rust tests
         working-directory: src-tauri
         run: cargo test
+
+      # The bundled Sprofiler, fetched from the release the catalogue pins and
+      # checked against the hash it pins. A mismatch fails the build rather
+      # than shipping a binary we cannot vouch for.
+      - name: Fetch the bundled apps
+        run: npm run fetch:apps
 
       - name: Build
         env:

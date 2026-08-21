@@ -20,7 +20,8 @@
     "gen:settings": "node tools/gen-settings.mjs",
     "gen:modoptions": "node tools/gen-modoptions.mjs",
     "typecheck": "tsc --noEmit",
-    "check:names": "node tools/check-names.mjs"
+    "check:names": "node tools/check-names.mjs",
+    "fetch:apps": "node tools/fetch-bundled-apps.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",

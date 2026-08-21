@@ -48,7 +48,10 @@
       }
     },
     "category": "Game",
-    "shortDescription": "A lobby client for Zero-K"
+    "shortDescription": "A lobby client for Zero-K",
+    "resources": [
+      "resources/sprofiler/*"
+    ]
   },
   "plugins": {
     "updater": {
