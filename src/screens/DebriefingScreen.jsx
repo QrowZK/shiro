@@ -17,7 +17,7 @@ export function ResultRow({ p }) {
   );
 }
 
-export default function DebriefingScreen({ d, onBack }) {
+export default function DebriefingScreen({ d, onBack, inRoom }) {
   /* Before the early return below: a hook after it runs conditionally, which
      changes the hook order between renders. */
   const mapId = useMapResourceId(d && d.map);
@@ -44,7 +44,12 @@ export default function DebriefingScreen({ d, onBack }) {
             <span style={{ font: "var(--w-medium) var(--size-small)/1 var(--font-mono)", color: "var(--text-mid)" }}>{d.duration}</span>
           </div>
           <span style={{ flex: 1 }} />
-          <Button variant="secondary" onClick={onBack}>Back to battles</Button>
+          {/* A match usually ends with everyone still sitting in the room
+              they played from, so "back" means the room - going to the battle
+              list from here walked past the thing you were about to do again. */}
+          <Button variant="secondary" onClick={onBack}>
+            {inRoom ? "Back to room" : "Back to battles"}
+          </Button>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", borderBottom: "1px solid var(--w-12)" }}>
@@ -118,7 +123,8 @@ export default function DebriefingScreen({ d, onBack }) {
           )}
         </div>
         <div style={{ padding: "var(--sp-5)", borderTop: "1px solid var(--w-12)", display: "flex", gap: "var(--sp-4)" }}>
-          <Button variant="primary" size="lg" style={{ flex: 1 }} icon="rotate-ccw" onClick={onBack}>Play again</Button>
+          <Button variant="primary" size="lg" style={{ flex: 1 }} icon="rotate-ccw"
+            onClick={onBack}>{inRoom ? "Back to room" : "Play again"}</Button>
           {d.url && (
             <Button variant="secondary" size="lg" icon="external-link" title="Open the full record on zero-k.info"
               onClick={() => openExternal(d.url)}>Details</Button>

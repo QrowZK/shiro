@@ -772,6 +772,30 @@ check("a finished match pulls you to the debriefing",
 check("both sides are listed", await seeing(/hexed/) && await seeing(/Qrow/));
 await shot("live-07-debrief");
 
+/* A match ends with everyone still sitting in the room they played from, so
+   "back" from the debriefing means that room - and so does the first press of
+   Battles, which used to walk past the thing you were about to do again. */
+console.log("back from a debriefing");
+await page.locator("nav button").nth(0).click();
+await waitFor("list-again", () => seeing(/Host a battle/));
+await page.getByText(/^Teams 8v8 - all welcome$/).first().dblclick();
+await waitFor("in-room-again", () => seeing(/SPECTATORS/));
+await page.evaluate(() => window.__ZKS.push(JSON.stringify({
+  DebriefingUsers: {
+    Qrow: { AccountID: 1, AllyNumber: 0, Awards: [], EloChange: 5, NewElo: 1865, NewRank: 4,
+      IsInVictoryTeam: true, IsLevelUp: false, IsRankup: false, IsRankdown: false },
+  },
+  ServerBattleID: 56, RatingCategory: "Team",
+}).replace(/^/, "BattleDebriefing ")));
+check("the debriefing offers the room, not the battle list",
+  await waitFor("back-label", () => seeing(/Back to room/)));
+await page.locator("nav button").nth(0).click();
+check("and Battles from the debriefing goes to the room",
+  await waitFor("rail-to-room", () => seeing(/SPECTATORS/)));
+await page.locator("nav button").nth(0).click();
+check("but from the room it means the list again",
+  await waitFor("rail-to-list", () => seeing(/Host a battle/)));
+await clickText(/^Leave$/);
 /* Zero-K installed by Shiro rather than found. The engine version is never
    chosen here - it is the one the server named in Welcome, so the only engine
    ever fetched is the one a game is about to need. */

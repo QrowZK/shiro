@@ -795,7 +795,8 @@ export default function App() {
           ? buildDebriefView(records[recordIndex], me, n => liveUsers[n], profiles)
           : null)
         : D.debrief}
-      onBack={() => setView("battles")} />
+      inRoom={Boolean(liveRoom || room)}
+      onBack={() => setView(liveRoom || room ? "room" : "battles")} />
   );
 
   const mmSeconds = secondsLeft(mmCheck, Date.now());
@@ -965,7 +966,14 @@ export default function App() {
   );
 
   return (
-    <AppShell view={view} onView={setView} inRoom={Boolean(liveRoom || room)} {...shell}
+    <AppShell view={view} inRoom={Boolean(liveRoom || room)} {...shell}
+      /* Battles, pressed from the debriefing while still in a room, means the
+         room - that is where the match came from and where the next one starts.
+         Only from there: once you are in the room, Battles means the list
+         again, so the "first press goes back" behaviour needs no flag to
+         remember it. */
+      onView={v => setView(
+        v === "battles" && view === "debrief" && (liveRoom || room) ? "room" : v)}
       overlay={overlay} me={me}>
         <FirstRunInstallDialog
           open={askInstall}
