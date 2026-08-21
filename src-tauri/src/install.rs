@@ -290,8 +290,11 @@ pub fn detect() -> Result<Install, String> {
     if let Some(found) = choose(&probed) {
         return Ok(found);
     }
+    /* The first line stands alone deliberately: somewhere as small as the
+       caption under the AI picker shows that and leaves the search to
+       Settings, and a sentence ending in a dangling colon is not one. */
     Err(format!(
-        "No Zero-K installation found. Looked in:\n{}",
+        "No Zero-K installation found.\nLooked in:\n{}",
         probed
             .iter()
             .map(|(p, _)| format!("  {}", p.display()))
@@ -537,6 +540,10 @@ mod tests {
         // Whatever detection returns here, it must not be the override error.
         if let Err(e) = detect_with(Some("   ")) {
             assert!(e.contains("No Zero-K installation found"), "{e}");
+            /* `ais.rs` shows the first line alone under the AI picker, where a
+               list of probed paths would collapse into a paragraph. That only
+               works while the first line is a whole sentence. */
+            assert_eq!(e.lines().next(), Some("No Zero-K installation found."), "{e}");
         }
     }
 

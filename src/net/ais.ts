@@ -26,7 +26,11 @@ export interface Ai {
 
 export interface AiList {
   ais: Ai[];
-  /** True when this is the built-in list rather than a reading of an install. */
+  /**
+   * True when this is not a reading of the game this room is playing: the
+   * built-in list, or a real reading of a different game's archive standing in
+   * for one that is not installed. Either way the picker says so.
+   */
   guessed: boolean;
   /** Why, in words the picker shows. */
   note?: string;
@@ -45,7 +49,9 @@ export interface AiList {
  * Engine-side AIs are deliberately not in here. Whether one can play this game
  * is checked against the game's own units, and that check is exactly what is
  * unavailable when the archive cannot be read - so guessing would be guessing
- * about the thing most likely to be wrong.
+ * about the thing most likely to be wrong. They do not need guessing at: Rust
+ * reads them off disk whether or not it could open an archive, and `listAis`
+ * puts them after this list rather than in it.
  */
 export const BUILT_IN: Ai[] = [
   { lib: "CAI", name: "CAI", desc: "AI that plays regular Zero-K", source: "game" },
@@ -67,14 +73,27 @@ const IN_BROWSER =
 interface Reading {
   ais: Ai[];
   note: string | null;
+  /**
+   * Which archive the game's half of `ais` came out of: `named` the one the
+   * room asked for, `another` a different game's, `none` at all. See
+   * `src-tauri/src/ais.rs`.
+   */
+  gameArchive: "named" | "another" | "none";
 }
 
 /**
  * Every AI this install can run, for this game and engine.
  *
- * Never rejects. A reading that came back empty means the install could not be
- * read, and an empty picker helps nobody, so the built-in list stands in and is
- * marked as standing in.
+ * Never rejects. Where the reading fell short the built-in list stands in and
+ * is marked as standing in, because an empty picker helps nobody.
+ *
+ * It stands in for the game's half only. Whether a skirmish AI is installed is
+ * answered by looking at its directory, so `ais` can carry a real reading of
+ * the engine even when no game archive could be opened - which is exactly the
+ * Steam layout, where the game is an `.sdz` Rust does not read and CircuitAI is
+ * sitting in the engine tree regardless. Throwing that away to show nine
+ * guesses would be losing the half that is certain to save the half that is
+ * not.
  */
 export async function listAis(
   engine?: string,
@@ -89,8 +108,13 @@ export async function listAis(
       installRoot,
     });
     const note = read.note || undefined;
-    if (read.ais && read.ais.length) return { ais: read.ais, guessed: false, note };
-    return { ais: BUILT_IN, guessed: true, note };
+    const ais = read.ais ?? [];
+    if (read.gameArchive === "named" && ais.length) return { ais, guessed: false, note };
+    /* `another` is already a full list, of the wrong game - marked, not
+       replaced, because a room playing Zero-K v1.15 against an installed
+       v1.14 is the ordinary case and its AIs are the right ones. */
+    const standIn = read.gameArchive === "none" ? [...BUILT_IN, ...ais] : ais;
+    return { ais: standIn.length ? standIn : BUILT_IN, guessed: true, note };
   } catch (e) {
     return { ais: BUILT_IN, guessed: true, note: String((e as Error)?.message ?? e) };
   }
