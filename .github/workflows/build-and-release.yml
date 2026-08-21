@@ -248,6 +248,21 @@ jobs:
     needs: [windows, linux]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-22.04
+    # One release, so one publisher at a time. Merging several pull requests in
+    # a row starts a build for each, and two publish jobs overlapping would
+    # both be uploading and sweeping the same `dev` release: the older one's
+    # sweep does not know about the newer one's packages, so it removes them as
+    # stale and leaves a manifest naming files that are gone. Exactly the 404
+    # this workflow was just fixed to stop producing, arrived at from the other
+    # direction.
+    #
+    # On the job rather than the workflow, so pull request builds still run in
+    # parallel - it is only the publishing that has to be serial. Not
+    # cancel-in-progress: a publish killed midway is a half-swept release,
+    # which is worse than waiting.
+    concurrency:
+      group: publish-dev
+      cancel-in-progress: false
     steps:
       # `gh release` resolves the repository from the checkout. Without this the
       # publish step fails with "not a git repository" after both platforms have
