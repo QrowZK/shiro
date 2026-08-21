@@ -248,6 +248,21 @@ jobs:
     needs: [windows, linux]
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-22.04
+    # One release, so one publisher at a time. Merging several pull requests in
+    # a row starts a build for each, and two publish jobs overlapping would
+    # both be uploading and sweeping the same `dev` release: the older one's
+    # sweep does not know about the newer one's packages, so it removes them as
+    # stale and leaves a manifest naming files that are gone. Exactly the 404
+    # this workflow was just fixed to stop producing, arrived at from the other
+    # direction.
+    #
+    # On the job rather than the workflow, so pull request builds still run in
+    # parallel - it is only the publishing that has to be serial. Not
+    # cancel-in-progress: a publish killed midway is a half-swept release,
+    # which is worse than waiting.
+    concurrency:
+      group: publish-dev
+      cancel-in-progress: false
     steps:
       # `gh release` resolves the repository from the checkout. Without this the
       # publish step fails with "not a git repository" after both platforms have
@@ -314,12 +329,19 @@ jobs:
             \( -name '*.exe' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) | sort)
           test -n "$assets"
 
-          # An array, so a path is one argument whatever it contains.
-          mapfile -t asset_list <<< "$assets"
+          # An array, so a path is one argument whatever it contains. The
+          # manifest is deliberately not in here: it goes up on its own, after
+          # the packages it names, for the reason spelled out below.
+          mapfile -t packages <<< "$assets"
+
+          # What this build is publishing, by filename. Anything else on the
+          # release is left over from an older one.
+          #
           # Not a bare `&&`: under `set -e` a false test would end the step, and
           # "there is no manifest" is a normal outcome when the key is absent.
+          keep=$(printf '%s\n' "${packages[@]}" | xargs -n1 basename | sort -u)
           if [ -f latest.json ]; then
-            asset_list+=(latest.json)
+            keep=$(printf '%s\nlatest.json\n' "$keep")
           fi
 
           notes=$(cat <<'EOF'
@@ -343,29 +365,46 @@ jobs:
           if gh release view dev >/dev/null 2>&1; then
             gh release edit dev --title "Shiro - development build" --notes "$notes" --prerelease
 
-            # Package filenames carry the version, so last build's do not get
-            # overwritten - they just sit there looking current.
+            # Packages, then the manifest, then the sweep. The order is the
+            # whole point of this block.
             #
-            # This takes latest.json with it when a build produces no manifest,
-            # and that is deliberate: the installer the old manifest points at
-            # has just been removed as stale, so leaving it would offer an
-            # update that 404s halfway through. No manifest at least fails
-            # before downloading anything.
-            keep=$(printf '%s\n' "${asset_list[@]}" | xargs -n1 basename | sort -u)
+            # It used to sweep first. Package filenames carry the version, so
+            # last build's are stale by name and get removed - but latest.json
+            # is not stale by name, so it survived the sweep still naming
+            # packages that had just been deleted. For however long eighty
+            # megabytes takes to upload, the published manifest offered an
+            # update whose download 404'd. That is what a Linux tester hit. A
+            # failed upload left the release that way until the next green
+            # build.
+            #
+            # This way the old manifest and the packages it names stay up while
+            # the new ones arrive, and the manifest is replaced only once
+            # everything it points at exists. The cost is a few minutes of both
+            # versions being on the release, which nobody can see.
+            gh release upload dev "${packages[@]}" --clobber
+            if [ -f latest.json ]; then
+              gh release upload dev latest.json --clobber
+            fi
+
+            # A build with no manifest takes the old one down with it, on
+            # purpose: the packages it named have just been swept, so leaving it
+            # would offer an update that 404s halfway through. No manifest at
+            # least fails before downloading anything.
             for old in $(gh release view dev --json assets --jq '.assets[].name'); do
               if ! echo "$keep" | grep -qx "$old"; then
                 echo "Removing stale asset $old"
                 gh release delete-asset dev "$old" --yes
               fi
             done
-
-            gh release upload dev "${asset_list[@]}" --clobber
           else
-            gh release create dev "${asset_list[@]}" \
+            gh release create dev "${packages[@]}" \
               --title "Shiro - development build" \
               --notes "$notes" \
               --prerelease \
               --target "${{ github.sha }}"
+            if [ -f latest.json ]; then
+              gh release upload dev latest.json
+            fi
           fi
 
           echo "Published as $SHIRO_VERSION"
