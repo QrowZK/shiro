@@ -137,7 +137,13 @@ export const useContent = create<ContentState>((set, get) => ({
     // Sequential rather than concurrent: the Rust side runs one job at a time
     // anyway, and this keeps the ids in the order the caller listed them.
     for (const item of items) {
-      ids.push(await contentFetch(engine, [item], installRoot));
+      const id = await contentFetch(engine, [item], installRoot);
+      /* "already-queued" is a sentinel, not a job id: the Rust side returns it
+         when dedup left nothing fresh to run. Pushing it into `ids` subscribes
+         a waiter to a job that will never exist - `settled()` never resolves,
+         and the Cancel button aims at nothing. The work is already in flight
+         under an earlier id, so there is nothing here to wait for. */
+      if (id !== "already-queued") ids.push(id);
     }
     return ids;
   },

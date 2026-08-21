@@ -724,6 +724,25 @@ check("and remembers the name, which is not a secret", await waitFor("name", asy
 check("but not the password", await waitFor("pw", async () =>
   (await page.locator("input").nth(1).inputValue()) === ""));
 
+console.log("a refused login");
+/* A refusal must not be retried. The server closes the connection after
+   refusing, which arrives as a plain disconnect - and the reconnect only asked
+   whether there was a session, not whether the credentials had been any good.
+   So it reconnected, Welcome arrived, and the same bad hash went out again on a
+   backoff: the LogIpFailure spiral that ends with the IP banned. */
+const rejectMark = await mark();
+await page.locator("input").nth(0).fill("shiro-wrong");
+await page.locator("input").nth(1).fill("whatever");
+await page.keyboard.press("Enter");
+check("the refusal reaches the screen",
+  await waitFor("refused", () => seeing(/Invalid password/i)));
+/* Past the first backoff step, which is where a retry would land. */
+await page.waitForTimeout(3500);
+check("and the bad credentials are not sent again",
+  (await sent()).slice(rejectMark).filter(l => /^Login /.test(l)).length === 1);
+check("and it is not still trying to reconnect",
+  !(await seeing(/reconnecting/i)));
+
 console.log("");
 console.log(`${checks - failures.length}/${checks} checks passed`);
 if (errors.length) {
