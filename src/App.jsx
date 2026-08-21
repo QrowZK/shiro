@@ -501,6 +501,10 @@ export default function App() {
       onLaunch={id => {
         setAppError(undefined);
         launchApp(id).then(refreshApps, e => setAppError(String(e?.message ?? e)));
+      }}
+      onUninstall={id => {
+        setAppError(undefined);
+        uninstallApp(id).then(refreshApps, e => setAppError(String(e?.message ?? e)));
       }} />
   );
   else if (view === "battles") body = <BattleListScreen battles={battles} empty={empty}
