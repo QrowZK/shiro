@@ -652,7 +652,11 @@ export default function App() {
       }}
       onLaunch={id => {
         setAppError(undefined);
-        launchApp(id).then(refreshApps, e => setAppError(String(e?.message ?? e)));
+        /* With the Zero-K directory, so an app that wants to read the install
+           is told about it rather than searching the usual places - which stop
+           being the usual places the moment Shiro installs the game itself. */
+        launchApp(id, settings.installRoot)
+          .then(refreshApps, e => setAppError(String(e?.message ?? e)));
       }}
       onUninstall={id => {
         setAppError(undefined);

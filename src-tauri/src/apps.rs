@@ -82,10 +82,10 @@ pub const CATALOGUE: &[CatalogueApp] = &[
         description: "Zero-K performance profiling tool",
         kind: AppKind::Executable,
         download: Some(
-            "https://github.com/QrowZK/Sprofiler/releases/download/dev/Sprofiler_0.1.8_x64.zip",
+            "https://github.com/QrowZK/Sprofiler/releases/download/dev/Sprofiler_0.1.9_x64.zip",
         ),
-        sha256: Some("aea2e51a0e4f1fb9ea29457897defa7823107ff95a360ba886df24ee8e9648d6"),
-        version: Some("0.1.8"),
+        sha256: Some("af3bea9718040168dc313ec5943463f3f0f908c6457076bb726a155b392b95c9"),
+        version: Some("0.1.9"),
         run: Some("Sprofiler.exe"),
         unavailable: None,
         // Small enough to travel with the lobby, and the first thing somebody
@@ -282,12 +282,39 @@ pub fn seed_bundled(app: &tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// The variable an app is told the Zero-K directory in.
+///
+/// Shiro installs Zero-K itself now, into a directory it owns rather than the
+/// one an installer would have used, so "wherever Zero-K normally goes" is no
+/// longer an answer a separate program can reach on its own. Sprofiler read
+/// that as "no Zero-K installed" for anybody whose copy came from here.
+///
+/// It could have been an argument. A variable is what an app can ignore
+/// without being taught to parse anything, which matters when the same launch
+/// path starts three programs that were written at different times and only
+/// one of them cares.
+pub const ROOT_ENV: &str = "SHIRO_ZK_ROOT";
+
+/// The Zero-K directory to hand an app, if we are sure of one.
+///
+/// Detection failing is not a reason to refuse a launch. The app most likely to
+/// be started by somebody whose install is broken is the one that explains why
+/// installs break - so a launch with nothing to say goes ahead saying nothing,
+/// and the app falls back to looking for itself.
+fn handed_root(install_root: Option<&str>) -> Option<PathBuf> {
+    crate::install::detect_with(install_root).ok().map(|i| i.root)
+}
+
 /// Start an installed app.
 ///
 /// Only ever from a catalogue entry's own `run` path inside its own directory,
 /// so this cannot be talked into starting something else.
 #[tauri::command]
-pub fn zka_launch(app: tauri::AppHandle, id: String) -> Result<(), String> {
+pub fn zka_launch(
+    app: tauri::AppHandle,
+    id: String,
+    install_root: Option<String>,
+) -> Result<(), String> {
     let a = entry(&id)?;
     if let Some(why) = why_not(a) {
         return Err(why);
@@ -297,8 +324,12 @@ pub fn zka_launch(app: tauri::AppHandle, id: String) -> Result<(), String> {
     if !exe.is_file() {
         return Err(format!("{} is not installed", a.name));
     }
-    Command::new(&exe)
-        .current_dir(exe.parent().unwrap_or(Path::new(".")))
+    let mut command = Command::new(&exe);
+    command.current_dir(exe.parent().unwrap_or(Path::new(".")));
+    if let Some(root) = handed_root(install_root.as_deref()) {
+        command.env(ROOT_ENV, root);
+    }
+    command
         .spawn()
         .map_err(|e| format!("could not start {}: {e}", a.name))?;
     Ok(())
@@ -611,6 +642,25 @@ mod tests {
             sha256_of(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn a_root_we_cannot_find_is_not_a_reason_to_refuse_a_launch() {
+        // The app somebody with a broken install most wants to open is the one
+        // that explains why installs break, so a failed detection has to cost
+        // the hand-off and nothing else.
+        assert_eq!(handed_root(Some("/definitely/not/zero-k")), None);
+    }
+
+    #[test]
+    fn the_installation_we_play_from_is_the_one_handed_over() {
+        // Including before an engine has landed in it: an app started while the
+        // download runs should be told about the directory, not left to guess.
+        let dir = std::env::temp_dir().join("shiro-test-handed-root");
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::install::make_managed(&dir).unwrap();
+        assert_eq!(handed_root(Some(&dir.display().to_string())), Some(dir.clone()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
