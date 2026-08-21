@@ -204,10 +204,10 @@ export interface QueueGroup<Q extends QueueLike> {
  * There is nothing on the wire that groups queues, and the obvious candidates
  * are not on the wire at all. `MatchMakerSetup.Queue` upstream declares `Mode`
  * (1v1 / Teams / GameChickens / FFA), `MinSize` and `MaxSize` - and marks every
- * one of them `[JsonIgnore]`. Our generated type carries them because
- * gen-protocol.mjs reads the C# members and does not know that attribute, but
- * they are never serialised and arrive undefined. What actually crosses the
- * socket is `Name`, `Description`, `Maps`, `Game` and `MaxPartySize`.
+ * one of them `[JsonIgnore]`, so none of them is ever serialised. What crosses
+ * the socket is `Name`, `Description`, `Maps`, `Game` and `MaxPartySize`, and
+ * the generated type now says so: gen-protocol.mjs used to emit those three
+ * anyway, which is how they came to look like something to group by.
  *
  * `MaxPartySize` was the other candidate and it separates almost nothing: of
  * the queues the server runs today, 1v1 is 1, Sortie is 3, Coop is 5, and
