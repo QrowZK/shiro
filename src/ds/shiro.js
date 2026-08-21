@@ -1227,6 +1227,10 @@ function MapImage({
      picture, and used to reset a fade that then had no event left to reopen
      it. */
   React.useLayoutEffect(() => {
+    /* The element is always mounted, so this always has one to ask. It used to
+       be swapped out for the placeholder on failure, which meant the ref was
+       null exactly when a new `src` needed to clear the failure - so one 404
+       stuck, and every map picked afterwards showed the placeholder. */
     const el = imgRef.current;
     if (!el) return undefined;
     const settle = () => {
@@ -1271,7 +1275,20 @@ function MapImage({
       aspectRatio: ratio,
       ...style
     }
-  }), failed ? /*#__PURE__*/React.createElement("div", {
+  }), /*#__PURE__*/React.createElement("img", {
+    ref: imgRef,
+    src: src,
+    alt: "",
+    style: {
+      width: "100%",
+      height: "100%",
+      objectFit: "cover",
+      display: "block",
+      filter: "saturate(" + saturate + ")",
+      opacity: loaded ? 1 : 0,
+      transition: "opacity var(--dur-base) var(--ease-out)"
+    }
+  }), failed && /*#__PURE__*/React.createElement("div", {
     style: {
       position: "absolute",
       inset: 0,
@@ -1291,20 +1308,7 @@ function MapImage({
       color: "var(--text-low)",
       wordBreak: "break-word"
     }
-  }, map)) : /*#__PURE__*/React.createElement("img", {
-    ref: imgRef,
-    src: src,
-    alt: "",
-    style: {
-      width: "100%",
-      height: "100%",
-      objectFit: "cover",
-      display: "block",
-      filter: "saturate(" + saturate + ")",
-      opacity: loaded ? 1 : 0,
-      transition: "opacity var(--dur-base) var(--ease-out)"
-    }
-  }), caption && !failed && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
+  }, map)), caption && !failed && /*#__PURE__*/React.createElement(React.Fragment, null, /*#__PURE__*/React.createElement("div", {
     style: {
       position: "absolute",
       inset: 0,

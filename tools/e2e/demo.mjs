@@ -82,6 +82,52 @@ check("a full room is marked full", await badgeSaying("FULL"));
 check("and one over its cap says by how much", await badgeSaying("FULL +2"));
 await shot("demo-01-battles");
 
+/* A map whose picture 404s must not poison the ones after it.
+   New maps genuinely 404 - the design calls that a state, not a fault - and
+   the failure used to latch: the placeholder replaced the <img> entirely, so
+   the effect that clears the failure on a new src had no element to ask and
+   never ran. One missing picture and every map picked afterwards showed the
+   placeholder until the screen was rebuilt.
+
+   Scoped tightly: the route goes on for this check and comes straight back
+   off, so nothing after it is looking at a half-broken site. */
+{
+  let firstMinimap = null;
+  const only404TheFirst = route => {
+    const url = route.request().url();
+    if (firstMinimap === null) firstMinimap = url;
+    return url === firstMinimap
+      ? route.fulfill({ status: 404, body: "no" })
+      : route.continue();
+  };
+  await page.route("**/Resources/*.minimap.jpg", only404TheFirst);
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.locator("input").nth(0).fill("Shadowfury");
+  await page.locator("input").nth(1).fill("anything");
+  await page.keyboard.press("Enter");
+  await page.waitForTimeout(1200);
+
+  const shown = () => page.evaluate(() => {
+    const img = [...document.querySelectorAll("img")].find(x => /minimap/.test(x.src));
+    return Boolean(img && img.naturalWidth > 0 && getComputedStyle(img).opacity === "1");
+  });
+  /* The designed state: the name in place of the picture. True of both the
+     broken and the fixed component - it is the check below that catches the
+     latch, and this one is here so a fix that simply stopped drawing the
+     placeholder could not pass. */
+  check("a missing picture is shown as the map's name",
+    await waitFor(() => page.evaluate(() =>
+      [...document.querySelectorAll("span")].some(el => /Argent[ _]Strata/i.test(el.textContent)))));
+
+  // Pick a different battle, whose picture is not blocked.
+  await page.evaluate(() => {
+    const imgs = [...document.querySelectorAll("img[src*='thumbnail']")];
+    (imgs[1] || imgs[0]).closest("div").click();
+  });
+  check("and the next map still shows its own", await waitFor(shown));
+  await page.unroute("**/Resources/*.minimap.jpg", only404TheFirst);
+}
+
 console.log("battle room");
 await clickText(/^Join room$/);
 check("the demo room opens rather than throwing",
