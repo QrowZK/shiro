@@ -82,10 +82,10 @@ pub const CATALOGUE: &[CatalogueApp] = &[
         description: "Zero-K performance profiling tool",
         kind: AppKind::Executable,
         download: Some(
-            "https://github.com/QrowZK/Sprofiler/releases/download/dev/Sprofiler_0.1.8_x64.zip",
+            "https://github.com/QrowZK/Sprofiler/releases/download/dev/Sprofiler_0.1.9_x64.zip",
         ),
-        sha256: Some("aea2e51a0e4f1fb9ea29457897defa7823107ff95a360ba886df24ee8e9648d6"),
-        version: Some("0.1.8"),
+        sha256: Some("af3bea9718040168dc313ec5943463f3f0f908c6457076bb726a155b392b95c9"),
+        version: Some("0.1.9"),
         run: Some("Sprofiler.exe"),
         unavailable: None,
         // Small enough to travel with the lobby, and the first thing somebody
