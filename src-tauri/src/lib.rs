@@ -1,3 +1,4 @@
+mod ais;
 mod archives;
 mod content;
 mod engine;
@@ -50,6 +51,7 @@ pub fn run() {
             content::zks_content_cancel,
             content::zks_content_preflight,
             content::zks_content_log,
+            ais::zks_list_ais,
             zkcontent::zks_find_maps,
             zkcontent::zks_game_modes,
             zkcontent::zks_map_catalogue,

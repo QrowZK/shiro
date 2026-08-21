@@ -18,6 +18,7 @@ import AppsScreen from "./screens/AppsScreen.jsx";
 import SettingsScreen from "./screens/SettingsScreen.jsx";
 import DownloadsScreen from "./screens/DownloadsScreen.jsx";
 import HostBattleDialog from "./screens/HostBattleDialog.jsx";
+import AddAiDialog from "./screens/AddAiDialog.jsx";
 import ModOptionsDialog from "./screens/ModOptionsDialog.jsx";
 import JoinPasswordDialog from "./screens/JoinPasswordDialog.jsx";
 import RegisterDialog from "./screens/RegisterDialog.jsx";
@@ -66,6 +67,9 @@ export default function App() {
   const [check, setCheck] = React.useState(0);
   const [launching, setLaunching] = React.useState(false);
   const [hosting, setHosting] = React.useState(false);
+  /* The team an AI is being picked for. Null rather than a boolean, because
+     team 0 is a team. */
+  const [addingAiTo, setAddingAiTo] = React.useState(null);
   const [editingOptions, setEditingOptions] = React.useState(false);
   const [locked, setLocked] = React.useState(null);
   const [install, setInstall] = React.useState(null);
@@ -622,7 +626,10 @@ export default function App() {
       pollOutcome={roomPollOutcome}
       onVote={option => useRoom.getState().vote(option)}
       onKick={u => useRoom.getState().kick(u.name)}
-      onAddBot={ally => useRoom.getState().addBot("CAI", ally)}
+      /* Which AI is a question now. It used to be answered as "CAI", which is
+         one of the nine Zero-K declares and none of the ones the engine
+         brings. */
+      onAddBot={ally => setAddingAiTo(ally)}
       onPlayer={u => { if (u.name !== me && !u.bot) openDm(u.name); }}
       onEditOptions={() => setEditingOptions(true)}
       /* The server's rule, read backwards: only the founder may set options,
@@ -943,6 +950,14 @@ export default function App() {
             game: opts.game || welcome?.Game,
           })
           : setRoom(D.room))} />
+
+      {/* The room's game rather than Welcome's: a room running a custom mode
+          declares its own AIs, and Welcome names the default one. */}
+      <AddAiDialog ally={addingAiTo} onClose={() => setAddingAiTo(null)}
+        engine={welcome?.Engine}
+        game={roomView?.game || welcome?.Game}
+        installRoot={settings.installRoot}
+        onAdd={(lib, ally) => useRoom.getState().addBot(lib, ally)} />
 
       <JoinPasswordDialog battle={locked} onClose={() => setLocked(null)}
         onJoin={password => useRoom.getState().join(locked.id, password)} />

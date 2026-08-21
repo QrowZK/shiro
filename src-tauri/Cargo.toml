@@ -27,6 +27,10 @@ md5 = "0.7"
 # before it will unpack it, and unpacks zips.
 sha2 = "0.10"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# Rapid's package indexes and every file in its pool are gzipped, and reading
+# the game's AI list means reading both. Already here underneath `zip`; named
+# explicitly because this is a direct use of it, not a transitive one.
+flate2 = "1"
 # TCP keepalive: tokio does not expose the socket option itself.
 socket2 = { version = "0.6", features = ["all"] }
 base64 = "0.22"
