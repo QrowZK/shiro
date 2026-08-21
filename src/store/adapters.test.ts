@@ -31,6 +31,19 @@ test("an unknown user still renders under their name", () => {
   assert.equal(chip.elo, undefined);
 });
 
+test("the rating is tinted by the rank the server sent, not by the rating", () => {
+  /* Rank is a percentile standing and Elo is not, so the two disagree - and
+     the game tints by rank. hexed is 1790 Elo, which Chobby's Elo fallback
+     would call Subgiant; the server says Red Dwarf, and the server is right. */
+  assert.equal(userToChip({ ...USERS.hexed, Rank: 2 } as T.User, "hexed").eloTint, "#CC661A");
+  assert.equal(userToChip({ ...USERS.hexed, Rank: 2, Icon: "5_6" } as T.User, "hexed").eloTint,
+    "#0099FF", "the icon the server picked outranks the rank field, as in Chobby");
+  assert.equal(userToChip(USERS.hexed, "hexed").eloTint, "#FFA600",
+    "and with neither, the Elo band is still better than no colour at all");
+  assert.equal(userToChip(undefined, "gone").eloTint, undefined,
+    "nobody we have a record for is not somebody at the bottom");
+});
+
 test("a faction the design kit has no mark for gets no mark", () => {
   assert.equal(userToChip({ Faction: "Dynasty" } as T.User, "x").faction, undefined);
   assert.equal(userToChip({ Faction: "Machines" } as T.User, "x").faction, "machines");

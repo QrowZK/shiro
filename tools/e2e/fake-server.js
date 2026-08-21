@@ -360,7 +360,9 @@
           if (args.who !== "hexed" && args.who !== "Gholam") return null;
           return {
             accountId: 4242, name: args.who, clan: "ZKF", level: 33,
-            rank: "Red Dwarf", rankIcon: "3_3",
+            /* Name and icon agree, as they do on a real page: the icon's
+               second digit is the rank, and rank 3 is Subgiant. */
+            rank: "Subgiant", rankIcon: "3_3",
             badges: ["Silver donator"],
             awards: [{ key: "pwn", name: "Complete Annihilation", count: 812 }],
             battlesPlayed: 1904, battlesWatched: 233,

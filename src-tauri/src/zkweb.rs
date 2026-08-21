@@ -89,8 +89,8 @@ pub struct Profile {
     pub level_percent: Option<u32>,
     pub xp_to_next: Option<u32>,
     pub rank: Option<String>,
-    /// The `<levelBracket>_<skillBracket>` icon id, the same grid
-    /// `src/net/ranks.ts` colours from.
+    /// The `<levelBracket>_<rank>` icon id, whose second digit is the rank
+    /// `src/net/ranks.ts` names and colours from.
     pub rank_icon: Option<String>,
     pub badges: Vec<String>,
     pub awards: Vec<Award>,

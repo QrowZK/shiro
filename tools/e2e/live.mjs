@@ -334,9 +334,9 @@ await page.evaluate(() =>
 check("and stops saying so when they are not",
   await waitFor("room-not-full", async () => !(await badgeSaying("Full"))));
 
-/* Ratings carry the colour their rank icon carries, so the number in the
-   roster and the badge in the official client agree. Three players, three
-   different bands: 1842 yellow, 1790 amber, 1588 orange. */
+/* Ratings carry the colour Zero-K tints a rating with, keyed by the rank the
+   server sent - the exact values in gui_chili_share.lua's `rankColors`. Three
+   players, three ranks: Qrow is Giant, hexed Subgiant, lorelei Red Dwarf. */
 const tints = await page.evaluate(() => {
   const out = {};
   for (const el of document.querySelectorAll("span")) {
@@ -347,10 +347,10 @@ const tints = await page.evaluate(() => {
   }
   return out;
 });
-check("ratings are tinted by rank band",
-  tints["1842"] === "rgb(222, 185, 11)"
-  && tints["1790"] === "rgb(209, 143, 37)"
-  && tints["1588"] === "rgb(209, 98, 37)",
+check("ratings are tinted in Zero-K's own rank colours",
+  tints["1842"] === "rgb(255, 255, 0)"
+  && tints["1790"] === "rgb(255, 166, 0)"
+  && tints["1588"] === "rgb(204, 102, 26)",
   JSON.stringify(tints));
 
 /* The chat and spectator pane is draggable, and remembers where you left it -
@@ -622,6 +622,10 @@ check("searching the directory finds a player who is online",
 await page.keyboard.press("Enter");
 check("and opening one turns the screen into them",
   await waitFor("viewing", () => seeing(/VIEWING/) && seeing(/Add friend/)));
+/* hexed is Rank 3, which Zero-K calls Subgiant. The number is an index into a
+   table that only exists in upstream's source. */
+check("a rank is shown by its Zero-K name, not by its index",
+  await seeing(/Subgiant/) && !(await seeing(/Rank 3/)));
 /* The asymmetry the protocol forces: their record has no Planetwars rating and
    there is no way to ask for one, so the panel is absent rather than blank. */
 check("another player shows no Planetwars rating, because there is none to show",
@@ -889,7 +893,7 @@ console.log("debriefing");
 await page.evaluate(() => window.__ZKS.push(JSON.stringify({
   DebriefingUsers: {
     Qrow: { AccountID: 1, AllyNumber: 0, Awards: [], EloChange: 18, NewElo: 1860, NewRank: 4,
-      IsInVictoryTeam: true, IsLevelUp: false, IsRankup: false, IsRankdown: false,
+      IsInVictoryTeam: true, IsLevelUp: false, IsRankup: true, IsRankdown: false,
       PrevRankElo: 1750, NextRankElo: 1900, XpChange: 640, NewXp: 12480,
       PrevLevelXp: 9000, NextLevelXp: 16000 },
     hexed: { AccountID: 2, AllyNumber: 1, Awards: [], EloChange: -18, NewElo: 1772, NewRank: 3,
@@ -900,6 +904,13 @@ await page.evaluate(() => window.__ZKS.push(JSON.stringify({
 check("a finished match pulls you to the debriefing",
   await waitFor("debrief", () => seeing(/Victory/)));
 check("both sides are listed", await seeing(/hexed/) && await seeing(/Qrow/));
+/* NewRank 4 is Giant. "Rank up - Rank 4" told you an array index - and before
+   that the panel did not render at all, because the view called it `rating`
+   and the screen read `d.elo`. */
+check("a rank up names the rank Zero-K ranked you up into",
+  await seeing(/Rank up - Giant/) && !(await seeing(/Rank up - 4/)));
+check("and the rating panel renders for a real match at all",
+  await seeing(/RATING/) && await seeing(/1860/));
 await shot("live-07-debrief");
 
 /* A match ends with everyone still sitting in the room they played from, so

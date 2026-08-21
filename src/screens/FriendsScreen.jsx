@@ -1,6 +1,7 @@
 import React from "react";
 import { Button, UserChip, IconButton, Badge, Input, EmptyState } from "../ds/shiro.js";
 import magpie from "../assets/art/magpie-banking.png";
+import { rankColour, rankName } from "../net/ranks.ts";
 
 /* What the server's badge ids mean, from Chobby's own table
    (LuaMenu/configs/gameConfig/zk/badges.lua). The official client pairs each
@@ -151,7 +152,12 @@ export default function FriendsScreen({ users, profile, onSelect, onMessage, onI
                 <Badge tone="outline">Level {(profile && profile.level) || u.level || "-"}</Badge>
                 {u.admin && <Badge tone="solid">Admin</Badge>}
                 {u.bot && <Badge tone="outline">Bot</Badge>}
-                {profile && profile.rank != null && <Badge tone="outline">Rank {profile.rank}</Badge>}
+                {/* The rank by its Zero-K name, in the colour Zero-K draws it. */}
+                {profile && rankName(profile.rank) && (
+                  <Badge tone="outline" style={{ color: rankColour(profile.rank) }}>
+                    {rankName(profile.rank)}
+                  </Badge>
+                )}
               </div>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "var(--sp-4) var(--sp-6)" }}>
