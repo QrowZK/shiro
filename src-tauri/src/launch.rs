@@ -201,6 +201,9 @@ pub fn zks_launch_preview(
         port: 0,
         my_player_name: player,
         script_password: "preview".into(),
+        // A preview resolves paths; it is not a match, so there is nothing for
+        // the loading screen to be told about.
+        match_info: None,
     };
     let script = connect_script(&req)?;
     let plan = spawn_plan(&exe, &install.root, &script_path);
@@ -335,6 +338,7 @@ mod tests {
             port: 8452,
             my_player_name: "Qrow".into(),
             script_password: "sp-9f2c".into(),
+            match_info: None,
         }
     }
 
