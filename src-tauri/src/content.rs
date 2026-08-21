@@ -569,11 +569,17 @@ enum Fallback {
 }
 
 /// Try the ContentService for one item, reporting progress under the same job.
+///
+/// `cancelled` is carried all the way down to the transfer. By the time this
+/// runs there is no process left for `zks_content_cancel` to kill, and the
+/// resolve and the download between them can be minutes - all of it holding the
+/// slot, so a stop that only took effect afterwards was no stop at all.
 fn try_zk_content(
     app: &tauri::AppHandle,
     id: &str,
     item: &ContentItem,
     root: Option<&str>,
+    cancelled: &dyn Fn() -> bool,
 ) -> Fallback {
     use tauri::Emitter;
 
@@ -633,7 +639,7 @@ fn try_zk_content(
         }
     };
 
-    match zkcontent::fetch_to(url, &dest, resolved.md5.as_deref(), progress) {
+    match zkcontent::fetch_to(url, &dest, resolved.md5.as_deref(), cancelled, progress) {
         Ok(()) => Fallback::Installed(format!("Downloaded {name} from zero-k.info.")),
         Err(e) => Fallback::Failed(e),
     }
@@ -784,7 +790,7 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
         };
         if !matches!(outcome, Outcome::Ok | Outcome::Killed) && !cancelled_since() {
             if let Some(item) = items_w.first() {
-                match try_zk_content(&app_w, &id, item, root_w.as_deref()) {
+                match try_zk_content(&app_w, &id, item, root_w.as_deref(), &cancelled_since) {
                     Fallback::Installed(what) => {
                         outcome = Outcome::Ok;
                         message = what;
@@ -804,6 +810,15 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
                             format!("{} {why}", outcome.message())
                         };
                     }
+                }
+                /* Asked again on the way out, because the fallback is the long
+                   part: a 90 MB archive over HTTP, minutes of it, with no
+                   process for cancel to kill. The stop reaches it as a flag, so
+                   whatever it managed to say on its way out, a job the player
+                   cancelled ended cancelled. */
+                if cancelled_since() {
+                    outcome = Outcome::Killed;
+                    message = outcome.message();
                 }
             }
         }

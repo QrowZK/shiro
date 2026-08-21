@@ -618,24 +618,45 @@ pub fn file_name_for(url: &str) -> Result<String, String> {
 
 /// A connection that is never going to be answered.
 ///
-/// The body deliberately has no bound - a 90 MB map on a slow line is not a
-/// hung request - but reaching the server should take milliseconds, and
-/// without this a black-holed connect sat there for the OS's own timeout with
-/// the download UI showing nothing at all.
+/// The body deliberately has no total bound - a 90 MB map on a slow line is not
+/// a hung request, and [`STALL_TIMEOUT`] is what catches one that is - but
+/// reaching the server should take milliseconds, and without this a black-holed
+/// connect sat there for the OS's own timeout with the download UI showing
+/// nothing at all.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// How long a SOAP call may take, start to finish.
 ///
 /// These are two-line requests answered from a database; anything approaching
-/// this is a service that is not going to answer. Bounded where the file
-/// downloads are not, because there is nothing large about them.
+/// this is a service that is not going to answer. Bounded start to finish,
+/// where a file download can only be bounded per read, because there is nothing
+/// large about them.
 const SOAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// How long a file download may go without a single byte arriving.
+///
+/// Not a cap on the transfer. The blocking client applies its timeout to each
+/// read of the body as well as to the request, so this is a stall deadline: a
+/// 90 MB map on a slow line keeps going for as long as something keeps
+/// arriving. What it ends is the other case - a connection that was accepted
+/// and then went quiet, which had no bound at all and could sit there for the
+/// life of the process.
+///
+/// That mattered more here than the wait: this download runs on the supervisor
+/// thread, holding the one download slot, so a connection that never spoke
+/// again took every later download of the session with it.
+const STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// What a stopped transfer says. The caller has a better sentence for the
+/// player and replaces this; it exists so a cancel is not mistaken for a
+/// failure on the way back up.
+const CANCELLED: &str = "the download was cancelled";
 
 fn client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .user_agent("shiro")
         .connect_timeout(CONNECT_TIMEOUT)
-        .timeout(None) // a 90 MB map on a slow line is not a hung request
+        .timeout(STALL_TIMEOUT)
         .build()
         .map_err(|e| format!("could not build an HTTP client: {e}"))
 }
@@ -671,12 +692,22 @@ pub fn resolve(internal_name: &str) -> Result<Option<Resolved>, String> {
 ///
 /// Writes to `<dest>.part` and renames on success, so a half-finished archive
 /// is never visible to the engine as an installed one.
+///
+/// `cancelled` is asked before the request and again on every block, because
+/// there is nothing else to stop this: the caller runs it on the thread that
+/// holds the download slot, with the downloader process already exited. The
+/// `.part` is left where it is, which is the whole point of writing one - a
+/// cancelled 90 MB map resumes rather than starting again.
 pub fn fetch_to(
     url: &str,
     dest: &Path,
     expect_md5: Option<&str>,
+    cancelled: impl Fn() -> bool,
     mut on_progress: impl FnMut(u64, u64),
 ) -> Result<(), String> {
+    if cancelled() {
+        return Err(CANCELLED.to_string());
+    }
     if !host_allowed(url) {
         return Err(format!("refusing to download from {url}"));
     }
@@ -741,6 +772,9 @@ pub fn fetch_to(
     let mut done = if resuming { have } else { 0 };
     let mut buf = vec![0u8; 64 * 1024];
     loop {
+        if cancelled() {
+            return Err(CANCELLED.to_string());
+        }
         let n = res.read(&mut buf).map_err(|e| format!("download interrupted: {e}"))?;
         if n == 0 {
             break;
@@ -1024,6 +1058,27 @@ word".into()], "Map").is_err());
         assert!(file_name_for("https://zero-k.info/a/..%2Fx.sd7").is_err());
         assert!(file_name_for("https://zero-k.info/a/").is_err());
         assert!(file_name_for("https://zero-k.info/a/thing.exe").is_err());
+    }
+
+    /// The stop has to reach the transfer itself. By the time this runs the
+    /// downloader process has exited, so there is nothing left for a cancel to
+    /// kill - and this holds the one download slot while it works, which is
+    /// minutes on a 90 MB archive. Refusing before the request also means a
+    /// cancel that lands during the resolve does not start a download nobody
+    /// wants.
+    #[test]
+    fn a_cancelled_download_never_reaches_the_network() {
+        let dest = std::env::temp_dir().join("shiro-cancelled-before-the-request.sd7");
+        let err = fetch_to(
+            "https://zero-k.info/content/maps/HideandSeek2.2.3.sd7",
+            &dest,
+            None,
+            || true,
+            |_, _| panic!("progress from a download that never started"),
+        )
+        .unwrap_err();
+        assert!(err.contains("cancelled"), "{err}");
+        assert!(!dest.exists(), "nothing should have been written");
     }
 
     #[test]
