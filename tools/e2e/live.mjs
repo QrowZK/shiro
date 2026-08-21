@@ -102,6 +102,19 @@ const clickDialog = async (re, opts) => page.getByRole("button", { name: re }).l
    text, so every text assertion here is case-insensitive. */
 const seeing = async re => new RegExp(re.source, re.flags.includes("i") ? re.flags : re.flags + "i")
   .test(await text());
+/* Badges are short words that read as substrings of ordinary copy, so "Full"
+   has to be matched as a whole label rather than found in the page text. */
+const badgeSaying = label => page.evaluate(l => [...document.querySelectorAll("span")]
+  .some(el => el.textContent.trim() === l), label);
+/* The marks `PlayerRow` draws beside one name. The kick control in the same row
+   is also a cross, so only icons outside a button are the row's own. */
+const marksBeside = name => page.evaluate(n => {
+  const row = [...document.querySelectorAll("div")].find(d =>
+    (d.getAttribute("style") || "").includes("--row-default") && d.textContent.includes(n));
+  if (!row) return null;
+  return [...row.querySelectorAll("i[data-lucide]")]
+    .filter(i => !i.closest("button")).map(i => i.getAttribute("data-lucide"));
+}, name);
 /* The design kit wraps its <select> in the <label>, so the accessible name is
    the label text *plus every option* - `getByLabel("Game")` never matches.
    Find the select by an option only it has. */
@@ -176,6 +189,40 @@ await clickText(/Good to go|Not now/);
 check("and it goes away when dismissed",
   await waitFor("first-run-gone", async () => !(await seeing(/Zero-K is already here/))));
 
+/* A room you cannot get into used to look exactly like one you can: the count
+   greys out and nothing else changes. There is no waitlist in the protocol to
+   show instead - `ProcessPlayerJoin` refuses only a password or a kick, and a
+   full room is answered by silently spectating whoever arrives - so what the
+   list can honestly say is which rooms those are, and what joining one costs. */
+console.log("rooms you cannot get into");
+check("a room at its cap is marked full", await waitFor("full-badge", () => badgeSaying("FULL")));
+await page.getByText(/^full house$/).first().click();
+check("and says what joining it actually does",
+  await waitFor("full-copy", () => seeing(/Joining makes you a spectator/)));
+check("without promising a queue that does not exist", await seeing(/whoever takes it first/));
+
+/* Over the cap, which only a time-queue room can be. The overflow is the
+   nearest thing to a waitlist the server has, so it is shown as what it is. */
+await page.getByText(/^queue for a slot$/).first().click();
+check("a room over its cap says how many are past it",
+  await waitFor("queue-badge", () => badgeSaying("FULL +2")));
+check("and what the time queue will do to them",
+  await seeing(/2 past the cap/) && await seeing(/moved to the spectators/));
+
+/* The filter strip could hide running and passworded rooms but not the ones
+   with no room in them, which is the same question. */
+// The box itself is a zero-size input behind the label, as everywhere here.
+const hideFull = () => page.getByLabel("Hide full");
+await hideFull().dispatchEvent("click");
+check("hiding full rooms takes them out of the list",
+  await waitFor("hide-full", async () => !(await seeing(/queue for a slot/))));
+await hideFull().dispatchEvent("click");
+check("and unhiding brings them back",
+  await waitFor("show-full", () => seeing(/queue for a slot/)));
+
+// Put the selection back where the rest of this run expects to find it.
+await page.getByText(/^Teams 8v8 - all welcome$/).first().click();
+
 await shot("live-01-battles");
 
 console.log("battle room");
@@ -236,6 +283,56 @@ await page.evaluate(() => {
 check("and once it lands we say so, without waiting for a rejoin",
   await waitFor("resynced", () => sentSince(beforeResync, /^UpdateUserBattleStatus \{.*"Sync":1/)));
 await page.evaluate(() => { window.__ZKS.missing = []; });
+
+/* The other side of the same field: what the room shows about everybody else.
+   The roster arrives carrying no Sync at all, which is Unknown - not a claim
+   that anyone lacks the map, but still exactly the set CmdStart gathers. */
+const waitingOn = () => page.evaluate(() => {
+  const m = document.body.innerText.match(/Waiting on ([^\n]+)/);
+  return m ? m[1] : "";
+});
+check("a roster that has never reported is still what !start would name",
+  await waitFor("waiting-unknown", () => seeing(/Waiting on hexed, Qrow/)));
+check("and wears the quiet mark for it rather than a cross",
+  (await marksBeside("hexed")).includes("download"));
+
+await page.evaluate(() => {
+  window.__ZKS.push('UpdateUserBattleStatus {"Name":"Qrow","Sync":1}');
+  window.__ZKS.push('UpdateUserBattleStatus {"Name":"hexed","Sync":1}');
+});
+check("once everyone has reported, nobody is holding the start up",
+  await waitFor("all-synced", () => seeing(/Everyone has the map/)));
+check("and a player who has the map carries no mark at all",
+  !(await marksBeside("hexed")).some(i => i === "x" || i === "download"));
+
+await page.evaluate(() =>
+  window.__ZKS.push('UpdateUserBattleStatus {"Name":"hexed","Sync":2}'));
+check("someone who says they have not got it is named",
+  await waitFor("unsynced-named", () => seeing(/Waiting on hexed/)));
+check("and gets the cross, which is the whole point of the mark",
+  await waitFor("cross", async () => (await marksBeside("hexed")).includes("x")));
+
+/* A spectator needs nothing for anyone else's game to start, so no report of
+   theirs delays it and none is drawn. */
+await page.evaluate(() =>
+  window.__ZKS.push('UpdateUserBattleStatus {"Name":"lorelei","Sync":2}'));
+check("an unsynced spectator is not named",
+  await waitFor("spec-unnamed", async () => !(await waitingOn()).includes("lorelei")));
+check("and is not marked either",
+  !(await marksBeside("lorelei")).some(i => i === "x" || i === "download"));
+
+/* How big the room is was not on this screen at all - the team columns count
+   to a hardcoded eight, which is nobody's cap. */
+check("the room says how many player slots it has",
+  await waitFor("room-slots", () => badgeSaying("2/16")));
+await page.evaluate(() =>
+  window.__ZKS.push('BattleUpdate {"Header":{"BattleID":11,"MaxPlayers":2}}'));
+check("and says so when they are all taken",
+  await waitFor("room-full", () => badgeSaying("Full")));
+await page.evaluate(() =>
+  window.__ZKS.push('BattleUpdate {"Header":{"BattleID":11,"MaxPlayers":16}}'));
+check("and stops saying so when they are not",
+  await waitFor("room-not-full", async () => !(await badgeSaying("Full"))));
 
 /* Ratings carry the colour Zero-K tints a rating with, keyed by the rank the
    server sent - the exact values in gui_chili_share.lua's `rankColors`. Three
@@ -466,11 +563,44 @@ await shot("live-04-chat");
 console.log("matchmaker");
 await page.locator("nav button").nth(2).click();
 check("the server's queues are listed", await waitFor("queues", () => seeing(/Teams/) && seeing(/1v1/)));
-await page.getByText(/^Teams$/).last().click();
-await clickText(/^Join queue$/);
-check("joining sends the queue names",
-  await waitFor("mmq", () => sentAny(/^MatchMakerQueueRequest \{.*"Teams"/)));
-check("the screen switches to searching", await waitFor("searching", () => seeing(/Searching/)));
+const teams = page.getByRole("switch", { name: "Teams" });
+const duel = page.getByRole("switch", { name: "1v1" });
+check("each queue is a switch that says whether you are in it",
+  (await teams.getAttribute("aria-checked")) === "false");
+/* The counts are how somebody picks a queue, so they belong on the row the
+   switch is on, not somewhere else on the screen. */
+check("and the row still carries the counts that queue reports",
+  /waiting\s*21[\s\S]*in game\s*14/i.test(await teams.innerText()));
+
+let from = await mark();
+await teams.click();
+check("turning one on sends that queue",
+  await waitFor("mmq", () => sentSince(from, /^MatchMakerQueueRequest \{"Queues":\["Teams"\]\}$/)));
+/* `seeing` is case-insensitive against the whole screen, so "Searching" alone
+   would also match a sentence sitting in the idle panel. Leaving is only
+   offered while there is something to leave. */
+check("the screen switches to searching",
+  await waitFor("searching", async () => (await seeing(/Searching/)) && (await seeing(/Leave all queues/))));
+
+/* The reason the screen is switches at all: MatchMakerQueueRequest carries the
+   whole set you want to be in, so a second queue joins the first instead of
+   replacing it - and there is no request that could say otherwise. */
+from = await mark();
+await duel.click();
+check("turning a second on sends both, not just the new one",
+  await waitFor("mmq2", () => sentSince(from, /^MatchMakerQueueRequest \{"Queues":\["Teams","1v1"\]\}$/)));
+check("and both switches read as on", await waitFor("both", async () =>
+  (await teams.getAttribute("aria-checked")) === "true"
+  && (await duel.getAttribute("aria-checked")) === "true"));
+
+from = await mark();
+await teams.click();
+check("turning one back off sends the rest, rather than dropping out entirely",
+  await waitFor("mmq3", () => sentSince(from, /^MatchMakerQueueRequest \{"Queues":\["1v1"\]\}$/)));
+check("so the search carries on in what is left",
+  await waitFor("still", async () =>
+    (await seeing(/Leave all queues/)) && (await teams.getAttribute("aria-checked")) === "false"
+    && (await duel.getAttribute("aria-checked")) === "true"));
 
 await page.evaluate(() => window.__ZKS.push('AreYouReady {"MinimumWinChance":0.4,"QuickPlay":false,"SecondsRemaining":30}'));
 check("the ready check interrupts", await waitFor("ready", () => seeing(/Match found\. Ready\?/)));

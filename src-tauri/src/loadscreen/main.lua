@@ -48,6 +48,15 @@ local MARK_GAP = 0.025                  -- mark to wordmark
 
 local ART_H, ART_W = 0.80, 0.42         -- plate height: min(0.80 H, 0.42 W)
 
+-- The match block, which takes the plate's place when Shiro has written one.
+-- The designer's numbers, converted from the 1280x720 board: right inset,
+-- bottom 152/720, column gap 56/720, and the two type sizes from the table.
+local MATCH_Y     = 0.211               -- bottom of the whole block
+local MATCH_GAP   = 0.039               -- teams row to the map block above it
+local LABEL_GAP   = 0.011               -- a label to the thing it labels
+local COL_GAP     = 0.078               -- between the two team columns
+local LINE        = 1.6                 -- player name line height, in ems
+
 -- The plate's own shape. tools/gen-loadscreen-art.mjs inverts the client's
 -- glaive-sidelit.png without resampling it, so this is that file's aspect and
 -- has to be changed with it.
@@ -70,14 +79,81 @@ local A_PLATE, A_RULE, A_FILL, A_STEP = 0.13, 0.12, 0.88, 0.56
 -- the drift, not legibility.
 local FALLBACK = 0.96
 local WORDMARK, STEP, NUMBER = 0.0260 * FALLBACK, 0.0155 * FALLBACK, 0.0155 * FALLBACK
+local MAPNAME, PLAYER = 0.0305 * FALLBACK, 0.0180 * FALLBACK
 local TRACK_WORDMARK, TRACK_STEP = 0.16, 0.09
 
 --------------------------------------------------------------------------------
 -- Progress.
 
+-- The match, if Shiro wrote one beside this file at launch.
+--
+-- Read once, and defensively at every step: the file is optional, it is
+-- rewritten per launch by another program, and a screen that throws is a black
+-- screen in front of a game. Anything unexpected here leaves `match` nil and
+-- the plate is drawn instead - which is the design's own shipping layout, so
+-- the fallback is a complete screen rather than a degraded one.
+local MATCH_FILE = "LuaIntro/shiro-match.lua"
+
+local function readMatch()
+	if not (VFS and VFS.FileExists and VFS.FileExists(MATCH_FILE)) then
+		return nil
+	end
+	local ok, chunk = pcall(VFS.LoadFile, MATCH_FILE)
+	if not ok or type(chunk) ~= "string" then
+		return nil
+	end
+	local loaded, fn = pcall(loadstring or load, chunk)
+	if not loaded or type(fn) ~= "function" then
+		return nil
+	end
+	local ran, value = pcall(fn)
+	if not ran or type(value) ~= "table" then
+		return nil
+	end
+	-- Shape it here so the draw call can trust what it holds.
+	local teams = {}
+	if type(value.teams) == "table" then
+		for i = 1, #value.teams do
+			local t = value.teams[i]
+			if type(t) == "table" and type(t.players) == "table" and #t.players > 0 then
+				local names = {}
+				for j = 1, #t.players do
+					if type(t.players[j]) == "string" then
+						names[#names + 1] = t.players[j]
+					end
+				end
+				if #names > 0 then
+					teams[#teams + 1] = {
+						label = type(t.label) == "string" and t.label or ("Team " .. #teams + 1),
+						players = names,
+					}
+				end
+			end
+		end
+	end
+	if #teams == 0 then
+		return nil
+	end
+	return {
+		map = type(value.map) == "string" and value.map or "",
+		teams = teams,
+	}
+end
+
+local matchOk, match = pcall(readMatch)
+if not matchOk then
+	match = nil
+end
+
 local lastLoadMessage = ""
 local lastStep = ""
-local lastProgress = {0, 0}
+-- Floor and ceiling for the phase in progress. The ceiling starts open, not
+-- closed: the bands are applied as min(max(engine, floor), ceiling), so a
+-- ceiling of zero clamps the engine's own number to zero - and it stays there
+-- until one of the five exact-match messages below arrives. The engine emits
+-- far more messages than those five, so on a load that starts with any other
+-- one the bar sat at 0% while the machine was visibly working.
+local lastProgress = {0, 1}
 
 -- The engine's progress reporting is coarse and stops for long stretches, so
 -- Zero-K brackets each phase between a floor and a ceiling and lets the bar
@@ -186,12 +262,22 @@ local font = gl.LoadFont("FreeSansBold.otf", 64, 12, 1.5)
 -- a UTF-8 reader on a screen that cannot afford one.
 local trackable = font and type(font.GetTextWidth) == "function"
 
-local function tracked(text, x, y, size, track)
+local function tracked(text, x, y, size, track, align)
 	if not trackable then
-		font:Print(text, x, y, size, "o")
+		font:Print(text, x, y, size, align == "r" and "ro" or "o")
 		return
 	end
 	local gap = track * size
+	if align == "r" then
+		-- Right-aligned tracked text has to be measured before it is drawn:
+		-- the glyphs are printed one at a time from a left edge, and the
+		-- tracking makes the run wider than the string measures.
+		local width = -gap
+		for i = 1, #text do
+			width = width + font:GetTextWidth(text:sub(i, i)) * size + gap
+		end
+		x = x - width
+	end
 	for i = 1, #text do
 		local glyph = text:sub(i, i)
 		font:Print(glyph, x, y, size, "o")
@@ -256,6 +342,58 @@ end
 
 --------------------------------------------------------------------------------
 
+-- The match, right-aligned in the plate's place. Pixel space, so this is only
+-- ever called from inside the one scale the strings share.
+--
+-- Laid out from the right edge and from the bottom up, because that is the only
+-- way to place right-aligned text of unknown width without measuring the whole
+-- block first. Widths come from the font, so a missing GetTextWidth costs the
+-- second column its position rather than the screen.
+local function drawMatch(vsx, vsy, insetPx)
+	local rightPx = vsx - insetPx
+	local step, player = STEP * vsy, PLAYER * vsy
+
+	-- The teams row, bottom-aligned on MATCH_Y and growing upward.
+	local rows = 0
+	for i = 1, #match.teams do
+		rows = math.max(rows, #match.teams[i].players)
+	end
+	local namesTop = MATCH_Y * vsy + rows * player * LINE
+	local labelY = namesTop + LABEL_GAP * vsy
+
+	local edge = rightPx
+	for i = #match.teams, 1, -1 do
+		local team = match.teams[i]
+
+		gl.Color(1, 1, 1, A_STEP)
+		tracked(team.label:upper(), edge, labelY, step, TRACK_STEP, "r")
+
+		gl.Color(1, 1, 1, 0.75)
+		local widest = 0
+		for j = 1, #team.players do
+			local name = team.players[j]
+			font:Print(name, edge, namesTop - j * player * LINE, player, "ro")
+			if font.GetTextWidth then
+				widest = math.max(widest, font:GetTextWidth(name) * player)
+			end
+		end
+		if font.GetTextWidth then
+			widest = math.max(widest, font:GetTextWidth(team.label) * step)
+		end
+		edge = edge - widest - COL_GAP * vsy
+	end
+
+	-- The map, above the teams.
+	if match.map ~= "" then
+		local nameY = labelY + step + MATCH_GAP * vsy
+		gl.Color(1, 1, 1, 1)
+		font:Print(match.map, rightPx, nameY, MAPNAME * vsy, "ro")
+		gl.Color(1, 1, 1, A_STEP)
+		tracked("MAP", rightPx, nameY + MAPNAME * vsy + LABEL_GAP * vsy, step,
+			TRACK_STEP, "r")
+	end
+end
+
 function addon.DrawLoadScreen()
 	local loaded = progress()
 	local vsx, vsy = gl.GetViewSizes()
@@ -275,9 +413,15 @@ function addon.DrawLoadScreen()
 
 	-- 2. The plate, standing on the rule at the right inset. Its height is
 	--    capped against width, so 4:3 gives up the art rather than the layout.
-	local plate = math.min(ART_H * vsy, ART_W * vsx)
-	picture(image.plate, right - (plate * ART_ASPECT) / vsx, RULE_Y,
-		right, RULE_Y + plate / vsy, A_PLATE)
+	--
+	--    Unless there is a match to show, in which case the roster takes this
+	--    space rather than sharing it - the designer's instruction, and the
+	--    reason every other measurement on the screen is unchanged either way.
+	if not match then
+		local plate = math.min(ART_H * vsy, ART_W * vsx)
+		picture(image.plate, right - (plate * ART_ASPECT) / vsx, RULE_Y,
+			right, RULE_Y + plate / vsy, A_PLATE)
+	end
 
 	-- 3. The mark, above the wordmark it is locked up with. The block is
 	--    measured from its bottom, and the wordmark is all capitals, so the
@@ -305,6 +449,10 @@ function addon.DrawLoadScreen()
 		gl.Color(1, 1, 1, 1)
 		font:Print(("%d%%"):format(math.floor(loaded * 100)), vsx - insetPx,
 			ROW_Y * vsy, NUMBER * vsy, "ro")
+
+		if match then
+			drawMatch(vsx, vsy, insetPx)
+		end
 
 		gl.PopMatrix()
 	end

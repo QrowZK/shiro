@@ -3,7 +3,7 @@
  * Kept separate so the design kit never has to know about the wire format.
  */
 import type * as T from "../protocol/types.ts";
-import type { AutohostMode, LoginResponse_Code } from "../protocol/enums.ts";
+import type { AutohostMode, LoginResponse_Code, SyncStatuses } from "../protocol/enums.ts";
 import type { ConnectionState } from "./lobby.ts";
 import { changedOptions, type ModOptionDisplay } from "../net/modOptions.ts";
 import { playerRank, rankColour } from "../net/ranks.ts";
@@ -90,6 +90,35 @@ export interface BattleRowModel {
   running: boolean;
   runningSince?: number;
   matchmaker: boolean;
+  /** Every player slot is taken. See `capacity` for what that costs you. */
+  full: boolean;
+  /** How many players are past the cap. See `capacity`. */
+  queued: number;
+}
+
+/**
+ * How full a room is, and what walking into a full one actually does.
+ *
+ * There is no waitlist. The protocol has no queue message, no join refusal and
+ * no position - `ProcessPlayerJoin` refuses only a wrong password or a kick.
+ * What a full room does instead is silent: `ValidateBattleStatus` sets
+ * `IsSpectator` on the arrival and sends them a private "This battle is full."
+ * Nobody is ever promoted back; a slot that frees up goes to whoever claims it.
+ *
+ * `PlayerCount` counts non-spectators and excludes bots, so it is the number
+ * against `MaxPlayers`. It can exceed it, in a room where the server's time
+ * queue is on: everyone may call themselves a player, and `StartGame` spectates
+ * whoever declared last - `OrderBy(QueueOrder)` - down to the cap. `queued` is
+ * that overflow, which is the closest thing to a waitlist that exists, and it
+ * is a count rather than a list of names because the cut also depends on who is
+ * AFK by then.
+ */
+function capacity(b: T.BattleHeader): { full: boolean; queued: number } {
+  const players = b.PlayerCount ?? 0;
+  const max = b.MaxPlayers ?? 0;
+  // A room that never said how big it is cannot be full.
+  if (max <= 0) return { full: false, queued: 0 };
+  return { full: players >= max, queued: Math.max(0, players - max) };
 }
 
 /** BattleRow renders `runningSince` as elapsed mm:ss, so convert the timestamp. */
@@ -115,6 +144,7 @@ export function battleToRow(b: T.BattleHeader): BattleRowModel | null {
     running: Boolean(b.IsRunning),
     runningSince: elapsedSeconds(b.RunningSince),
     matchmaker: Boolean(b.IsMatchMaker),
+    ...capacity(b),
   };
 }
 
@@ -195,6 +225,9 @@ export function describeFailure(c: ConnectionState): string {
  *  are not among them get no mark rather than a wrong one. */
 const FACTION_MARKS = new Set(["machines", "hegemony", "rising"]);
 
+/** What the engine supports, and so the most columns worth drawing. */
+const MAX_ALLY_TEAMS = 16;
+
 export interface ChipModel {
   name: string;
   clan?: string;
@@ -209,11 +242,36 @@ export interface ChipModel {
   presence: "online" | "away" | "room" | "ingame" | "offline";
 }
 
+/* `SyncStatuses` restated as literals, for the reason given at the top of this
+   file. */
+const SYNC_SYNCED: SyncStatuses.Synced = 1;
+const SYNC_UNSYNCED: SyncStatuses.Unsynced = 2;
+
+/**
+ * What `PlayerRow` draws beside a name: nothing, a muted download arrow, or a
+ * red cross.
+ *
+ * Three protocol states onto the design kit's three, and the middle one is the
+ * reason this is not a boolean. `Unknown` means the client has never reported -
+ * not that it lacks the content - so it gets the quiet mark rather than the
+ * accusatory one. `!start` still names them, which is why it cannot be silent
+ * either.
+ */
+export type SyncMark = "ok" | "downloading" | "missing";
+
+export function syncMark(sync: SyncStatuses | undefined): SyncMark {
+  if (sync === SYNC_SYNCED) return "ok";
+  if (sync === SYNC_UNSYNCED) return "missing";
+  return "downloading";
+}
+
 export interface RoomPlayerModel {
   user: ChipModel;
   host?: boolean;
   party?: number;
   spectator?: boolean;
+  /** Whether they have the map and game. Spread straight into `PlayerRow`. */
+  sync?: SyncMark;
 }
 
 export interface RoomModel {
@@ -226,10 +284,31 @@ export interface RoomModel {
   founder: string;
   mode: string;
   running: boolean;
+  /**
+   * Player slots taken, and how many there are.
+   *
+   * Counted from the roster rather than read off `PlayerCount`, which the
+   * server only re-broadcasts every five seconds - the roster is the thing
+   * drawn beside it, so the two must not disagree. Bots take no slot: the
+   * server counts them separately and they are not what fills a room up.
+   */
+  players: number;
+  maxPlayers: number;
+  /** See `capacity`. `queued` is the time-queue overflow, usually zero. */
+  full: boolean;
+  queued: number;
   /** What the host changed, by name. Defaults are not worth listing. */
   options: ModOptionDisplay[];
   teams: Array<{ ally: number; players: RoomPlayerModel[] }>;
   spectators: RoomPlayerModel[];
+  /**
+   * The players `!start` would name as still downloading, by name.
+   *
+   * Anyone not `Synced`, which includes anyone who has never reported: that is
+   * the set `CmdStart` gathers, and being in it delays everybody's game by ten
+   * seconds. Bots and spectators are never in it - see `roomModel`.
+   */
+  waitingOn: string[];
 }
 
 /**
@@ -356,30 +435,62 @@ export function roomModel(
     else byAlly.set(ally, [p]);
   };
 
+  const waitingOn: string[] = [];
+  let slotsTaken = 0;
+
   for (const [name, status] of Object.entries(players)) {
     const entry: RoomPlayerModel = {
       user: userToChip(users[name], name),
       host: name === battle.Founder || undefined,
       party: users[name]?.PartyID || undefined,
     };
+    /* Spectators carry a sync status too, and it is deliberately not drawn.
+       The question this mark answers is who is delaying the start, and a
+       spectator never is - `CmdStart` gathers players only. Marking them would
+       put a red cross beside people nobody is waiting for. */
     if (status.IsSpectator) spectators.push({ ...entry, spectator: true });
-    else place(status.AllyNumber ?? 0, entry);
+    else {
+      const sync = syncMark(status.Sync);
+      if (sync !== "ok") waitingOn.push(name);
+      slotsTaken++;
+      place(status.AllyNumber ?? 0, { ...entry, sync });
+    }
   }
 
   for (const [name, bot] of Object.entries(bots)) {
     place(bot.AllyNumber ?? 0, {
       // A bot has no account, so there is no `User` record to enrich it with.
       user: { name, bot: true, presence: "room" },
+      /* And nothing to download: it runs inside somebody else's game. The
+         wire carries no sync status for bots, so saying "ready" here is the
+         truth rather than a default. */
+      sync: "ok",
     });
   }
 
-  const teams = [...byAlly.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([ally, list]) => ({
-      ally,
-      players: list.sort((a, b) => Number(b.host ?? 0) - Number(a.host ?? 0)
+  /* Every team up to one past the highest in use, and never fewer than two.
+     This used to be the ally numbers actually present, which made a team you
+     could join a team somebody was already on: a fresh room showed one column,
+     so there was nowhere to put a second side and hosting a 1v1 was impossible
+     from this screen. `!balance 2` looked broken for the same reason - with
+     everyone still on ally 0 there was only ever one column to show.
+
+     Contiguous rather than sparse, because the gap between an occupied ally 0
+     and an occupied ally 3 is two teams a person can join, not a hole. Capped
+     at the sixteen the engine supports, so a room that somehow reports ally 15
+     does not render seventeen columns.
+
+     Two is the floor rather than "one past the highest": a 1v1 that is already
+     two columns does not need an empty third, and a room where everyone sits on
+     ally 0 needs somewhere to send half of them. */
+  const highest = byAlly.size ? Math.max(...byAlly.keys()) : -1;
+  const count = Math.min(MAX_ALLY_TEAMS, Math.max(2, highest + 1));
+  const teams = Array.from({ length: count }, (_, ally) => ({
+    ally,
+    players: (byAlly.get(ally) ?? []).sort(
+      (a, b) => Number(b.host ?? 0) - Number(a.host ?? 0)
         || a.user.name.localeCompare(b.user.name)),
-    }));
+  }));
 
   return {
     id: battle.BattleID,
@@ -389,11 +500,15 @@ export function roomModel(
     founder: battle.Founder ?? "",
     mode: modeLabel(battle.Mode),
     running: Boolean(battle.IsRunning),
+    players: slotsTaken,
+    maxPlayers: battle.MaxPlayers ?? 0,
+    ...capacity({ ...battle, PlayerCount: slotsTaken }),
     /* Only what the host changed. A room with all ninety options at their
        defaults has nothing to say, and upstream shows non-hosts the same
        thing. Names rather than keys, where we have a name. */
     options: changedOptions(modOptions),
-    teams: teams.length ? teams : [{ ally: 0, players: [] }],
+    teams,
     spectators: spectators.sort((a, b) => a.user.name.localeCompare(b.user.name)),
+    waitingOn: waitingOn.sort((a, b) => a.localeCompare(b)),
   };
 }

@@ -25,7 +25,7 @@ import { create } from "zustand";
 
 import type { CommandName, Message, MessageMap } from "../protocol/registry.ts";
 import type * as T from "../protocol/types.ts";
-import type { SyncStatuses } from "../protocol/enums.ts";
+import type { SyncStatuses, AutohostMode } from "../protocol/enums.ts";
 
 /* Spelled out rather than imported as values: `enums.ts` declares TypeScript
    `enum`s, which are a runtime construct that Node's type stripping refuses to
@@ -54,6 +54,53 @@ function tx<K extends CommandName>(cmd: K, data: MessageMap[K]): void {
  *
  * Exported for the test rather than for callers - `addBot` picks the name.
  */
+/**
+ * The match, as the loading screen shows it.
+ *
+ * Built from the room rather than the start script: the script names teams by
+ * number and says nothing about who is on them, and the roster is the thing
+ * worth reading while a game loads.
+ *
+ * Spectators are left out - they are not in the match - and bots are included,
+ * because a screen that lists three humans for a 4v4 against AI is wrong in a
+ * way somebody will notice. Ally numbers are zero-based on the wire and
+ * one-based on screen.
+ *
+ * Returns undefined when there is nothing worth writing, which the caller
+ * passes straight through: no match is a supported state, not a failure.
+ */
+export function matchInfoFor(state: {
+  players: Record<string, T.UpdateUserBattleStatus>;
+  bots: Record<string, T.UpdateBotStatus>;
+  title?: string;
+  map?: string;
+}): { map: string; title: string; teams: { label: string; players: string[] }[] } | undefined {
+  const sides = new Map<number, string[]>();
+  const add = (ally: number | undefined, name: string | undefined) => {
+    if (ally == null || !name) return;
+    const list = sides.get(ally);
+    if (list) list.push(name);
+    else sides.set(ally, [name]);
+  };
+
+  for (const p of Object.values(state.players)) {
+    if (p.IsSpectator) continue;
+    add(p.AllyNumber, p.Name);
+  }
+  for (const b of Object.values(state.bots)) add(b.AllyNumber, b.Name);
+
+  if (!sides.size) return undefined;
+
+  const teams = [...sides.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([ally, players]) => ({
+      label: `Team ${ally + 1}`,
+      players: [...players].sort((a, b) => a.localeCompare(b)),
+    }));
+
+  return { map: state.map ?? "", title: state.title ?? "", teams };
+}
+
 export function freeBotName(aiLib: string, bots: Record<string, unknown>): string {
   for (let n = 1; ; n++) {
     const name = `${aiLib} (${n})`;
@@ -68,6 +115,15 @@ export interface HostOptions {
   title: string;
   map: string;
   maxPlayers: number;
+  /**
+   * What kind of room this is - Teams, 1v1, FFA, Cooperative, Custom.
+   *
+   * The wire calls it `Mode` and it is a number. It decides how the room
+   * presents itself in the list and what an autohost does with it, and leaving
+   * it out meant every room hosted from here was whatever the server defaulted
+   * to rather than what the person asked for.
+   */
+  mode?: AutohostMode;
   password?: string;
   engine?: string;
   game?: string;
@@ -353,6 +409,7 @@ export const useRoom = create<RoomState>((set, get) => ({
         Title: opts.title,
         Map: opts.map,
         MaxPlayers: opts.maxPlayers,
+        Mode: opts.mode,
         // Omitted rather than sent empty: the server treats an empty string as
         // a password and then refuses your own join.
         Password: opts.password ? opts.password : undefined,

@@ -1,5 +1,5 @@
 import React from "react";
-import { Button, Meter, UserChip, EmptyState, Input, IconButton } from "../ds/shiro.js";
+import { Button, Meter, UserChip, EmptyState, Input, IconButton, Switch } from "../ds/shiro.js";
 
 /* Screen 6 - matchmaker queue. The ready-check itself is a Dialog rendered by
    App as a shell overlay, because it can interrupt any screen.
@@ -20,18 +20,30 @@ function elapsed(iso, now) {
   return Math.floor(s / 60) + ":" + String(s % 60).padStart(2, "0");
 }
 
+/* A queue is a switch because that is what it is: you are in it or you are not,
+   and you may be in several at once. `MatchMakerQueueRequest` carries the whole
+   set rather than a join or a leave, so every flip can go out as it happens.
+
+   The list this replaces staged a selection behind a Join button, which could
+   not show the several-at-once shape and, once you were queued, offered nothing
+   but leaving all of them - the staged selection kept accepting clicks that
+   were never sent anywhere. */
 export default function QueueScreen({ queued, onQueue, onFake, queues, joined, elo,
   joinedTime, bannedSeconds, party, onInvite, onLeaveParty }) {
   const live = Boolean(queues);
   const list = queues || QUEUES;
-  const [picked, setPicked] = React.useState(live ? [] : ["teams"]);
+  /* Live there is one copy of this and the server owns it: the store mirrors
+     our request the moment we make it, and a party member can put us in a queue
+     without us touching anything. The demo has no server to be the authority. */
+  const [demoQueues, setDemoQueues] = React.useState([]);
+  const inQueues = live ? (joined || []) : demoQueues;
   const [now, setNow] = React.useState(() => Date.now());
 
-  /* Follow the server: it is the authority on which queues we are in, and a
-     party member can put us in one without us clicking anything. */
-  React.useEffect(() => { if (live && joined) setPicked(joined); }, [live, joined]);
+  /* The demo's ready check drops you out of the queue when you decline it, and
+     the switches have to follow that down rather than keep claiming you are in. */
+  React.useEffect(() => { if (!live && !queued) setDemoQueues([]); }, [live, queued]);
 
-  const inQueue = live ? (joined || []).length > 0 : queued;
+  const inQueue = inQueues.length > 0;
   React.useEffect(() => {
     if (!inQueue) return;
     const t = setInterval(() => setNow(Date.now()), 1000);
@@ -39,7 +51,15 @@ export default function QueueScreen({ queued, onQueue, onFake, queues, joined, e
   }, [inQueue]);
 
   const [inviting, setInviting] = React.useState("");
-  const toggle = id => setPicked(p => (p.includes(id) ? p.filter(x => x !== id) : [...p, id]));
+  const request = names => {
+    if (!live) setDemoQueues(names);
+    onQueue(names);
+  };
+  const toggle = id =>
+    request(inQueues.includes(id) ? inQueues.filter(x => x !== id) : [...inQueues, id]);
+  /* The set is held as ids because that is what the request wants, but a
+     summary should read as the rows do. */
+  const labelOf = id => (list.find(q => q.id === id) || {}).label || id;
   const invite = () => {
     const name = inviting.trim();
     if (!name || !onInvite) return;
@@ -58,14 +78,18 @@ export default function QueueScreen({ queued, onQueue, onFake, queues, joined, e
             ? <EmptyState icon="target" title="The server has not offered any queues."
                 body="MatchMakerSetup arrives shortly after login." />
             : list.map(q => {
-              const on = picked.includes(q.id);
+              const on = inQueues.includes(q.id);
               return (
-                <div key={q.id} onClick={() => toggle(q.id)}
-                  style={{ position: "relative", height: "var(--row-tall)", display: "flex", alignItems: "center",
-                    gap: "var(--sp-5)", padding: "0 var(--sp-5)", cursor: "pointer",
+                <button key={q.id} type="button" role="switch" aria-checked={on} aria-label={q.label}
+                  onClick={() => toggle(q.id)}
+                  style={{ width: "100%", height: "var(--row-tall)", display: "flex", alignItems: "center",
+                    gap: "var(--sp-5)", padding: "0 var(--sp-5)", cursor: "pointer", textAlign: "left",
+                    border: 0, font: "inherit", color: "inherit",
                     background: on ? "var(--surface-selected)" : "transparent", boxShadow: "var(--rule-inset)" }}>
-                  {/* Same ink as the picked row's label below, so it follows a skin. */}
-                  {on && <span style={{ position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: "var(--text-hi)" }} />}
+                  {/* The whole row is the control, so the switch is only its
+                      indicator: with no onChange the click carries on through to
+                      the button and the target stays the width of the list. */}
+                  <Switch checked={on} />
                   <span style={{ font: "var(--text-heading)", color: on ? "var(--text-hi)" : "var(--text-body)",
                     flex: 1 }}>{q.label}</span>
                   <span className="lab">WAITING</span>
@@ -74,7 +98,7 @@ export default function QueueScreen({ queued, onQueue, onFake, queues, joined, e
                   <span className="lab">{q.avg != null ? "AVG WAIT" : "IN GAME"}</span>
                   <span style={{ width: 48, textAlign: "right", font: "var(--w-medium) var(--size-small)/1 var(--font-mono)",
                     color: "var(--text-mid)", fontVariantNumeric: "tabular-nums" }}>{q.avg != null ? q.avg : q.ingame}</span>
-                </div>
+                </button>
               );
             })}
         </div>
@@ -95,21 +119,17 @@ export default function QueueScreen({ queued, onQueue, onFake, queues, joined, e
         {inQueue ? (
           <>
             <Meter indeterminate label={waited ? "Searching - " + waited : "Searching"}
-              right={picked.join(" / ")} />
+              right={inQueues.map(labelOf).join(" / ")} />
             <span style={{ font: "var(--w-regular) var(--size-tiny)/1.5 var(--font-core)", color: "var(--text-low)" }}>
               You can keep browsing battles while you wait. Shiro will interrupt when a match is found.
             </span>
-            <Button variant="secondary" block onClick={() => onQueue(false, [])}>Leave queue</Button>
+            <Button variant="secondary" block onClick={() => request([])}>Leave all queues</Button>
             {onFake && <Button variant="ghost" size="sm" block onClick={onFake}>Simulate match found</Button>}
           </>
         ) : (
-          <>
-            <span style={{ font: "var(--w-regular) var(--size-tiny)/1.5 var(--font-core)", color: "var(--text-low)" }}>
-              Pick one or more queues. {picked.length ? picked.length + " selected." : "None selected."}
-            </span>
-            <Button variant="primary" size="lg" block disabled={!picked.length}
-              onClick={() => onQueue(true, picked)}>Join queue</Button>
-          </>
+          <span style={{ font: "var(--w-regular) var(--size-tiny)/1.5 var(--font-core)", color: "var(--text-low)" }}>
+            Switch on as many queues as you like. You can be in several at once.
+          </span>
         )}
         <span style={{ flex: 1 }} />
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
