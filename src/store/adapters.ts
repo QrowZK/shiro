@@ -592,6 +592,7 @@ export function roomModel(
   bots: Record<string, T.UpdateBotStatus>,
   users: Record<string, T.User>,
   modOptions: Record<string, string>,
+  party?: { id?: number; members: string[] },
 ): RoomModel | null {
   if (!battle || battle.BattleID == null) return null;
 
@@ -607,11 +608,22 @@ export function roomModel(
   const seats: Seat[] = [];
   let slotsTaken = 0;
 
+  /* Who to mark as party. This used to read `User.PartyID`, which the server
+     declares and never sends - it is `[JsonIgnore]`, so the field arrived
+     undefined for everybody and the marker `PlayerRow` draws has never once
+     appeared. `OnPartyStatus` is the real answer and the party store already
+     keeps it.
+
+     Only our own party can be marked, and that is not a shortcut: the server
+     sends `OnPartyStatus` to the party's own members, so somebody else's party
+     is not something this client is told about. */
+  const inParty = new Set(party?.members ?? []);
+
   for (const [name, status] of Object.entries(players)) {
     const entry: RoomPlayerModel = {
       user: userToChip(users[name], name),
       host: name === battle.Founder || undefined,
-      party: users[name]?.PartyID || undefined,
+      party: inParty.has(name) ? party?.id : undefined,
     };
     /* Spectators carry a sync status too, and it is deliberately not drawn.
        The question this mark answers is who is delaying the start, and a

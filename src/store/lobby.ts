@@ -99,13 +99,16 @@ const EMPTY = {
  * - `BattleID`   leaving a room
  * - `AwaySince`  coming back
  * - `InGameSince` the game ending
- * - `PartyID`    leaving a party
+ *
+ * `PartyID` used to be in this list and is not a field: the server declares it
+ * `[JsonIgnore]`, so it never arrives and there was nothing here to clear.
+ * Party membership comes from `OnPartyStatus`, which the party store keeps.
  *
  * Merged the general way, none of them ever cleared: somebody who left a battle
  * stayed listed in it, and somebody who came back stayed greyed out as away,
  * until they disconnected entirely.
  */
-const USER_CLEARED_WHEN_ABSENT = ["BattleID", "AwaySince", "InGameSince", "PartyID"] as const;
+const USER_CLEARED_WHEN_ABSENT = ["BattleID", "AwaySince", "InGameSince"] as const;
 
 /** Merge a `User` broadcast, honouring the fields above. */
 export function mergeUser(base: T.User | undefined, patch: T.User): T.User {

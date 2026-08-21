@@ -32,9 +32,11 @@ function fresh() {
 
 const SETUP = msg("MatchMakerSetup", {
   PossibleQueues: [
-    { Name: "1v1", Description: "1v1", MaxPartySize: 1, MaxSize: 2, MinSize: 2, Mode: 3,
-      UseWinChanceLimit: false, UseCasualElo: false, MinWinChanceMult: 0, MinWinChanceOffset: 0,
-      UseHandicap: false, EloCutOffExponent: 1 },
+    /* Exactly the five fields the server serialises. The rest of Queue is
+       `[JsonIgnore]` upstream, and a fixture carrying them would be a fixture
+       of a server that does not exist - which is how they got read in the
+       first place. */
+    { Name: "1v1", Description: "1v1", MaxPartySize: 1 },
   ],
 });
 

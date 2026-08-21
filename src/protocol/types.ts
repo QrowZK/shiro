@@ -143,10 +143,6 @@ export interface User {
   SteamID?: string;
   Badges?: string[];
   Icon?: string;
-  IpAddress?: string;
-  PartyID?: number;
-  SyncVersion: number;
-  RawMmElo: number;
   EffectiveMmElo: number;
   EffectiveElo: number;
   Level: number;
@@ -159,7 +155,6 @@ export interface UserDisconnected {
 }
 
 export interface Say {
-  AllowRelay: boolean;
   IsEmote: boolean;
   Place: E.SayPlace;
   Ring: boolean;
@@ -508,16 +503,6 @@ export interface MatchMakerSetup_Queue {
   Maps?: string[];
   Game?: string;
   MaxPartySize: number;
-  UseWinChanceLimit: boolean;
-  UseCasualElo: boolean;
-  MinWinChanceMult: number;
-  MinWinChanceOffset: number;
-  UseHandicap: boolean;
-  MaxSize: number;
-  MinSize: number;
-  EloCutOffExponent: number;
-  Mode: E.AutohostMode;
-  SafeMaps?: string[];
 }
 
 export interface MatchMakerQueueRequest {
@@ -591,6 +576,5 @@ export interface UserBattleStatus {
   Name?: string;
   ScriptPassword?: string;
   SyncStatus: E.SyncStatuses;
-  LobbyUser?: User;
 }
 

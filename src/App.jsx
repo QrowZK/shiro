@@ -208,6 +208,7 @@ export default function App() {
   const mmCheck = useMatchmaker(s => s.check);
 
   const partyMembers = useParty(s => s.members);
+  const partyID = useParty(s => s.partyID);
   const partyInvite = useParty(s => s.invite);
   const rejoinOffer = useGame(s => s.rejoin);
 
@@ -544,7 +545,8 @@ export default function App() {
 
   const battles = live ? battleList(liveBattles) : D.battles;
   const liveRoom = live && liveRoomID != null
-    ? roomModel(liveBattles[liveRoomID], roomPlayers, roomBots, liveUsers, roomOptions)
+    ? roomModel(liveBattles[liveRoomID], roomPlayers, roomBots, liveUsers, roomOptions,
+        { id: partyID, members: partyMembers })
     : null;
   /* The room on screen, whichever mode we are in. The demo path is supported -
      every screen has one - and reading `liveRoom` directly in this branch threw

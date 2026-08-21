@@ -170,8 +170,10 @@ function stripNested(inner) {
   }
 }
 
+// The leading group captures the attributes rather than merely skipping past
+// them, because one of them decides whether the member exists at all.
 const MEMBER =
-  /(?:\[[^\]]*\]\s*)*public\s+(?!class|enum|struct|interface)((?:[A-Za-z_][\w.]*)(?:\s*<[^>;{]*>)?\??(?:\[\])?)\s+([A-Za-z_]\w*)\s*(=>|\{\s*get\s*;\s*set\s*;\s*\}|\{\s*get\s*;\s*\}|=|;)/g;
+  /((?:\[[^\]]*\]\s*)*)public\s+(?!class|enum|struct|interface)((?:[A-Za-z_][\w.]*)(?:\s*<[^>;{]*>)?\??(?:\[\])?)\s+([A-Za-z_]\w*)\s*(=>|\{\s*get\s*;\s*set\s*;\s*\}|\{\s*get\s*;\s*\}|=|;)/g;
 
 function parseMembers(inner, ctx) {
   const stripped = stripNested(inner);
@@ -179,9 +181,18 @@ function parseMembers(inner, ctx) {
   let m;
   MEMBER.lastIndex = 0;
   while ((m = MEMBER.exec(stripped))) {
-    const [, rawType, name, tail] = m;
+    const [, attrs, rawType, name, tail] = m;
     if (tail === "=>") continue;                 // computed, never on the wire
     if (/\(/.test(rawType)) continue;            // method
+    /* [JsonIgnore] means the serializer drops it, so it is never on the wire
+       whatever the class says. Emitting it anyway produced fields that were
+       always undefined and typed as though they were not: MatchMakerSetup's
+       Queue declares Mode, MinSize and MaxSize - exactly what a client would
+       group queues by - and marks all three [JsonIgnore], so a screen written
+       against them read undefined and said nothing about it. User.PartyID is
+       the same. The attributes were already being matched here; they just were
+       not being read. */
+    if (/\[\s*JsonIgnore\s*(\([^)]*\))?\s*\]/.test(attrs)) continue;
     const { ts, optional } = mapType(rawType.trim(), ctx);
     members.push({ name, tsType: ts, optional });
   }
