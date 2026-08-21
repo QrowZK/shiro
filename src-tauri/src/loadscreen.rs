@@ -33,7 +33,9 @@
 //!
 //! The screen is three files, not one: the addon and the two pictures it draws.
 //! They are installed and removed together, because an addon that reaches for a
-//! texture nobody placed is worse than no addon at all.
+//! texture nobody placed is worse than no addon at all. The match file a launch
+//! writes beside them (`sidecar.rs`) is removed with them for the same reason
+//! read backwards: it exists for this addon, so it has no business outliving it.
 
 use std::path::{Path, PathBuf};
 
@@ -229,6 +231,11 @@ pub fn remove(root: &Path) -> Result<(), String> {
        is a second file, at a path this version never touches again, so nothing
        else is ever going to notice it is there. */
     clear_legacy(root);
+    /* And the match file, which belongs to this screen and nothing else: it is
+       written for this addon to read, so once the addon is gone it is a roster
+       in a folder with nothing left to draw it - and the one thing that would
+       stop the tidy-up below from ever emptying LuaIntro on a real install. */
+    crate::sidecar::clear(root);
     /* And the directories, if this is all that was in them. `remove_dir`
        refuses a directory that still has something in it, which is exactly the
        question worth asking: anything left is somebody else's. */
@@ -382,6 +389,21 @@ mod tests {
         assert!(!root.join("LuaIntro").exists(), "an empty LuaIntro was left behind");
         // Removing what is not there is not an error - it is the desired state.
         remove(&root).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_match_file_goes_when_the_screen_does() {
+        /* Written into LuaIntro/ by a launch, read by the addon and by nothing
+           else. Left behind it is a roster with nothing to draw it - and the
+           one file that would keep the test above from ever being true on an
+           install somebody had actually played from. */
+        let root = temp("match-file");
+        install(&root).unwrap();
+        std::fs::write(crate::sidecar::path(&root), "-- last week's match\nreturn {}\n").unwrap();
+        remove(&root).unwrap();
+        assert!(!crate::sidecar::path(&root).exists(), "the last match's roster survived");
+        assert!(!root.join("LuaIntro").exists(), "an empty LuaIntro was left behind");
         let _ = std::fs::remove_dir_all(&root);
     }
 
