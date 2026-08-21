@@ -743,6 +743,7 @@ export default function App() {
         badges: profiles[profileOf].Badges,
       } : liveUsers[profileOf] ? {
         level: liveUsers[profileOf].Level,
+        rank: liveUsers[profileOf].Rank,
         elo: Math.round(liveUsers[profileOf].EffectiveElo || 0),
         mmElo: Math.round(liveUsers[profileOf].EffectiveMmElo || 0),
         badges: liveUsers[profileOf].Badges,

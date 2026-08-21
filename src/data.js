@@ -1,7 +1,7 @@
 /* Fake data shaped exactly like the ZkLobbyServer payloads documented in
    docs/DESIGN_HANDOFF.md section 6. Replaced by the real protocol store
    once the Rust TCP relay lands - see docs/ARCHITECTURE.md section 4. */
-import { rankColour } from "./net/ranks.ts";
+import { playerRank, rankColour } from "./net/ranks.ts";
 
 /* Rank tints are derived rather than written into the fixtures below: the live
    path computes them in `userToChip`, and a demo that hard-coded them would
@@ -12,7 +12,9 @@ function tinted(value) {
   const out = {};
   for (const [k, v] of Object.entries(value)) out[k] = tinted(v);
   if (typeof out.elo === "number" && out.eloTint === undefined) {
-    out.eloTint = rankColour(out.elo);
+    /* Only an Elo here: these fixtures predate the rank field, and the demo is
+       allowed the fallback the live path almost never needs. */
+    out.eloTint = rankColour(playerRank({ elo: out.elo }));
   }
   return out;
 }
@@ -101,8 +103,15 @@ export default tinted({
     { time:"21:06", ring:true, user:{name:"quantum",clan:"ZKF",country:"PL"}, text:"Shadowfury get in here" }
   ],
   debrief: {
-    result:"Victory", map:"Argent_Strata_1.1", mode:"Teams", duration:"27:14", category:"Team",
-    elo:{ change:18, next:1842, rank:"Sergeant", rankup:true, prevRankElo:1750, nextRankElo:1900 },
+    /* Field names are `buildDebriefView`'s, not the mockup's: the demo is the
+       only place the debriefing gets exercised without a server, so a fixture
+       shaped differently from the live view hides exactly the bugs it should
+       be catching. It hid two - the rating panel and the match length never
+       rendered for a real match. */
+    result:"Victory", map:"Argent_Strata_1.1", mode:"Teams", elapsed:"27:14", category:"Team",
+    /* A rank Zero-K actually has. "Sergeant" was invented for the mockup and
+       read as though the game used military ranks, which it does not. */
+    rating:{ change:18, next:1842, rank:"Giant", rankup:true, prevRankElo:1750, nextRankElo:1900 },
     xp:{ change:640, next:12480, prevLevelXp:9000, nextLevelXp:16000, levelUp:false, level:41 },
     awards:[
       { name:"Most damage dealt", value:"148,320" },

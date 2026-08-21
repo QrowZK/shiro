@@ -41,7 +41,7 @@ export default function DebriefingScreen({ d, onBack, inRoom }) {
             color: "var(--text-hi)" }}>{d.result}</span>
           <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)", paddingBottom: 6 }}>
             <span className="lab">{d.mode} - {d.category}</span>
-            <span style={{ font: "var(--w-medium) var(--size-small)/1 var(--font-mono)", color: "var(--text-mid)" }}>{d.duration}</span>
+            <span style={{ font: "var(--w-medium) var(--size-small)/1 var(--font-mono)", color: "var(--text-mid)" }}>{d.elapsed}</span>
           </div>
           <span style={{ flex: 1 }} />
           {/* A match usually ends with everyone still sitting in the room
@@ -93,17 +93,21 @@ export default function DebriefingScreen({ d, onBack, inRoom }) {
           flex: 1, minHeight: 0, overflowY: "auto" }}>
           {/* A debriefing for a match you only watched carries no progression
               of your own - the panels stand down rather than render zeroes. */}
-          {d.elo && (
+          {d.rating && (
             <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
               <span className="lab">RATING</span>
               <div style={{ display: "flex", alignItems: "baseline", gap: "var(--sp-5)" }}>
-                <span style={{ font: "var(--text-num-lg)", color: "var(--text-hi)", fontVariantNumeric: "tabular-nums" }}>{d.elo.next}</span>
-                <RatingDelta value={d.elo.change} size="md" />
+                <span style={{ font: "var(--text-num-lg)", color: "var(--text-hi)", fontVariantNumeric: "tabular-nums" }}>{d.rating.next}</span>
+                <RatingDelta value={d.rating.change} size="md" />
               </div>
-              {d.elo.rankup && <Badge tone="solid" icon="chevron-up">Rank up - {d.elo.rank}</Badge>}
-              {d.elo.nextRankElo > d.elo.prevRankElo && (
-                <Meter label={"Next rank"} right={d.elo.next + " / " + d.elo.nextRankElo}
-                  value={d.elo.next - d.elo.prevRankElo} max={d.elo.nextRankElo - d.elo.prevRankElo} />
+              {d.rating.rankup && (
+                <Badge tone="solid" icon="chevron-up">
+                  {d.rating.rank ? `Rank up - ${d.rating.rank}` : "Rank up"}
+                </Badge>
+              )}
+              {d.rating.nextRankElo > d.rating.prevRankElo && (
+                <Meter label={"Next rank"} right={d.rating.next + " / " + d.rating.nextRankElo}
+                  value={d.rating.next - d.rating.prevRankElo} max={d.rating.nextRankElo - d.rating.prevRankElo} />
               )}
             </div>
           )}

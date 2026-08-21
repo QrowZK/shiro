@@ -25,6 +25,7 @@ import { create } from "zustand";
 import type { Message } from "../protocol/registry.ts";
 import type * as T from "../protocol/types.ts";
 import { mergePatch } from "../protocol/wire.ts";
+import { rankName } from "../net/ranks.ts";
 import { registerSlice } from "./slices.ts";
 
 /** Session-only ring buffer. Deep enough for a long evening of games. */
@@ -222,7 +223,8 @@ export interface DebriefRow {
 export interface DebriefRating {
   change: number;
   next: number;
-  rank: string;
+  /** Absent when the debriefing carried no rank for us to name. */
+  rank?: string;
   rankup: boolean;
   rankdown: boolean;
   prevRankElo: number;
@@ -381,7 +383,9 @@ export function buildDebriefView(
       ? {
         change: Math.round(mine.EloChange ?? 0),
         next: Math.round(mine.NewElo ?? 0),
-        rank: `Rank ${mine.NewRank ?? 0}`,
+        /* The rank you ranked up into, by the name the game announces it by -
+           "Rank 5" is an index into a table nobody outside the code has. */
+        rank: rankName(mine.NewRank),
         rankup: Boolean(mine.IsRankup),
         rankdown: Boolean(mine.IsRankdown),
         prevRankElo: Math.round(mine.PrevRankElo ?? 0),

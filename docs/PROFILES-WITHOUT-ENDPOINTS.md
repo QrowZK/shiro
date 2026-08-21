@@ -57,9 +57,10 @@ disagreeing about if you are going to disagree with any of it.
 Two things worth keeping even though they do not solve profiles:
 
 - The ladder rows are the only **name → AccountID** mapping in a supported API,
-  and they carry `Icon` as `"7_7"` — the same `<levelBracket>_<skillBracket>`
-  grid `src/net/ranks.ts` already ports. Independent confirmation of the rank
-  colour work.
+  and they carry `Icon` as `"7_7"` — the same `<levelBracket>_<rank>` grid
+  `src/net/ranks.ts` already reads. Independent confirmation of the rank colour
+  work. (Upstream's `Account.GetIconName()` settles what the second digit is:
+  the account's rank, not a rating band.)
 - 343 `MapItems` with `ResourceID` is a map catalogue we currently ask
   `FindResourceData` for one name at a time. That is a separate improvement, and
   it is the thing that would let map links reach a map's *own* page instead of a

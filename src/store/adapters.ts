@@ -6,7 +6,7 @@ import type * as T from "../protocol/types.ts";
 import type { AutohostMode, LoginResponse_Code } from "../protocol/enums.ts";
 import type { ConnectionState } from "./lobby.ts";
 import { changedOptions, type ModOptionDisplay } from "../net/modOptions.ts";
-import { rankColour } from "../net/ranks.ts";
+import { playerRank, rankColour } from "../net/ranks.ts";
 
 /**
  * `AutohostMode` and `LoginResponse_Code` restated as literals.
@@ -253,9 +253,11 @@ export function userToChip(u: T.User | undefined, name: string): ChipModel {
     faction: faction && FACTION_MARKS.has(faction) ? faction : undefined,
     level: u?.Level || undefined,
     elo: u?.EffectiveElo ? Math.round(u.EffectiveElo) : undefined,
-    /* Tinted the way the official client's rank icon is tinted, from the same
-       Elo we are showing - so the number and its colour cannot disagree. */
-    eloTint: rankColour(u?.EffectiveElo),
+    /* Tinted by rank, which is what the game tints the rating number by. The
+       server sends the rank, so the Elo is only ever a last resort here. */
+    eloTint: rankColour(playerRank({
+      icon: u?.Icon, rank: u?.Rank, elo: u?.EffectiveElo || undefined,
+    })),
     bot: u?.IsBot || undefined,
     admin: u?.IsAdmin || undefined,
     presence: !u ? "offline"

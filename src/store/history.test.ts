@@ -199,7 +199,8 @@ test("identity comes from the lobby store, progression from the debriefing", () 
   assert.equal(alice.change, 18);
   assert.deepEqual(v.awards, [{ name: "Most damage dealt", value: 148320 }]);
   assert.equal(v.rating?.rankup, true);
-  assert.equal(v.rating?.rank, "Rank 5");
+  // The rank Zero-K announces, not the index it stores it under.
+  assert.equal(v.rating?.rank, "Supergiant");
   assert.equal(v.xp?.change, 640);
 });
 

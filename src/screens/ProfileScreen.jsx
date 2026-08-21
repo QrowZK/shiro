@@ -1,5 +1,6 @@
 import React from "react";
 import { Badge, Button, Input, UserChip, EmptyState, Icon } from "../ds/shiro.js";
+import { playerRank, rankColour, rankName } from "../net/ranks.ts";
 
 /* Design 2A: one column, and searching turns the whole screen into whoever you
    picked. There is no separate "someone else" layout - the same panels render
@@ -243,7 +244,15 @@ export default function ProfileScreen({ me, users = {}, profile, records = [], v
      `User` record for them at all, so without it their card would be a name. */
   const w = web?.kind === "ok" ? web.profile : undefined;
   const level = isMe ? (profile?.Level ?? u?.Level) : (u?.Level ?? w?.level);
-  const rank = isMe ? (profile?.Rank ?? u?.Rank) : u?.Rank;
+  /* `w` is only ever somebody else's page, and only somebody offline has
+     nothing but a page - so the icon it carries is the rank we would otherwise
+     not have at all. */
+  const rank = playerRank({
+    icon: u?.Icon ?? w?.rankIcon, rank: isMe ? (profile?.Rank ?? u?.Rank) : u?.Rank,
+  });
+  /* Zero-K names its ranks; the number is an index into a table nobody outside
+     its source has. The page's own wording stands in if the icon did not parse. */
+  const rankLabel = rankName(rank) ?? w?.rank;
   const badges = (isMe ? profile?.Badges : u?.Badges) || [];
   const ratings = isMe
     ? [["General elo", profile?.EffectiveElo ?? u?.EffectiveElo],
@@ -264,7 +273,7 @@ export default function ProfileScreen({ me, users = {}, profile, records = [], v
   const meta = [
     u?.Country && `${u.Country}${COUNTRIES[u.Country] ? " · " + COUNTRIES[u.Country] : ""}`,
     u?.Faction && (FACTIONS[u.Faction.toLowerCase()] || u.Faction),
-    rank != null && `Rank ${rank}`,
+    rankLabel,
   ].filter(Boolean);
 
   return (
@@ -381,7 +390,11 @@ export default function ProfileScreen({ me, users = {}, profile, records = [], v
               display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
               <div style={{ display: "flex", gap: "var(--sp-3)", flexWrap: "wrap" }}>
                 {level != null && <Badge tone="outline">Level {level}</Badge>}
-                {rank != null && <Badge tone="outline">Rank {rank}</Badge>}
+                {/* In the rank's own colour, which is how the game distinguishes
+                    ranks at a glance. */}
+                {rankLabel && (
+                  <Badge tone="outline" style={{ color: rankColour(rank) }}>{rankLabel}</Badge>
+                )}
               </div>
               {badges.length > 0 && (
                 <>
