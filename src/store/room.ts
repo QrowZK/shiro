@@ -236,6 +236,7 @@ export const useRoom = create<RoomState>((set, get) => ({
     let pendingOptions = state.pendingOptions;
     let poll = state.poll;
     let pollOutcome = state.pollOutcome;
+    let sync = state.sync;
     let me = state.me;
 
     /* Copy-on-write: most batches touch none of this, and the screens
@@ -260,6 +261,16 @@ export const useRoom = create<RoomState>((set, get) => ({
           mapOptions = d.MapOptions ?? {};
           poll = undefined;
           pollOutcome = undefined;
+          /* What we told the *last* room is not true of this one, and
+             `reportSync` sends nothing when the value has not changed - so a
+             `Synced` carried across meant the new room never heard one, the
+             server held us at Unknown, and `!start` announced us as still
+             downloading the map every game for the life of the room.
+
+             Only room-to-room moves were affected: leaving resets everything,
+             so it took joining from the battle list while already in a room, or
+             a ForceJoinBattle. */
+          sync = SYNC_UNKNOWN;
           for (const p of d.Players ?? []) if (p.Name) players[p.Name] = p;
           for (const b of d.Bots ?? []) if (b.Name) bots[b.Name] = b;
           /* A join we asked to spectate: the status can only be set once the
@@ -387,7 +398,7 @@ export const useRoom = create<RoomState>((set, get) => ({
     }
 
     return { battleID, players, bots, modOptions, mapOptions, pendingSpectate,
-      pendingOptions, poll, pollOutcome, me };
+      pendingOptions, poll, pollOutcome, sync, me };
   }),
 
   setMe: name => set({ me: name }),

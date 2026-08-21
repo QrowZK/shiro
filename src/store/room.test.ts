@@ -54,6 +54,32 @@ test("JoinBattleSuccess is a snapshot and replaces the previous room", () => {
   assert.deepEqual(s.modOptions, {});
 });
 
+test("a new room starts with the sync state unknown, not the last room's", () => {
+  /* `reportSync` sends nothing when the value has not changed, so a `Synced`
+     carried over from the previous room means the new room never hears one.
+     The server keeps that player at Unknown, and `!start` then announces them
+     as still downloading the map - every game, for the life of the room.
+
+     It bites on an ordinary path: joining a battle from the list while already
+     in one, or being moved by ForceJoinBattle. Leaving first was fine, because
+     that resets everything. */
+  fresh();
+  useRoom.getState().applyMessage(JOINED);
+  useRoom.getState().reportSync(true);
+  assert.equal(useRoom.getState().sync, SYNC_SYNCED);
+
+  useRoom.getState().applyMessage(msg("JoinBattleSuccess", {
+    BattleID: 9,
+    Players: [{ Name: "Qrow", AllyNumber: 0 }],
+  }));
+  assert.equal(useRoom.getState().sync, SYNC_UNKNOWN,
+    "the new room inherited the last room's sync state");
+
+  useRoom.getState().reportSync(true);
+  assert.equal(useRoom.getState().sync, SYNC_SYNCED,
+    "and so the new room could never be told we have the map");
+});
+
 test("a battle status patch merges rather than replaces", () => {
   fresh();
   useRoom.getState().applyMessage(JOINED);
