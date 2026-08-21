@@ -35,6 +35,13 @@ pub struct ConnectRequest {
     pub port: u16,
     pub my_player_name: String,
     pub script_password: String,
+    /// What the loading screen is allowed to say about this match.
+    ///
+    /// Optional, and absent is a normal case rather than a degraded one: a
+    /// launch that carries no match still launches, and the screen falls back
+    /// to the layout that shows none.
+    #[serde(default)]
+    pub match_info: Option<crate::sidecar::Match>,
 }
 
 /// Spring's script format is unquoted and `;`-terminated, so a value containing
@@ -282,6 +289,21 @@ pub fn zks_launch_spring(
 /// Resolve install and engine, write the script, spawn.
 fn start(req: &ConnectRequest, root: Option<&str>) -> Result<std::process::Child, String> {
     let install = install::detect_with(root)?;
+
+    /* Tell the loading screen about the match, or make sure it is not told
+       about the last one. Failing to write it is not a reason to refuse a
+       launch - the screen degrades to the layout without it, and a game is
+       worth more than a caption. */
+    match &req.match_info {
+        Some(m) => {
+            if let Err(e) = crate::sidecar::write(&install.root, m) {
+                eprintln!("could not write the match details: {e}");
+                crate::sidecar::clear(&install.root);
+            }
+        }
+        None => crate::sidecar::clear(&install.root),
+    }
+
     let exe = install::find_engine(&install.root, &req.engine)?;
     let script = script_path();
     if let Some(dir) = script.parent() {

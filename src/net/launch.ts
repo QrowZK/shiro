@@ -18,6 +18,26 @@ export type GameStatus =
   | { kind: "exited"; code: number | null }
   | { kind: "failed"; reason: string };
 
+/** One side of the match, as the loading screen groups them. */
+export interface MatchTeam {
+  label: string;
+  players: string[];
+}
+
+/**
+ * What the loading screen is allowed to say about this match.
+ *
+ * The engine's loading context knows none of this - it lives in the lobby - so
+ * Shiro writes it to a file beside the addon. Optional throughout: a launch
+ * without it still launches, and the screen falls back to the layout that shows
+ * no match.
+ */
+export interface MatchInfo {
+  map: string;
+  title: string;
+  teams: MatchTeam[];
+}
+
 /** The subset of `ConnectSpring` the engine actually needs. */
 export interface ConnectRequest {
   engine: string;
@@ -25,6 +45,7 @@ export interface ConnectRequest {
   port: number;
   myPlayerName: string;
   scriptPassword: string;
+  matchInfo?: MatchInfo;
 }
 
 /**
