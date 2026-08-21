@@ -14,6 +14,13 @@ function tinted(value) {
   if (typeof out.elo === "number" && out.eloTint === undefined) {
     out.eloTint = rankColour(out.elo);
   }
+  /* Same rule for how full a room is: `battleToRow` works it out from the two
+     counts, and a fixture that stated it separately could contradict the very
+     numbers printed beside it. */
+  if (typeof out.players === "number" && typeof out.maxPlayers === "number" && out.maxPlayers > 0) {
+    if (out.full === undefined) out.full = out.players >= out.maxPlayers;
+    if (out.queued === undefined) out.queued = Math.max(0, out.players - out.maxPlayers);
+  }
   return out;
 }
 
@@ -29,11 +36,15 @@ export default tinted({
     { id:6, title:"FFA 8 way chaos", map:"Rainbow_Comet_v1.25", founder:"vex", players:6, maxPlayers:8, spectators:2, mode:"FFA" },
     { id:7, title:"clan practice [ZKF] only", map:"Argent_Strata_1.1", founder:"ZKF|nine", players:9, maxPlayers:16, spectators:0, mode:"Teams", locked:true },
     { id:8, title:"1v1 casual anyone", map:"Canis_River_v1.4", founder:"a", players:1, maxPlayers:2, spectators:0, mode:"1v1" },
-    { id:9, title:"big teams 16v16 come on", map:"Skate_Park_v1.00", founder:"marrow", players:22, maxPlayers:32, spectators:5, mode:"Teams" },
+    // Over its cap on purpose: the time-queue case, where the last two to
+    // claim a slot are spectated when the game starts.
+    { id:9, title:"big teams 16v16 come on", map:"Skate_Park_v1.00", founder:"marrow", players:34, maxPlayers:32, spectators:5, mode:"Teams" },
     { id:10, title:"running - 40 min in", map:"Hide_and_Seek_2.2.3", founder:"pell", players:12, maxPlayers:12, spectators:8, mode:"Teams", running:true, runningSince:2464 }
   ],
   room: {
     id:1, title:"Teams 8v8 - no noobs", map:"Argent_Strata_1.1", founder:"Shadowfury", mode:"Teams",
+    // Eight humans across the two teams; the bot takes no slot.
+    players:8, maxPlayers:16,
     options:[
       { key:"noelo", label:"No Elo", value:"1", known:true, desc:"Prevent battle from affecting Elo rankings" },
       { key:"startmetal", label:"Starting metal", value:"1300", known:true },
@@ -62,6 +73,8 @@ export default tinted({
       { user:{name:"nine",clan:"ZKF",country:"CA",presence:"room",level:21,elo:1499} },
       { user:{name:"zk-admin",country:"US",presence:"room",admin:true,level:60,elo:2400} }
     ],
+    // The two above whose sync mark is not "ok" - the same set `!start` names.
+    waitingOn:["lorelei","vexatiousmachinist"],
     chat:[
       { time:"21:03", user:{name:"quantum",clan:"ZKF",country:"PL"}, text:"map veto?" },
       { time:"21:03", user:{name:"Shadowfury",clan:"ZKF",country:"DE"}, text:"argent is fine, it is balanced enough for 8v8" },

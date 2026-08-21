@@ -74,6 +74,12 @@ await page.locator("input").nth(0).fill("Shadowfury");
 await page.locator("input").nth(1).fill("anything");
 await page.keyboard.press("Enter");
 check("any credentials get in", await waitFor(() => seeing(/Teams 8v8/)));
+/* Full rooms and the marks beside a name are derived from the fixtures the
+   same way the live path derives them, so the demo shows the real thing. */
+const badgeSaying = label => page.evaluate(l => [...document.querySelectorAll("span")]
+  .some(el => el.textContent.trim() === l), label);
+check("a full room is marked full", await badgeSaying("FULL"));
+check("and one over its cap says by how much", await badgeSaying("FULL +2"));
 await shot("demo-01-battles");
 
 console.log("battle room");
@@ -81,6 +87,8 @@ await clickText(/^Join room$/);
 check("the demo room opens rather than throwing",
   await waitFor(() => seeing(/ROOM CHAT/)));
 check("and it is the demo room", await seeing(/Shadowfury/));
+check("the room names whoever is still downloading",
+  await seeing(/Waiting on lorelei, vexatiousmachinist/));
 await shot("demo-02-room");
 
 console.log("the click-through ends where it should");

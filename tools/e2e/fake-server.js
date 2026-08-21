@@ -81,6 +81,20 @@
     state.push(line("BattleAdded", { Header: { BattleID: 13, Title: "running match",
       Map: "TartarusV7", Founder: "Qrow", PlayerCount: 12, MaxPlayers: 12, Mode: 6,
       IsRunning: true, RunningSince: "2026-08-18T09:30:00Z" } }));
+    /* Two rooms nobody can walk into, because the list has to tell them apart
+       from the ones you can. 14 is at its cap, which the server answers by
+       quietly spectating whoever arrives. 15 is *over* its cap, which only
+       happens where the server's time queue is on: everybody counts as a
+       player until the game starts, and then the last to claim a slot are
+       spectated. PlayerCount excludes spectators and bots, so it is the number
+       MaxPlayers is measured against. Both are kept quieter than battle 11 so
+       the busiest-room ordering above still has the same answer. */
+    state.push(line("BattleAdded", { Header: { BattleID: 14, Title: "full house",
+      Map: "Barren v3", Founder: "lorelei", PlayerCount: 6, MaxPlayers: 6,
+      SpectatorCount: 0, Mode: 6, IsRunning: false } }));
+    state.push(line("BattleAdded", { Header: { BattleID: 15, Title: "queue for a slot",
+      Map: "Barren v3", Founder: "lorelei", PlayerCount: 8, MaxPlayers: 6,
+      SpectatorCount: 0, Mode: 6, IsRunning: false, TimeQueueEnabled: true } }));
     state.push(line("JoinChannelResponse", { Success: true, ChannelName: "zk",
       Channel: { ChannelName: "zk", IsDeluge: false, Users: ["Qrow", "hexed", "lorelei"],
         Topic: { Text: "Welcome to Zero-K", SetBy: "zk-admin" } } }));
