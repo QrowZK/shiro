@@ -108,9 +108,11 @@ export default function AddAiDialog({ ally, onClose, onAdd, engine, game, instal
             </span>
           )}
         </div>
-        {/* Honest about being a guess. The server does not check `AiLib`, so an
-            AI named here but not installed starts an engine that fails at load
-            rather than reporting anything. */}
+        {/* Honest about being a guess - Shiro's built-in list, or a real
+            reading of a game that is not the one this room is playing. The
+            server does not check `AiLib`, so an AI named here but not
+            installed starts an engine that fails at load rather than
+            reporting anything. */}
         {(list.guessed || list.note) && (
           <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
             color: list.guessed ? "var(--text-mid)" : "var(--text-low)" }}>

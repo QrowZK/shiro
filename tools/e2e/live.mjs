@@ -1000,6 +1000,11 @@ check("and offers more than the one it used to hardcode",
 /* Seven chickens are one idea at seven difficulties, so they are one row with a
    difficulty beside it rather than seven lines of near-identical text. */
 check("with the chickens as one row", await page.getByRole("button", { name: /^Chicken/ }).count() === 1);
+/* A reading of the install the room is playing is not a guess and must not be
+   captioned as one - the caption is what makes a guess visible, and one that
+   is always there says nothing. */
+check("and no apology, because this list was read rather than guessed",
+  !(await seeing(/built-in list|not installed here/)));
 check("nothing is sent until the choice is made", !(await sentSince(beforeBot, /^UpdateBotStatus/)));
 
 await selectWith("Hard").selectOption({ label: "Hard" });

@@ -341,6 +341,9 @@
                 desc: "This AI is using the new C++ wrapper.", source: "engine" },
             ],
             note: null,
+            // The archive the room asked for is the one that was read, so
+            // nothing here is a guess and the picker says nothing about it.
+            gameArchive: "named",
           };
         case "zks_disconnect":
           return;

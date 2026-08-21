@@ -38,6 +38,14 @@
 //! units, BARb names none - and it stays true when either side changes. Where
 //! there is nothing to judge on (no `factory.json`, or a game whose archive
 //! lists no units) the AI is offered: silence is not evidence.
+//!
+//! **The two halves come apart.** Only the game's half needs an archive. A
+//! skirmish AI is a directory on disk, and whether it is installed is answered
+//! by looking at it - so a data directory this cannot read the game out of
+//! still gets its engine AIs read and offered, and says which half it guessed
+//! at. Rapid is the only archive format here; a Steam-layout `.sdz` is not
+//! opened, and that is a reason to fall back for the game's AIs, not a reason
+//! to answer nothing.
 
 use std::collections::{HashMap, HashSet};
 use std::io::Read;
@@ -62,7 +70,7 @@ pub struct Ai {
 }
 
 /// The answer, and what the reading could not cover.
-#[derive(Debug, Default, Serialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AiList {
     pub ais: Vec<Ai>,
@@ -70,6 +78,29 @@ pub struct AiList {
     /// reading was complete. An empty `ais` with a note is the caller's cue to
     /// fall back rather than show an empty picker.
     pub note: Option<String>,
+    /// Which archive the game's half of `ais` came out of: [`NAMED`],
+    /// [`ANOTHER`] or [`NO_ARCHIVE`]. The engine's half is a reading of the
+    /// disk whichever it says, so the caller can stand its built-in list in
+    /// for one half without throwing the other away.
+    pub game_archive: &'static str,
+}
+
+/// `game_archive`: the archive the room named - or, when the room named none,
+/// the only reading there was to do. Nothing contradicts this list.
+const NAMED: &str = "named";
+/// `game_archive`: a different game's archive. The room named one, no archive
+/// here spells it, and a data directory shared with another game had one to
+/// read. These are real AIs, of the wrong game.
+const ANOTHER: &str = "another";
+/// `game_archive`: none could be read. The game's half of the list is missing
+/// rather than short, and the caller's built-in list has to stand in for it.
+const NO_ARCHIVE: &str = "none";
+
+impl Default for AiList {
+    /// Nothing read, which is what a list built out of nothing is.
+    fn default() -> Self {
+        Self { ais: Vec::new(), note: None, game_archive: NO_ARCHIVE }
+    }
 }
 
 // ------------------------------------------------------------------- lua ---
@@ -95,6 +126,11 @@ struct LuaPair {
 /// `name = '...'` finds it. Comments are skipped - both `--` to end of line and
 /// `--[[ ]]`, which is how `AIInfo.lua` opens - and strings are consumed whole,
 /// so a `--` inside one is not mistaken for the start of a comment.
+///
+/// A value is any of Lua's three string forms: quoted, or a `[[long bracket]]`,
+/// which is what somebody writes a description in the moment it wants a line
+/// break in it. Dropping those would drop the entry silently, and an AI missing
+/// from a picker is indistinguishable from one that is not installed.
 fn lua_pairs(text: &str) -> Vec<LuaPair> {
     let b = text.as_bytes();
     let mut out = Vec::new();
@@ -106,19 +142,10 @@ fn lua_pairs(text: &str) -> Vec<LuaPair> {
 
     while i < b.len() {
         match b[i] {
-            b'-' if b.get(i + 1) == Some(&b'-') => {
-                i += 2;
-                if let Some(end) = long_bracket(b, i) {
-                    i = end;
-                } else {
-                    while i < b.len() && b[i] != b'\n' {
-                        i += 1;
-                    }
-                }
-            }
+            b'-' if b.get(i + 1) == Some(&b'-') => i = skip_gap(b, i),
             b'\'' | b'"' => i = end_of_string(b, i) + 1,
             b'[' => match long_bracket(b, i) {
-                Some(end) => i = end,
+                Some(long) => i = long.end,
                 None => i += 1,
             },
             b'{' => {
@@ -138,38 +165,66 @@ fn lua_pairs(text: &str) -> Vec<LuaPair> {
                     i += 1;
                 }
                 let key = &text[start..i];
-                let mut j = i;
-                while j < b.len() && b[j].is_ascii_whitespace() {
-                    j += 1;
-                }
+                let j = skip_gap(b, i);
                 // `==` is a comparison, not an assignment; nothing here writes
                 // one, but consuming it as a value would swallow a brace.
                 if b.get(j) != Some(&b'=') || b.get(j + 1) == Some(&b'=') {
                     continue;
                 }
-                let mut k = j + 1;
-                while k < b.len() && b[k].is_ascii_whitespace() {
-                    k += 1;
-                }
-                if !matches!(b.get(k), Some(b'\'') | Some(b'"')) {
-                    i = j + 1;
-                    continue;
-                }
-                let close = end_of_string(b, k);
+                let k = skip_gap(b, j + 1);
+                let (value, next) = match b.get(k) {
+                    Some(b'\'') | Some(b'"') => {
+                        let close = end_of_string(b, k);
+                        (unescape(&text[k + 1..close]), close + 1)
+                    }
+                    /* A long bracket takes its contents as written: Lua applies
+                       no escapes inside one, so neither does this. */
+                    Some(b'[') => match long_bracket(b, k) {
+                        Some(long) => (text[long.text].to_string(), long.end),
+                        None => {
+                            i = j + 1;
+                            continue;
+                        }
+                    },
+                    // A number, a table, a function call - not a string, and
+                    // nothing read here is anything else.
+                    _ => {
+                        i = j + 1;
+                        continue;
+                    }
+                };
                 if let Some(&table) = stack.last() {
-                    out.push(LuaPair {
-                        depth,
-                        table,
-                        key: key.to_ascii_lowercase(),
-                        value: unescape(&text[k + 1..close]),
-                    });
+                    out.push(LuaPair { depth, table, key: key.to_ascii_lowercase(), value });
                 }
-                i = close + 1;
+                i = next;
             }
             _ => i += 1,
         }
     }
     out
+}
+
+/// Past whitespace and comments, which Lua allows anywhere a space goes -
+/// including between a key and its `=`, and between the `=` and its value.
+/// Treating a comment there as the end of the assignment dropped the entry.
+fn skip_gap(b: &[u8], mut i: usize) -> usize {
+    loop {
+        while i < b.len() && b[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if b.get(i) != Some(&b'-') || b.get(i + 1) != Some(&b'-') {
+            return i;
+        }
+        i += 2;
+        match long_bracket(b, i) {
+            Some(long) => i = long.end,
+            None => {
+                while i < b.len() && b[i] != b'\n' {
+                    i += 1;
+                }
+            }
+        }
+    }
 }
 
 /// The index of the quote closing the string that opens at `at`, or the end of
@@ -190,9 +245,17 @@ fn end_of_string(b: &[u8], at: usize) -> usize {
     b.len()
 }
 
-/// Past the end of a `[[ ]]` or `[==[ ]==]` bracket starting at `at`, if that
-/// is what is there.
-fn long_bracket(b: &[u8], at: usize) -> Option<usize> {
+/// A `[[ ]]` or `[==[ ]==]` bracket: where its contents are, and where it ends.
+struct LongBracket {
+    /// The text between the brackets, as Lua would read it.
+    text: std::ops::Range<usize>,
+    /// Past the closing bracket.
+    end: usize,
+}
+
+/// The `[[ ]]` or `[==[ ]==]` bracket starting at `at`, if that is what is
+/// there.
+fn long_bracket(b: &[u8], at: usize) -> Option<LongBracket> {
     if b.get(at) != Some(&b'[') {
         return None;
     }
@@ -209,36 +272,80 @@ fn long_bracket(b: &[u8], at: usize) -> Option<usize> {
     close.push(b']');
     close.resize(level + 1, b'=');
     close.push(b']');
-    let from = i + 1;
+    // Lua drops a newline directly after the opening bracket, which is where
+    // anybody writing a multi-line description puts one.
+    let mut from = i + 1;
+    if b.get(from) == Some(&b'\r') {
+        from += 1;
+    }
+    if b.get(from) == Some(&b'\n') {
+        from += 1;
+    }
     for start in from..b.len() {
         if b[start..].starts_with(&close) {
-            return Some(start + close.len());
+            return Some(LongBracket { text: from..start, end: start + close.len() });
         }
     }
-    Some(b.len())
+    Some(LongBracket { text: from..b.len(), end: b.len() })
 }
 
-/// The escapes these files actually contain: an apostrophe inside a
-/// single-quoted description, and the backslash that protects it.
+/// Lua 5.1's escapes, which is the Lua these files are written for.
+///
+/// Mostly this is an apostrophe inside a single-quoted description and the
+/// backslash protecting it. `\65` is here because the alternative was worse
+/// than not decoding it: copying the digits through put the number 65 in the
+/// middle of a sentence, where nothing marks it as a failure. Bytes are
+/// assembled and decoded at the end rather than pushed as characters, because
+/// a numeric escape names a byte and a character above 127 is several.
 fn unescape(s: &str) -> String {
     if !s.contains('\\') {
         return s.to_string();
     }
-    let mut out = String::with_capacity(s.len());
-    let mut chars = s.chars();
-    while let Some(c) = chars.next() {
-        if c != '\\' {
-            out.push(c);
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] != b'\\' {
+            out.push(b[i]);
+            i += 1;
             continue;
         }
-        match chars.next() {
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some(other) => out.push(other),
-            None => out.push('\\'),
+        i += 1;
+        let Some(&c) = b.get(i) else {
+            out.push(b'\\');
+            break;
+        };
+        i += 1;
+        match c {
+            b'a' => out.push(0x07),
+            b'b' => out.push(0x08),
+            b'f' => out.push(0x0c),
+            b'n' => out.push(b'\n'),
+            b'r' => out.push(b'\r'),
+            b't' => out.push(b'\t'),
+            b'v' => out.push(0x0b),
+            b'0'..=b'9' => {
+                let mut value = u32::from(c - b'0');
+                // Three digits at most, so `\1234` is a byte and then a `4`.
+                for _ in 0..2 {
+                    match b.get(i) {
+                        Some(d @ b'0'..=b'9') => {
+                            value = value * 10 + u32::from(d - b'0');
+                            i += 1;
+                        }
+                        _ => break,
+                    }
+                }
+                // Lua refuses anything past a byte; a file that writes one is
+                // broken, and clamping keeps the rest of the string readable.
+                out.push(value.min(255) as u8);
+            }
+            // A quote, a backslash, or an escape Lua 5.1 does not have - in
+            // every case the character itself is what was meant.
+            other => out.push(other),
         }
     }
-    out
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// The entries of a list of tables: every table at depth 2, in file order, as
@@ -373,15 +480,29 @@ fn fold(name: &str) -> String {
     name.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
 }
 
+/// A rapid package, and whether it is the game that was asked for.
+struct Chosen {
+    pkg: Package,
+    /// What the archive calls itself. Only looked up when the room named a
+    /// game, because comparing against that name is the only thing it decides.
+    name: Option<String>,
+    /// False when the room named a game, no archive here spells it, and this
+    /// is the newest one taken instead. What follows is then a real AI list,
+    /// of a game nobody in the room is playing.
+    matched: bool,
+}
+
 /// The rapid package that is this game.
 ///
 /// A data directory holds one `.sdp` per rapid download, maps included, so the
 /// candidates are the ones carrying a `LuaAI.lua`. Among those, the one whose
 /// `modinfo.lua` spells the name the room gave; failing that the most recently
-/// fetched, which is the version somebody is most likely playing.
-fn game_package(root: &Path, game: Option<&str>) -> Option<Package> {
+/// fetched, which is the version somebody is most likely playing - and which
+/// is a guess, said so, because a Spring data directory is shared between games
+/// and the newest archive in one can be a game of its own.
+fn game_package(root: &Path, game: Option<&str>) -> Option<Chosen> {
     let wanted = game.map(fold).filter(|g| !g.is_empty());
-    let mut newest: Option<(std::time::SystemTime, Package)> = None;
+    let mut newest: Option<(std::time::SystemTime, Package, Option<String>)> = None;
 
     let entries = std::fs::read_dir(root.join("packages")).ok()?;
     for entry in entries.flatten() {
@@ -393,25 +514,26 @@ fn game_package(root: &Path, game: Option<&str>) -> Option<Package> {
         if pkg.lua_ai.is_none() {
             continue;
         }
-        if let Some(want) = &wanted {
-            let named = pkg
-                .modinfo
+        let named = wanted.as_ref().and_then(|_| {
+            pkg.modinfo
                 .as_deref()
                 .and_then(|h| pool_text(root, h))
-                .and_then(|t| archive_name(&t));
-            if named.map(|n| fold(&n)) == Some(want.clone()) {
-                return Some(pkg);
+                .and_then(|t| archive_name(&t))
+        });
+        if let Some(want) = &wanted {
+            if named.as_deref().map(fold) == Some(want.clone()) {
+                return Some(Chosen { pkg, name: named, matched: true });
             }
         }
         let when = entry
             .metadata()
             .and_then(|m| m.modified())
             .unwrap_or(std::time::UNIX_EPOCH);
-        if newest.as_ref().map_or(true, |(seen, _)| when >= *seen) {
-            newest = Some((when, pkg));
+        if newest.as_ref().map_or(true, |(seen, _, _)| when >= *seen) {
+            newest = Some((when, pkg, named));
         }
     }
-    newest.map(|(_, pkg)| pkg)
+    newest.map(|(_, pkg, name)| Chosen { pkg, name, matched: wanted.is_none() })
 }
 
 // ----------------------------------------------------------- the engine ---
@@ -530,32 +652,61 @@ fn json_strings(text: &str) -> Vec<String> {
 /// something, so the failures come back as a note beside an empty list and the
 /// caller decides what to show instead - see `src/net/ais.ts`.
 #[tauri::command]
-pub fn zks_list_ais(engine: String, game: Option<String>, install_root: Option<String>) -> AiList {
-    let install = match install::detect_with(install_root.as_deref()) {
-        Ok(i) => i,
-        Err(e) => return AiList { ais: Vec::new(), note: Some(e) },
-    };
-    list_in(&install.root, &engine, game.as_deref())
+pub async fn zks_list_ais(
+    engine: String,
+    game: Option<String>,
+    install_root: Option<String>,
+) -> AiList {
+    /* Off the thread that draws the window, the way `zks_managed_state` is. A
+       command declared without `async` runs on the main thread, and this one
+       gunzips and walks every `.sdp` in the data directory: measured at 10 ms
+       against an install holding one package and 380 ms against one holding
+       forty, in a release build, every time the picker opens. */
+    match tauri::async_runtime::spawn_blocking(move || {
+        list_ais_blocking(&engine, game.as_deref(), install_root.as_deref())
+    })
+    .await
+    {
+        Ok(list) => list,
+        /* Still not an error: the caller has nothing to do with one, and an
+           empty list beside a note is exactly what it falls back on. */
+        Err(e) => AiList {
+            note: Some(format!("Reading this install did not finish: {e}")),
+            ..AiList::default()
+        },
+    }
+}
+
+fn list_ais_blocking(engine: &str, game: Option<&str>, install_root: Option<&str>) -> AiList {
+    match install::detect_with(install_root) {
+        Ok(install) => list_in(&install.root, engine, game),
+        Err(e) => AiList { note: Some(first_line(&e)), ..AiList::default() },
+    }
+}
+
+/// A caption, out of a message written for a page.
+///
+/// `install::detect` answers with every directory it probed, one per line.
+/// That is the right answer in Settings, where the search is the point, and
+/// the wrong one under a picker, where the line breaks collapse and it reads
+/// as a paragraph of paths. The first line carries the reason; Settings has
+/// the rest.
+fn first_line(message: &str) -> String {
+    message.lines().next().unwrap_or(message).trim().to_string()
 }
 
 /// The reading itself, against a data directory rather than a detected install,
 /// so a test can point it at one.
 fn list_in(root: &Path, engine: &str, game: Option<&str>) -> AiList {
-    let Some(pkg) = game_package(root, game) else {
-        return AiList {
-            ais: Vec::new(),
-            note: Some(format!(
-                "Could not read the game archive under {}, so this is Shiro's built-in list \
-                 rather than a reading of your install.",
-                root.display()
-            )),
-        };
-    };
-
+    let chosen = game_package(root, game);
     let mut ais = Vec::new();
+    let mut notes: Vec<String> = Vec::new();
+
     /* The game's own first: these are the ones a Zero-K player is looking for,
        and CAI heading the list keeps the old one-click behaviour one click. */
-    if let Some(text) = pkg.lua_ai.as_deref().and_then(|h| pool_text(root, h)) {
+    if let Some(text) =
+        chosen.as_ref().and_then(|c| c.pkg.lua_ai.as_deref()).and_then(|h| pool_text(root, h))
+    {
         for entry in lua_entries(&text) {
             /* A LuaAI is a bare name on the wire. One containing `|` would be
                split into ShortName/Version by the server and looked for among
@@ -576,9 +727,44 @@ fn list_in(root: &Path, engine: &str, game: Option<&str>) -> AiList {
         }
     }
 
-    let mut note = None;
+    let game_archive = match &chosen {
+        Some(c) if c.matched => NAMED,
+        Some(c) => {
+            notes.push(match (game, &c.name) {
+                (Some(asked), Some(found)) => format!(
+                    "{asked} is not installed here, so these are {found}'s AIs rather than \
+                     a reading of the game this room is playing."
+                ),
+                _ => "The game this room is playing is not installed here, so these are \
+                      another game's AIs."
+                    .into(),
+            });
+            ANOTHER
+        }
+        /* No rapid package to read. A Steam-layout install keeps its game as
+           an `.sdz` under `games/`, which this does not open - but the
+           engine's skirmish AIs are directories sitting on disk, so they are
+           still read below and offered. Only the game's half is missing. */
+        None => {
+            notes.push(format!(
+                "Could not read a game archive under {}, so the game's own AIs here are \
+                 Shiro's built-in list and the engine's are offered unchecked against it.",
+                root.display()
+            ));
+            NO_ARCHIVE
+        }
+    };
+
+    /* With no archive there are no units, and `plays` lets every skirmish AI
+       through: silence is not evidence. */
+    let no_units = HashSet::new();
+    let units = chosen.as_ref().map_or(&no_units, |c| &c.pkg.units);
+
     if engine.trim().is_empty() {
-        note = Some("Shiro does not know the engine version yet, so only the game's own AIs are listed.".into());
+        notes.push(
+            "Shiro does not know the engine version yet, so the engine's own AIs are not listed."
+                .into(),
+        );
     } else {
         match install::find_engine(root, engine) {
             Ok(exe) => {
@@ -591,23 +777,34 @@ fn list_in(root: &Path, engine: &str, game: Option<&str>) -> AiList {
                     }
                 }
                 for (ai, at) in skirmish_ais(&dir) {
-                    if plays(&at, &pkg.units) {
+                    if plays(&at, units) {
                         ais.push(ai);
                     }
                 }
             }
             Err(_) => {
-                note = Some(format!(
-                    "Engine {engine} is not installed here, so only the game's own AIs are listed."
+                notes.push(format!(
+                    "Engine {engine} is not installed here, so the engine's own AIs are not listed."
                 ));
             }
         }
     }
 
-    if ais.is_empty() && note.is_none() {
-        note = Some("The game archive declares no AIs, so this is Shiro's built-in list.".into());
+    /* One AI twice is two identical rows, and the caller keys its rows on
+       `lib` - a repeat is a duplicate key in a list React is diffing. It takes
+       nothing stranger than an engine directory left behind by an older
+       install declaring the same `ShortName|Version` as the one beside it. */
+    let mut seen = HashSet::new();
+    ais.retain(|ai| seen.insert(ai.lib.clone()));
+
+    if ais.is_empty() && notes.is_empty() {
+        notes.push("The game archive declares no AIs, so this is Shiro's built-in list.".into());
     }
-    AiList { ais, note }
+    AiList {
+        ais,
+        note: (!notes.is_empty()).then(|| notes.join(" ")),
+        game_archive,
+    }
 }
 
 #[cfg(test)]
@@ -804,8 +1001,10 @@ mod tests {
         let lua = [7u8; 16];
         write_package(&root, "map.sdp", &[record("maps/comet.smf", [9; 16], 10)]);
         write_package(&root, "game.sdp", &[record("luaai.lua", lua, 10)]);
-        let pkg = game_package(&root, None).expect("the game was not found");
-        assert_eq!(pkg.lua_ai.as_deref(), Some(hex(&lua).as_str()));
+        let found = game_package(&root, None).expect("the game was not found");
+        assert_eq!(found.pkg.lua_ai.as_deref(), Some(hex(&lua).as_str()));
+        // Nothing was asked for, so nothing about it is a guess.
+        assert!(found.matched);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -827,8 +1026,50 @@ mod tests {
         write_package(&root, "new.sdp",
             &[record("luaai.lua", new_lua, 10), record("modinfo.lua", new_info, 10)]);
 
-        let pkg = game_package(&root, Some("Zero-K v1.14.8.0")).unwrap();
-        assert_eq!(pkg.lua_ai.as_deref(), Some(hex(&old_lua).as_str()));
+        let found = game_package(&root, Some("Zero-K v1.14.8.0")).unwrap();
+        assert_eq!(found.pkg.lua_ai.as_deref(), Some(hex(&old_lua).as_str()));
+        assert!(found.matched);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_archive_that_is_not_the_rooms_game_is_offered_as_the_guess_it_is() {
+        /* A Spring data directory is shared between games, and the newest
+           archive in one that has no Zero-K in it is not Zero-K. Handing back
+           its AIs was defensible; handing them back indistinguishable from a
+           reading of the room's own game was not - the caller marks a guess,
+           and had nothing to mark. */
+        let root = temp("elsewhere");
+        let lua = [0x21u8; 16];
+        let info = [0x22u8; 16];
+        pool_write(&root, info, "return { name='Balanced Annihilation', version='v12.1' }");
+        pool_write(&root, lua, "return { { name = 'Shard' } }");
+        write_package(&root, "ba.sdp",
+            &[record("luaai.lua", lua, 10), record("modinfo.lua", info, 10)]);
+
+        let list = list_in(&root, "", Some("Zero-K v1.14.8.0"));
+        assert_eq!(list.game_archive, ANOTHER);
+        assert_eq!(list.ais.len(), 1, "the archive that was there is still read");
+        let note = list.note.expect("a guess that does not say so is a claim");
+        // Both names, because "this is a guess" is not actionable and
+        // "these are Balanced Annihilation's AIs" is.
+        assert!(note.contains("Zero-K v1.14.8.0"), "{note}");
+        assert!(note.contains("Balanced Annihilation v12.1"), "{note}");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_archive_the_room_named_is_not_a_guess() {
+        let root = temp("exact");
+        let lua = [0x23u8; 16];
+        let info = [0x24u8; 16];
+        pool_write(&root, info, "return { name='Zero-K', version='v1.14.8.0' }");
+        pool_write(&root, lua, "return { { name = 'CAI' } }");
+        write_package(&root, "zk.sdp",
+            &[record("luaai.lua", lua, 10), record("modinfo.lua", info, 10)]);
+
+        let list = list_in(&root, "", Some("Zero-K v1.14.8.0"));
+        assert_eq!(list.game_archive, NAMED);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -970,5 +1211,114 @@ mod tests {
         // And says why the engine's are missing rather than pretending.
         assert!(list.note.is_some_and(|n| n.contains("2025.06.21")));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Put a file where `install::find_engine` looks, so a test can have an
+    /// engine tree on whichever platform it is running on.
+    fn fake_engine(root: &Path, version: &str) -> PathBuf {
+        let exe = install::engine_candidates(root, version).remove(0);
+        let dir = exe.parent().expect("a candidate is always inside a directory").to_path_buf();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&exe, b"not an engine, but a file where one goes").unwrap();
+        dir
+    }
+
+    fn put_skirmish_ai(engine_dir: &Path, name: &str, version: &str, info: &str) {
+        let dir = engine_dir.join("AI").join("Skirmish").join(name).join(version);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("AIInfo.lua"), info).unwrap();
+    }
+
+    #[test]
+    fn a_game_this_cannot_read_does_not_hide_the_engines_ais() {
+        /* The one layout this module cannot open is the ordinary one for a
+           Steam copy of Zero-K: the game is an `.sdz` under `games/` and there
+           is no rapid package at all. That used to answer nothing, which meant
+           CircuitAI - a directory sitting in the engine tree, needing no
+           archive read to know it is installed - went unoffered on an install
+           that has it. Only the game's half of the list is a guess. */
+        let root = temp("steamish");
+        std::fs::create_dir_all(root.join("games")).unwrap();
+        std::fs::write(root.join("games").join("zk-v1.14.8.0.sdz"), b"PK").unwrap();
+        let engine = fake_engine(&root, "2025.06.21");
+        put_skirmish_ai(&engine, "CircuitAI", "stable", CIRCUIT);
+
+        let list = list_in(&root, "2025.06.21", Some("Zero-K v1.14.8.0"));
+        assert_eq!(list.game_archive, NO_ARCHIVE);
+        assert_eq!(list.ais.len(), 1);
+        assert_eq!(list.ais[0].lib, "CircuitAI|stable");
+        assert_eq!(list.ais[0].source, "engine");
+        // And the caller is told which half it has to stand in for.
+        assert!(list.note.is_some_and(|n| n.contains("game archive")));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn one_ai_declared_twice_is_one_row() {
+        /* An engine directory left behind by an older install declares the
+           same `ShortName|Version` as the one beside it, and a game archive
+           can repeat a name. Two identical rows is the visible half; the
+           caller keys its rows on `lib`, so the repeat is a duplicate key in a
+           list being diffed, which is a bug with no symptom until it is one. */
+        let root = temp("twice");
+        let lua = [0x31u8; 16];
+        pool_write(&root, lua, "return {\n  { name = 'CAI' },\n  { name = 'CAI' },\n}\n");
+        write_package(&root, "zk.sdp", &[record("luaai.lua", lua, 10)]);
+        let engine = fake_engine(&root, "2025.06.21");
+        put_skirmish_ai(&engine, "CircuitAI", "stable", CIRCUIT);
+        put_skirmish_ai(&engine, "circuit-ai", "old", CIRCUIT);
+
+        let list = list_in(&root, "2025.06.21", None);
+        assert_eq!(list.ais.iter().filter(|a| a.lib == "CAI").count(), 1);
+        assert_eq!(list.ais.iter().filter(|a| a.lib == "CircuitAI|stable").count(), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ------------------------------------------------------------- lua ---
+
+    #[test]
+    fn a_description_written_across_lines_is_still_a_description() {
+        /* `[[ ]]` is how anybody writes a value with a line break in it, and
+           an entry whose name was written that way used to vanish - which in a
+           picker is indistinguishable from an AI that is not installed. */
+        let text = "return {\n  { name = [[Long Name]], desc = [[\nfirst\nsecond]] },\n}\n";
+        let entries = lua_entries(text);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].get("name").map(String::as_str), Some("Long Name"));
+        // Lua drops the newline that opens the bracket and keeps the rest.
+        assert_eq!(entries[0].get("desc").map(String::as_str), Some("first\nsecond"));
+    }
+
+    #[test]
+    fn a_comment_between_a_key_and_its_value_is_not_the_end_of_the_entry() {
+        let text = "return {\n  { name = --[[ which ]] 'CAI',\n    desc = -- why\n      'plays' },\n}\n";
+        let entries = lua_entries(text);
+        assert_eq!(entries[0].get("name").map(String::as_str), Some("CAI"));
+        assert_eq!(entries[0].get("desc").map(String::as_str), Some("plays"));
+    }
+
+    #[test]
+    fn a_numeric_escape_is_the_byte_it_names() {
+        // `\65` is A. Copying the digits through put a number in a sentence.
+        assert_eq!(unescape(r"\65\66\67"), "ABC");
+        // Three digits at most, so the 4 here is a 4.
+        assert_eq!(unescape(r"\0654"), "A4");
+        assert_eq!(unescape(r"it\'s \\ fine\nhere"), "it's \\ fine\nhere");
+        // Bytes, not characters: a two-byte character written as its bytes
+        // has to come back out as that character.
+        assert_eq!(unescape(r"\195\169"), "é");
+    }
+
+    #[test]
+    fn a_note_is_one_line_because_it_sits_under_a_picker() {
+        /* `install::detect` lists every directory it probed, one per line. In
+           the caption under the picker those breaks collapse and it becomes a
+           paragraph of paths. */
+        assert_eq!(
+            first_line("No Zero-K installation found.\nLooked in:\n  C:\\a\n  D:\\b"),
+            "No Zero-K installation found."
+        );
+        let already = "D:\\games is not a Zero-K installation - no engine/ beside it.";
+        assert_eq!(first_line(already), already);
     }
 }
