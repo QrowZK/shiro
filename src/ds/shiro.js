@@ -1198,14 +1198,51 @@ function MapImage({
 }) {
   const [failed, setFailed] = React.useState(false);
   const [loaded, setLoaded] = React.useState(false);
-  React.useEffect(() => {
-    setFailed(false);
-    setLoaded(false);
-  }, [map]);
+  const imgRef = React.useRef(null);
   /* VENDOR PATCH (see README > Known issues): zero-k.info stores map assets
      with underscores, but the lobby server sends names with spaces, so an
      unnormalized name 404s for most maps. Display text keeps the spaces. */
   const src = BASE + encodeURIComponent(String(map).replace(/ /g, "_")) + "." + kind + ".jpg";
+  /* VENDOR PATCH: settle the fade from the element, not only from the event.
+
+     The image is drawn at `opacity: 0` until `load` fires. When the browser
+     already has the picture, it can finish before that handler is listening,
+     the event goes to nobody, and the gate never opens - a fully decoded
+     minimap sitting invisible on the black ground below it.
+
+     It showed up as "map images are black in battle rooms and fine
+     everywhere else", which is the same fact in disguise: the room is the
+     one place you always arrive having just seen that map in the list, so
+     the room is the one place the picture is always already in hand. Read
+     off a live room: `complete: true`, `naturalWidth: 1024`, `opacity: 0`.
+
+     An element that is `complete` has the answer without being asked, so ask
+     it. `naturalWidth` separates a picture from a 404, which is the same
+     thing `onError` would have said. This runs before paint, so a cached
+     image is opaque on its first frame rather than fading in from nothing.
+
+     Replaces an effect on `[map]` that only cleared the two flags. Keying on
+     `src` instead is what makes it safe to set them here as well: names that
+     differ only in their spaces - the server sends both - address the same
+     picture, and used to reset a fade that then had no event left to reopen
+     it. */
+  React.useLayoutEffect(() => {
+    const el = imgRef.current;
+    if (!el) return undefined;
+    const settle = () => {
+      setLoaded(el.naturalWidth > 0);
+      setFailed(el.naturalWidth === 0);
+    };
+    if (el.complete) { settle(); return undefined; }
+    setLoaded(false);
+    setFailed(false);
+    el.addEventListener("load", settle);
+    el.addEventListener("error", settle);
+    return () => {
+      el.removeEventListener("load", settle);
+      el.removeEventListener("error", settle);
+    };
+  }, [src]);
   const m = map.match(/^(.*?)((?:_v?\d[\d.]*)?)$/) || [];
   /* The minimap is a door: on zero-k.info the map has a real detail page with
      heightmap, size and win statistics, which is exactly what a room arguing
@@ -1255,10 +1292,9 @@ function MapImage({
       wordBreak: "break-word"
     }
   }, map)) : /*#__PURE__*/React.createElement("img", {
+    ref: imgRef,
     src: src,
     alt: "",
-    onError: () => setFailed(true),
-    onLoad: () => setLoaded(true),
     style: {
       width: "100%",
       height: "100%",
