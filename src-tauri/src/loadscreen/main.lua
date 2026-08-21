@@ -77,7 +77,13 @@ local TRACK_WORDMARK, TRACK_STEP = 0.16, 0.09
 
 local lastLoadMessage = ""
 local lastStep = ""
-local lastProgress = {0, 0}
+-- Floor and ceiling for the phase in progress. The ceiling starts open, not
+-- closed: the bands are applied as min(max(engine, floor), ceiling), so a
+-- ceiling of zero clamps the engine's own number to zero - and it stays there
+-- until one of the five exact-match messages below arrives. The engine emits
+-- far more messages than those five, so on a load that starts with any other
+-- one the bar sat at 0% while the machine was visibly working.
+local lastProgress = {0, 1}
 
 -- The engine's progress reporting is coarse and stops for long stretches, so
 -- Zero-K brackets each phase between a floor and a ceiling and lets the bar

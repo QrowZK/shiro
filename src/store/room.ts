@@ -25,7 +25,7 @@ import { create } from "zustand";
 
 import type { CommandName, Message, MessageMap } from "../protocol/registry.ts";
 import type * as T from "../protocol/types.ts";
-import type { SyncStatuses } from "../protocol/enums.ts";
+import type { SyncStatuses, AutohostMode } from "../protocol/enums.ts";
 
 /* Spelled out rather than imported as values: `enums.ts` declares TypeScript
    `enum`s, which are a runtime construct that Node's type stripping refuses to
@@ -68,6 +68,15 @@ export interface HostOptions {
   title: string;
   map: string;
   maxPlayers: number;
+  /**
+   * What kind of room this is - Teams, 1v1, FFA, Cooperative, Custom.
+   *
+   * The wire calls it `Mode` and it is a number. It decides how the room
+   * presents itself in the list and what an autohost does with it, and leaving
+   * it out meant every room hosted from here was whatever the server defaulted
+   * to rather than what the person asked for.
+   */
+  mode?: AutohostMode;
   password?: string;
   engine?: string;
   game?: string;
@@ -353,6 +362,7 @@ export const useRoom = create<RoomState>((set, get) => ({
         Title: opts.title,
         Map: opts.map,
         MaxPlayers: opts.maxPlayers,
+        Mode: opts.mode,
         // Omitted rather than sent empty: the server treats an empty string as
         // a password and then refuses your own join.
         Password: opts.password ? opts.password : undefined,
