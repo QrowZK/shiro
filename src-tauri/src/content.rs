@@ -632,6 +632,17 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
             }
         }
 
+        /* Write down what arrived, so the next preflight knows about it
+           without waiting for the engine to restart and rescan. This is the
+           difference between fetching a map and being able to say you have it. */
+        if outcome == Outcome::Ok {
+            if let Ok(install) = install::detect_with(root_w.as_deref()) {
+                for item in &items_w {
+                    archives::remember_downloaded(&install.root, &item.name);
+                }
+            }
+        }
+
         let _ = app_w.emit(
             CONTENT_EVENT,
             ContentStatus::Finished { id: id.clone(), outcome, message, log },

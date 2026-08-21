@@ -138,14 +138,59 @@ fn bracket_field(block: &str, key: &str) -> Option<String> {
     Some(block[start..end].to_string())
 }
 
-/// What the engine knows is installed under this data directory.
+/// Where Shiro records what it has downloaded itself.
+///
+/// The archive cache is written by the engine, so it only learns about an
+/// archive when the engine next starts. That leaves a real gap: Shiro downloads
+/// the map for a battle, the engine has not run since, and the cache still says
+/// the map is missing - so the room is told UNSYNCED for content that is
+/// sitting on disk. On a freshly created install the gap covers everything,
+/// because the engine has never run at all.
+///
+/// So a successful download writes down what it fetched, and that counts as
+/// installed too.
+///
+/// The honest limit: unlike a cache entry, this cannot be checked against a
+/// file, because what pr-downloader wrote is a pool of chunks rather than a
+/// path we can name. Deleting an archive by hand after Shiro fetched it will
+/// leave this claiming it is present until the engine next rescans. That is
+/// worth it against the alternative, which is being announced as "still
+/// downloading the map" in every game.
+pub const DOWNLOADED: &str = ".shiro-downloaded";
+
+/// Add a name to the record. Best-effort: a launcher that cannot write here is
+/// not a launcher that should refuse to download.
+pub fn remember_downloaded(root: &Path, name: &str) {
+    if name.trim().is_empty() {
+        return;
+    }
+    let mut seen = read_downloaded(root);
+    if seen.iter().any(|n| fold(n) == fold(name)) {
+        return;
+    }
+    seen.push(name.to_string());
+    let _ = std::fs::write(root.join(DOWNLOADED), seen.join("\n") + "\n");
+}
+
+fn read_downloaded(root: &Path) -> Vec<String> {
+    std::fs::read_to_string(root.join(DOWNLOADED))
+        .map(|t| t.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect())
+        .unwrap_or_default()
+}
+
+/// What is installed under this data directory: what the engine scanned, plus
+/// what Shiro fetched since.
 ///
 /// An empty result is not an error: a fresh install has never run the engine
-/// and so has no cache. The caller reads that as "nothing known to be here".
+/// and has downloaded nothing. The caller reads that as "nothing known to be
+/// here", which results in a download rather than a false claim.
 pub fn installed(root: &Path) -> Installed {
     let mut out = Installed::default();
     for file in cache_files(root) {
         read_cache(&file, &mut out);
+    }
+    for name in read_downloaded(root) {
+        out.insert(&name);
     }
     out
 }
@@ -240,6 +285,24 @@ mod tests {
         assert!(found.has("comet catcher redux"));
         // But a different version is a different archive.
         assert!(!found.has("Comet Catcher Redux v2"));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn something_we_downloaded_counts_before_the_engine_has_seen_it() {
+        /* The gap this closes: Shiro fetches the map for a battle, the engine
+           has not restarted, and the cache still says it is missing - so the
+           room is told UNSYNCED about content already on disk. On a fresh
+           managed install that is true of everything, because the engine has
+           never run. */
+        let root = temp("downloaded");
+        assert!(!installed(&root).has("Some Map v3"));
+        remember_downloaded(&root, "Some Map v3");
+        assert!(installed(&root).has("some map v3"));
+
+        // Writing it twice does not duplicate it.
+        remember_downloaded(&root, "Some Map v3");
+        assert_eq!(installed(&root).len(), 1);
         let _ = std::fs::remove_dir_all(&root);
     }
 
