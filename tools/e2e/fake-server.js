@@ -54,6 +54,12 @@
   const line = (cmd, data) => cmd + " " + JSON.stringify(data);
   const soon = fn => setTimeout(fn, 5);
 
+  /* Every MatchMakerStatus carries the counts, and the ones sent after a queue
+     request used to carry a different, older set - so joining a queue emptied
+     every row on the screen. Named once so they cannot drift again. */
+  const QUEUE_COUNTS = { "1v1": 6, "1v1 Narrow": 3, Sortie: 9, Battle: 21, Coop: 3, "2v2+": 5 };
+  const INGAME_COUNTS = { "1v1": 2, Sortie: 4, Battle: 14, Coop: 1 };
+
   /** The post-login flood, trimmed to what the screens actually read. */
   function flood() {
     state.push(line("User", { Name: "Qrow", AccountID: 1, Country: "GB", Clan: "ZKF",
@@ -101,16 +107,42 @@
     state.push(line("Say", { Place: 0, Target: "zk", User: "hexed", Text: "anyone up for teams",
       Time: "2026-08-18T09:51:00Z", IsEmote: false, Ring: false, AllowRelay: true }));
     state.push(line("FriendList", { Friends: [{ Name: "hexed" }, { Name: "lorelei" }] }));
+    /* The queues ZkLobbyServer actually runs, names and descriptions verbatim
+       from MatchMaker.cs, and nothing else - because nothing else is on the
+       wire. `MatchMakerSetup.Queue` upstream declares Mode, MinSize, MaxSize,
+       SafeMaps and the elo knobs, and marks every one of them [JsonIgnore]; our
+       generated type lists them because gen-protocol.mjs reads the C# members
+       and not that attribute, but a client never sees them. Serialised: Name,
+       Description, Maps, Game, MaxPartySize. Maps is a few hundred internal map
+       names per queue and nothing here reads it, so it is left out the way the
+       server leaves out anything null.
+
+       Seventeen of them, which is the point: this used to be two, and two
+       queues will make any layout look fine. */
     state.push(line("MatchMakerSetup", { PossibleQueues: [
-      { Name: "1v1", Description: "1v1", MaxPartySize: 1, UseWinChanceLimit: false,
-        UseCasualElo: false, MinWinChanceMult: 0, MinWinChanceOffset: 0, UseHandicap: false,
-        MaxSize: 2, MinSize: 2, EloCutOffExponent: 1, Mode: 3 },
-      { Name: "Teams", Description: "Teams", MaxPartySize: 4, UseWinChanceLimit: false,
-        UseCasualElo: false, MinWinChanceMult: 0, MinWinChanceOffset: 0, UseHandicap: false,
-        MaxSize: 16, MinSize: 4, EloCutOffExponent: 1, Mode: 6 },
+      { Name: "Sortie", MaxPartySize: 3,
+        Description: "Play 2v2 or 3v3 with players of similar skill." },
+      { Name: "Sortie Wide", MaxPartySize: 3, Description: "Play 2v2 or 3v3 with anyone." },
+      { Name: "Battle", MaxPartySize: 6,
+        Description: "Play 4v4, 5v5 or 6v6 with players of similar skill." },
+      { Name: "Battle Wide", MaxPartySize: 6, Description: "Play 4v4, 5v5 or 6v6 with anyone." },
+      { Name: "Coop", MaxPartySize: 5, Description: "Play together, against AI or chickens." },
+      { Name: "1v1", MaxPartySize: 1, Description: "Play 1v1 with an opponent of similar skill." },
+      { Name: "1v1 Narrow", MaxPartySize: 1, Description: "Play 1v1 with a closely matched opponent." },
+      { Name: "1v1 Wide", MaxPartySize: 1,
+        Description: "Play 1v1 with a potentially not-so-closely matched opponent." },
+      { Name: "2v2+", MaxPartySize: 6, Description: "Play a casual 2v2 or larger with anyone." },
+      { Name: "3v3+", MaxPartySize: 6, Description: "Play a casual 3v3 or larger with anyone." },
+      { Name: "4v4+", MaxPartySize: 6, Description: "Play a casual 4v4 or larger with anyone." },
+      { Name: "5v5+", MaxPartySize: 6, Description: "Play a casual 5v5 or larger with anyone." },
+      { Name: "6v6+", MaxPartySize: 6, Description: "Play a casual 6v6 or larger with anyone." },
+      { Name: "7v7+", MaxPartySize: 6, Description: "Play a casual 7v7 or larger with anyone." },
+      { Name: "8v8+", MaxPartySize: 6, Description: "Play a casual 8v8 or larger with anyone." },
+      { Name: "9v9+", MaxPartySize: 6, Description: "Play a casual 9v9 or larger with anyone." },
+      { Name: "10v10+", MaxPartySize: 6, Description: "Play a casual 10v10 or larger with anyone." },
     ] }));
-    state.push(line("MatchMakerStatus", { JoinedQueues: [], QueueCounts: { "1v1": 6, Teams: 21 },
-      IngameCounts: { "1v1": 2, Teams: 14 }, UserCount: 100, UserCountDiscord: 12 }));
+    state.push(line("MatchMakerStatus", { JoinedQueues: [], QueueCounts: QUEUE_COUNTS,
+      IngameCounts: INGAME_COUNTS, UserCount: 100, UserCountDiscord: 12 }));
   }
 
   /** The roster of a battle we just joined. */
@@ -196,7 +228,7 @@
         break;
       case "MatchMakerQueueRequest":
         soon(() => state.push(line("MatchMakerStatus", { JoinedQueues: data.Queues,
-          QueueCounts: { "1v1": 6, Teams: 21 }, IngameCounts: { "1v1": 2, Teams: 14 },
+          QueueCounts: QUEUE_COUNTS, IngameCounts: INGAME_COUNTS,
           JoinedTime: new Date().toISOString(), UserCount: 100, UserCountDiscord: 12 })));
         break;
       case "AreYouReadyResponse":
