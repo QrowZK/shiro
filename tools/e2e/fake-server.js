@@ -288,6 +288,28 @@
           ];
         case "zks_find_maps":
           return [{ name: "Comet Catcher Redux v3.1", support: "MatchMaker" }];
+        /* What Rust reads off a real install: Zero-K's nine LuaAIs out of the
+           game archive, then the engine's skirmish AIs. BARb is absent because
+           it is absent on a real install too - it ships with the engine and
+           builds BAR units, so the reading drops it. */
+        case "zks_list_ais":
+          return {
+            ais: [
+              { lib: "CAI", name: "CAI", desc: "AI that plays regular Zero-K", source: "game" },
+              { lib: "Chicken: Beginner", name: "Chicken: Beginner", desc: "For PvE in PvP games", source: "game" },
+              { lib: "Chicken: Very Easy", name: "Chicken: Very Easy", desc: "For PvE in PvP games", source: "game" },
+              { lib: "Chicken: Easy", name: "Chicken: Easy", desc: "Ice cold", source: "game" },
+              { lib: "Chicken: Normal", name: "Chicken: Normal", desc: "Lukewarm", source: "game" },
+              { lib: "Chicken: Hard", name: "Chicken: Hard", desc: "Will burn your ass", source: "game" },
+              { lib: "Chicken: Suicidal", name: "Chicken: Suicidal", desc: "Flaming hell!", source: "game" },
+              { lib: "Chicken: Custom", name: "Chicken: Custom",
+                desc: "A chicken experience customizable using modoptions", source: "game" },
+              { lib: "Null AI", name: "Null AI", desc: "Empty AI for testing purposes", source: "game" },
+              { lib: "CircuitAI|stable", name: "CircuitAI",
+                desc: "This AI is using the new C++ wrapper.", source: "engine" },
+            ],
+            note: null,
+          };
         case "zks_disconnect":
           return;
         case "zks_locate_install":

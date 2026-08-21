@@ -950,14 +950,27 @@ await page.evaluate(() => window.__ZKS.push('BattlePollOutcome ' + JSON.stringif
 check("the outcome replaces the open vote", await waitFor("outcome", () => seeing(/Map changed to TartarusV7/)));
 
 console.log("host controls");
+const beforeBot = await mark();
 await clickText(/Add AI/);
-check("adding an AI names us as the owner",
-  await waitFor("bot", () => sentAny(/^UpdateBotStatus \{.*"AiLib":"CAI".*"Owner":"Qrow"/)));
+/* Shiro used to add CAI and nothing else, which is one of the nine AIs Zero-K
+   declares and none of the ones the engine brings. */
+check("Add AI asks which one", await waitFor("aipick", () => seeing(/Add an AI to team/)));
+check("and offers more than the one it used to hardcode",
+  await seeing(/CircuitAI/) && await seeing(/Chicken/));
+/* Seven chickens are one idea at seven difficulties, so they are one row with a
+   difficulty beside it rather than seven lines of near-identical text. */
+check("with the chickens as one row", await page.getByRole("button", { name: /^Chicken/ }).count() === 1);
+check("nothing is sent until the choice is made", !(await sentSince(beforeBot, /^UpdateBotStatus/)));
+
+await selectWith("Hard").selectOption({ label: "Hard" });
+await clickDialog(/Add AI/);
+check("the chosen AI is the one that goes on the wire",
+  await waitFor("bot", () => sentSince(beforeBot, /^UpdateBotStatus \{.*"AiLib":"Chicken: Hard".*"Owner":"Qrow"/)));
 /* And names the bot. The server looks Name up in the room's bot dictionary
    without checking it first, so leaving it out threw ArgumentNullException
    server-side and added nothing - with no error the client could see. */
 check("and names the bot, which the server will not do for us",
-  await sentAny(/^UpdateBotStatus \{.*"Name":"CAI \(\d+\)"/));
+  await sentAny(/^UpdateBotStatus \{.*"Name":"Chicken: Hard \(\d+\)"/));
 await page.getByRole("button", { name: /Remove hexed/ }).first().click();
 check("kicking sends the battle and the name",
   await waitFor("kick", () => sentAny(/^KickFromBattle \{.*"Name":"hexed"/)));

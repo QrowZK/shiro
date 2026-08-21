@@ -101,6 +101,19 @@ check("the room's minimap is visible, not a black panel", await waitFor(() =>
   })));
 await shot("demo-02-room");
 
+/* The picker is the one place the browser has nothing to read: the AI list
+   comes off the install, and there is no install here. It has to offer Zero-K's
+   own AIs anyway - an empty picker would be worse than the single hardcoded CAI
+   this replaced - and it has to say the list is a guess. */
+console.log("the AI picker with no install behind it");
+await clickText(/Add AI/);
+check("the picker opens in the demo too", await waitFor(() => seeing(/Add an AI to team/)));
+check("with Zero-K's own AIs in it", await seeing(/CAI/) && await seeing(/Chicken/));
+check("and says the list is built in rather than read",
+  await seeing(/built-in list/));
+await page.getByRole("button", { name: /^Cancel$/ }).last().click();
+check("and closes again", await waitFor(async () => !(await seeing(/Add an AI to team/))));
+
 console.log("the click-through ends where it should");
 await clickText(/^Start game$/);
 check("Start runs the fake launch", await waitFor(() => seeing(/Launching/)));
