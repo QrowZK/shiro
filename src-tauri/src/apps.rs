@@ -8,6 +8,9 @@
 //!
 //! - **The catalogue ships with Shiro.** It is the constant below, not a URL.
 //!   Nobody can add an entry by serving a file; adding one is a pull request.
+//!   That is also why the source repository is not printed in the launcher: the
+//!   entry cannot have come from anywhere else, so naming it told the user
+//!   nothing they could act on.
 //! - **Downloads are verified against a hash pinned in that catalogue**, and
 //!   land in Shiro's own app directory rather than anywhere the user browses to.
 //! - **Nothing is ever launched that the user did not just ask to launch.** No
@@ -44,8 +47,6 @@ pub struct CatalogueApp {
     pub summary: &'static str,
     pub description: &'static str,
     pub kind: AppKind,
-    /// Where it comes from, shown to the user before they agree to fetch it.
-    pub source: &'static str,
     /// None when there is nothing published yet - see `unavailable`.
     pub download: Option<&'static str>,
     /// SHA-256 of the download, lowercase hex. Absent only when `download` is.
@@ -69,17 +70,13 @@ pub const CATALOGUE: &[CatalogueApp] = &[
         id: "sprofiler",
         name: "Sprofiler",
         summary: "Check whether Zero-K will run well on this machine",
-        description: "Reads what the engine saw the last time it ran - processor, \
-graphics card, video memory, OpenGL version - and recommends a settings preset. \
-Catches the two failures that actually stop people playing: a software renderer, \
-and an OpenGL version too old for the game.",
+        description: "Zero-K performance profiling tool",
         kind: AppKind::Executable,
-        source: "github.com/QrowZK/Sprofiler",
         download: Some(
-            "https://github.com/QrowZK/Sprofiler/releases/download/dev/Sprofiler_0.1.6_x64.zip",
+            "https://github.com/QrowZK/Sprofiler/releases/download/dev/Sprofiler_0.1.8_x64.zip",
         ),
-        sha256: Some("ebe4f9e38e4f4466ab87ba652f070a494075cf64bd2d462d6e2df7980528bc8e"),
-        version: Some("0.1.6"),
+        sha256: Some("aea2e51a0e4f1fb9ea29457897defa7823107ff95a360ba886df24ee8e9648d6"),
+        version: Some("0.1.8"),
         run: Some("Sprofiler.exe"),
         unavailable: None,
     },
@@ -87,16 +84,13 @@ and an OpenGL version too old for the game.",
         id: "splaunch",
         name: "Splaunch",
         summary: "Build Zero-K scenarios and play them",
-        description: "Place units on a map, set objectives, and press Test to \
-launch straight into it. A scenario compiles to a start script, so Test is the \
-real game rather than a preview.",
+        description: "Scenario editor for the Spring and Recoil RTS engines",
         kind: AppKind::Executable,
-        source: "github.com/QrowZK/Splaunch",
         download: Some(
-            "https://github.com/QrowZK/Splaunch/releases/download/dev/Splaunch_0.1.8_x64.zip",
+            "https://github.com/QrowZK/Splaunch/releases/download/dev/Splaunch_0.1.9_x64.zip",
         ),
-        sha256: Some("1b4ebca38f0600ddc5e65fd3dc571438b37cb76aafd1a767520152ecf6cd2d74"),
-        version: Some("0.1.8"),
+        sha256: Some("67938ce82b0f147657a28d3e188d284ff9406eeaa59095c12a8dab57e9908ed4"),
+        version: Some("0.1.9"),
         run: Some("Splaunch.exe"),
         unavailable: None,
     },
@@ -104,11 +98,8 @@ real game rather than a preview.",
         id: "springen",
         name: "Springen",
         summary: "Node-graph map generator for Spring and Zero-K",
-        description: "Authors terrain as a graph of resolution-independent fields \
-and writes a finished .sd7 - heightmap, textures, metal spots and start boxes - \
-without mapconv. Opens in its own window.",
+        description: "Node-based map generator tool for Zero-K",
         kind: AppKind::Executable,
-        source: "github.com/QrowZK/Springen",
         download: Some(
             "https://github.com/QrowZK/Springen/releases/download/dev/Springen_0.1.1_x64.zip",
         ),

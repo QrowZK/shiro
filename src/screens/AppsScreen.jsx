@@ -16,7 +16,16 @@ const label = {
 /** What this row can do, worked out once so the row and the panel agree. */
 export function appState(app, status) {
   if (app.unavailable) return "unavailable";
-  return status?.installed ? "installed" : "available";
+  if (!status?.installed) return "available";
+  /* The catalogue is compiled into Shiro, so "is there a newer one" is a
+     comparison against this build's own catalogue rather than a request to
+     anywhere - which is why it can be answered at startup, offline, for every
+     app at once. A Shiro that has not been updated cannot know about an app
+     release newer than itself, and that is the honest limit of this check. */
+  if (app.version && status.installedVersion && status.installedVersion !== app.version) {
+    return "update";
+  }
+  return "installed";
 }
 
 /* The row, following the design kit's rule for this screen: an unavailable row
@@ -30,10 +39,11 @@ const META = {
   available: app => app.version ? `Version ${app.version}` : "Not installed",
   installing: () => "Downloading and checking",
   installed: (app, status) => status?.installedVersion || app.version || "Installed",
+  update: (app, status) => `${status?.installedVersion} \u2192 ${app.version}`,
   unavailable: app => app.unavailable,
 };
 
-const ACTION = { available: "Install", installed: "Launch" };
+const ACTION = { available: "Install", installed: "Launch", update: "Update" };
 
 function Row({ app, status, state, selected, onSelect, onAct, busy }) {
   const [hover, setHover] = React.useState(false);
@@ -84,7 +94,7 @@ function Row({ app, status, state, selected, onSelect, onAct, busy }) {
 
       <span style={{ width: 120, flex: "0 0 auto", display: "flex", justifyContent: "flex-end" }}>
         {verb && (
-          <Button size="sm" variant={shown === "available" ? "secondary" : "primary"}
+          <Button size="sm" variant={shown === "installed" ? "primary" : "secondary"}
             onClick={() => onAct(app)}>{verb}</Button>
         )}
         {shown === "installing" && (
@@ -98,8 +108,10 @@ function Row({ app, status, state, selected, onSelect, onAct, busy }) {
   );
 }
 
-export default function AppsScreen({ apps = [], statuses = [], onLaunch, onInstall, installing, error }) {
+export default function AppsScreen({ apps = [], statuses = [], onLaunch, onInstall,
+  onUninstall, installing, error }) {
   const [sel, setSel] = React.useState(undefined);
+  const [confirming, setConfirming] = React.useState(undefined);
   const byId = React.useMemo(
     () => Object.fromEntries(statuses.map(s => [s.id, s])), [statuses]);
 
@@ -135,15 +147,13 @@ export default function AppsScreen({ apps = [], statuses = [], onLaunch, onInsta
               selected={current && current.id === a.id}
               busy={installing === a.id}
               onSelect={() => setSel(a.id)}
-              onAct={x => (appState(x, byId[x.id]) === "available"
+              onAct={x => (["available", "update"].includes(appState(x, byId[x.id]))
                 ? onInstall?.(x.id) : open(x))} />
           ))}
         </div>
       </div>
 
-      {/* Detail. Downloading and running somebody else's program is a thing a
-          person should be able to look at before agreeing to it, so the source
-          is on screen rather than implied. */}
+      {/* Detail. */}
       <div style={{ borderLeft: "1px solid var(--w-12)", background: "var(--surface-panel)",
         padding: "var(--sp-6)", display: "flex", flexDirection: "column",
         gap: "var(--sp-5)", overflowY: "auto" }}>
@@ -156,12 +166,6 @@ export default function AppsScreen({ apps = [], statuses = [], onLaunch, onInsta
             <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)", lineHeight: 1.5 }}>
               {current.description}
             </span>
-
-            <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
-              <span style={label}>Source</span>
-              <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-mono)",
-                color: "var(--text-body)", overflowWrap: "anywhere" }}>{current.source}</span>
-            </div>
 
             {status?.path && (
               <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-3)" }}>
@@ -188,14 +192,43 @@ export default function AppsScreen({ apps = [], statuses = [], onLaunch, onInsta
             )}
 
             <span style={{ flex: 1 }} />
-            {state === "installed" && (
-              <Button variant="primary" size="lg" onClick={() => open(current)}>Launch</Button>
+            {state === "update" && (
+              <Button variant="primary" size="lg" disabled={installing === current.id}
+                onClick={() => onInstall?.(current.id)}>
+                {installing === current.id ? "Updating…" : `Update to ${current.version}`}
+              </Button>
+            )}
+            {(state === "installed" || state === "update") && (
+              <Button variant={state === "update" ? "secondary" : "primary"} size="lg"
+                onClick={() => open(current)}>Launch</Button>
             )}
             {state === "available" && (
               <Button variant="primary" size="lg" disabled={installing === current.id}
                 onClick={() => onInstall?.(current.id)}>
                 {installing === current.id ? "Installing…" : "Install"}
               </Button>
+            )}
+            {/* Uninstall is a quiet button rather than a hidden one. Anything a
+                launcher installs it should be able to remove; leaving that to
+                the file manager makes the app directory somebody else's
+                problem. Confirmed first, because it is not undoable. */}
+            {(state === "installed" || state === "update") && onUninstall && (
+              confirming === current.id ? (
+                <div style={{ display: "flex", gap: "var(--sp-4)", alignItems: "center" }}>
+                  <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)", flex: 1 }}>
+                    Remove {current.name}?
+                  </span>
+                  <Button variant="ghost" size="sm"
+                    onClick={() => setConfirming(undefined)}>Cancel</Button>
+                  <Button variant="secondary" size="sm"
+                    onClick={() => { setConfirming(undefined); onUninstall(current.id); }}>
+                    Remove
+                  </Button>
+                </div>
+              ) : (
+                <Button variant="ghost" size="sm"
+                  onClick={() => setConfirming(current.id)}>Uninstall</Button>
+              )
             )}
           </>
         )}

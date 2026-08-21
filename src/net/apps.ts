@@ -16,7 +16,6 @@ export interface CatalogueApp {
   summary: string;
   description: string;
   kind: AppKind;
-  source: string;
   download?: string;
   sha256?: string;
   version?: string;
