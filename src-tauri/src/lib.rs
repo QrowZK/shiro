@@ -8,6 +8,7 @@ mod launch;
 mod loadscreen;
 mod managed;
 mod relay;
+mod sidecar;
 mod apps;
 mod zkcontent;
 mod zkweb;

@@ -54,6 +54,53 @@ function tx<K extends CommandName>(cmd: K, data: MessageMap[K]): void {
  *
  * Exported for the test rather than for callers - `addBot` picks the name.
  */
+/**
+ * The match, as the loading screen shows it.
+ *
+ * Built from the room rather than the start script: the script names teams by
+ * number and says nothing about who is on them, and the roster is the thing
+ * worth reading while a game loads.
+ *
+ * Spectators are left out - they are not in the match - and bots are included,
+ * because a screen that lists three humans for a 4v4 against AI is wrong in a
+ * way somebody will notice. Ally numbers are zero-based on the wire and
+ * one-based on screen.
+ *
+ * Returns undefined when there is nothing worth writing, which the caller
+ * passes straight through: no match is a supported state, not a failure.
+ */
+export function matchInfoFor(state: {
+  players: Record<string, T.UpdateUserBattleStatus>;
+  bots: Record<string, T.UpdateBotStatus>;
+  title?: string;
+  map?: string;
+}): { map: string; title: string; teams: { label: string; players: string[] }[] } | undefined {
+  const sides = new Map<number, string[]>();
+  const add = (ally: number | undefined, name: string | undefined) => {
+    if (ally == null || !name) return;
+    const list = sides.get(ally);
+    if (list) list.push(name);
+    else sides.set(ally, [name]);
+  };
+
+  for (const p of Object.values(state.players)) {
+    if (p.IsSpectator) continue;
+    add(p.AllyNumber, p.Name);
+  }
+  for (const b of Object.values(state.bots)) add(b.AllyNumber, b.Name);
+
+  if (!sides.size) return undefined;
+
+  const teams = [...sides.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([ally, players]) => ({
+      label: `Team ${ally + 1}`,
+      players: [...players].sort((a, b) => a.localeCompare(b)),
+    }));
+
+  return { map: state.map ?? "", title: state.title ?? "", teams };
+}
+
 export function freeBotName(aiLib: string, bots: Record<string, unknown>): string {
   for (let n = 1; ; n++) {
     const name = `${aiLib} (${n})`;

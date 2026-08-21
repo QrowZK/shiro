@@ -225,12 +225,35 @@ export const useGame = create<GameState>((set, get) => ({
         listening = true;
       }
       await rememberWindowState();
+      /* What the loading screen may say about this match. Gathered here
+         rather than in Rust because the roster is the lobby's, and best-effort
+         because a caption is not worth failing a launch over - `matchInfo`
+         being absent is a state the screen already handles. */
+      let matchInfo;
+      try {
+        const { useRoom, matchInfoFor } = await import("./room.ts");
+        const { useLobby } = await import("./lobby.ts");
+        const room = useRoom.getState();
+        const battle = room.battleID == null
+          ? undefined
+          : useLobby.getState().battles[room.battleID];
+        matchInfo = matchInfoFor({
+          players: room.players,
+          bots: room.bots,
+          title: battle?.Title,
+          map: battle?.Map,
+        });
+      } catch {
+        matchInfo = undefined;
+      }
+
       const pid = await launchSpring({
         engine: c.Engine ?? "",
         ip: c.Ip ?? "",
         port: c.Port,
         myPlayerName: me,
         scriptPassword: c.ScriptPassword ?? "",
+        matchInfo,
       });
       /* Only if nothing has happened to the game since. An engine with a bad
          script or missing content exits immediately, and that event can arrive
