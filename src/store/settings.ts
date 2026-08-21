@@ -121,12 +121,16 @@ function load(): Settings {
 
 function save(s: Settings): void {
   try {
-    const { name, password, remember, host, port, installRoot, installId, skin,
-            autoOpenDebriefing, roomChatHeight } = s;
+    /* Everything except the password, rather than a list of keys to keep.
+       The list was the bug: adding a setting and forgetting to name it here
+       left something that worked all session and forgot itself on restart -
+       which is how the first-run dialog came back every launch after being
+       dismissed. A new setting is now persisted by default, and the one thing
+       that must not be is named explicitly. */
+    const { password, ...rest } = s;
     globalThis.localStorage?.setItem(KEY, JSON.stringify({
-      name, remember, host, port, installRoot, installId, skin, autoOpenDebriefing,
-      roomChatHeight,
-      password: remember ? password : undefined,
+      ...rest,
+      password: s.remember ? password : undefined,
     }));
   } catch {
     // A private-mode browser refusing storage is not worth an error dialog.

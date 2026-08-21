@@ -79,3 +79,45 @@ test("turning the debriefing off is actually written down", () => {
     useSettings.getState().set({ autoOpenDebriefing: true, skin: "paper" });
   }
 });
+
+/* There is no localStorage under the test runner, so what `save` writes is
+   checked by standing one in. The bug this pins: `save` used to name the keys
+   it kept, so a setting added later was held in memory all session and
+   forgotten on restart - which is how the first-run dialog came back every
+   launch after being dismissed. */
+function withStorage(fn: (read: () => Record<string, unknown>) => void) {
+  const store = new Map<string, string>();
+  const fake = {
+    getItem: (k: string) => store.get(k) ?? null,
+    setItem: (k: string, v: string) => { store.set(k, v); },
+    removeItem: (k: string) => { store.delete(k); },
+  };
+  (globalThis as { localStorage?: unknown }).localStorage = fake;
+  try {
+    fn(() => {
+      const raw = [...store.values()][0];
+      return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+    });
+  } finally {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
+}
+
+test("a setting is persisted without having to be named in the saver", () => {
+  withStorage(read => {
+    useSettings.getState().set({ installPromptSeen: true });
+    assert.equal(read().installPromptSeen, true,
+      "a new setting must survive a restart without editing save()");
+  });
+});
+
+test("the password is the one thing not written unless it was asked for", () => {
+  withStorage(read => {
+    useSettings.getState().set({ name: "Qrow", password: "secret", remember: false });
+    assert.equal(read().password, undefined, "not remembered means not written");
+    assert.equal(read().name, "Qrow");
+
+    useSettings.getState().set({ remember: true, password: "secret" });
+    assert.equal(read().password, "secret", "remembered means written");
+  });
+});
