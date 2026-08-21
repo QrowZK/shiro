@@ -39,7 +39,7 @@ import { useUpdate } from "./store/update.ts";
 import { appVersion } from "./net/update.ts";
 import { catalogue, statuses as appStatuses, launchApp, installApp, uninstallApp } from "./net/apps.ts";
 import { openExternal } from "./net/external.ts";
-import { managedState, installEngine, removeManaged, onEngine } from "./net/managed.ts";
+import { managedState, managedRoot, installEngine, removeManaged, onEngine } from "./net/managed.ts";
 import { useSite, channelOf, isExternalUrl } from "./store/site";
 import { useHistory, buildDebriefView } from "./store/history";
 import { AutohostModeLabel } from "./protocol/enums";
@@ -149,6 +149,7 @@ export default function App() {
     managedState(version).then(setManagedInfo, () => setManagedInfo(undefined));
   }, []);
 
+
   React.useEffect(() => {
     if (!live) return undefined;
     let stop;
@@ -213,6 +214,51 @@ export default function App() {
   /* Where Zero-K lives. A disk scan, so it is asked once - and again only when
      the settings screen asks, or the override changes. */
   const [detectNonce, redetect] = React.useReducer(n => n + 1, 0);
+
+  /* Install the engine, point the app at the directory it went into, and pull
+     the game in behind it.
+     
+     One copy, because Settings and the first-run dialog do exactly the same
+     thing and the two had already started to drift. The root is asked for
+     rather than read off `managedInfo`: that comes from an earlier
+     `managedState()` call, and if that call had failed the engine installed,
+     `installRoot` was never set, and the game fetch silently skipped - leaving
+     an install the rest of the app could not see. */
+  const installManaged = React.useCallback(async version => {
+    if (!version) return;
+    setManagedError(undefined);
+    setManagedProgress(undefined);
+    setManagedBusy(true);
+    try {
+      await installEngine(version);
+      const dir = await managedRoot().catch(() => "");
+      if (dir) {
+        /* `installRoot` is already threaded through detection, the content
+           preflight, the archive reader and the launcher, so setting it here is
+           what turns an engine on disk into the installation Shiro actually
+           uses - there is no second path to build. */
+        useSettings.getState().set({ installRoot: dir });
+        if (redetect) redetect();
+
+        /* And pull the game in now rather than at the first battle. The
+           pr-downloader that does it is the one that arrived inside the
+           engine, in that same directory. */
+        const game = useLobby.getState().welcome?.Game;
+        if (game) {
+          await useContent.getState()
+            .fetch(version, [{ kind: "game", name: game }], dir)
+            .catch(e => setManagedError(String(e?.message ?? e)));
+        }
+      } else {
+        setManagedError("The engine installed, but its folder could not be located.");
+      }
+      refreshManaged(version);
+    } catch (e) {
+      setManagedError(String(e?.message ?? e));
+    } finally {
+      setManagedBusy(false);
+    }
+  }, [redetect, refreshManaged]);
   const [installError, setInstallError] = React.useState("");
   /* Only once detection has actually run - asking before that would tell
      somebody with Zero-K installed that they have not got it. */
@@ -310,8 +356,10 @@ export default function App() {
     const { host, port } = useSettings.getState();
     setLoadingIn(true);
     try {
-      await login({ name, password }, host || undefined, port || undefined);
-      const c = useLobby.getState().connection;
+      /* The outcome login settled on, not whatever the store says now: a
+         refusal is followed by the server dropping the connection, and reading
+         afterwards reported the drop instead of the refusal. */
+      const c = await login({ name, password }, host || undefined, port || undefined);
       if (c.kind !== "online") throw new Error(describeFailure(c));
     } catch (e) {
       // A rejected login goes back to the form; nothing is loading any more.
@@ -467,11 +515,27 @@ export default function App() {
   const liveRoom = live && liveRoomID != null
     ? roomModel(liveBattles[liveRoomID], roomPlayers, roomBots, liveUsers, roomOptions)
     : null;
+  /* The room on screen, whichever mode we are in. The demo path is supported -
+     every screen has one - and reading `liveRoom` directly in this branch threw
+     the moment somebody opened a room in the browser. */
+  const roomView = liveRoom || (room ? D.room : null);
 
   /* Not running: the host decides when to start, and every Zero-K autohost
      takes `!start` in room chat - which is exactly what a player types today.
      Running: ask for connect details and launch straight into it. */
   const startRoom = () => {
+    /* The demo click-through ends at the debriefing, which is the whole point
+       of it - and this guarded on `liveRoom`, so in the browser the button did
+       nothing at all. */
+    if (!live) {
+      setLaunching(true);
+      setTimeout(() => {
+        setLaunching(false);
+        setRoom(null);
+        setView("debrief");
+      }, 1600);
+      return;
+    }
     if (!liveRoom) return;
     if (liveRoom.running) useGame.getState().requestStart(liveRoom.id);
     else void say("!start", 1);
@@ -517,8 +581,8 @@ export default function App() {
      of the battle list. It used to render whenever `view` was "battles", which
      meant the only way to look at what else was open was to leave - and nothing
      on screen said you were still in one. */
-  if ((liveRoom || room) && view === "room") body = (
-    <BattleRoomScreen room={liveRoom || D.room}
+  if (roomView && view === "room") body = (
+    <BattleRoomScreen room={roomView}
       download={activeDownload}
       chat={battleChat ? chatLines(battleChat.messages, liveUsers, ignored) : []}
       onLeave={() => { if (live) useRoom.getState().leave(); setRoom(null); setView("battles"); }}
@@ -536,7 +600,7 @@ export default function App() {
       onEditOptions={() => setEditingOptions(true)}
       /* The server's rule, read backwards: only the founder may set options,
          and an autohost's founder is never a person. */
-      optionsLocked={canEditOptions(liveRoom.founder, me)
+      optionsLocked={canEditOptions(roomView.founder, me, Boolean(liveUsers[me]?.IsAdmin))
         ? undefined : "Only the room's host can change these"}
       chatHeight={settings.roomChatHeight}
       onChatHeight={h => useSettings.getState().set({ roomChatHeight: h })}
@@ -697,38 +761,7 @@ export default function App() {
         busy: managedBusy,
         progress: managedProgress,
         error: managedError,
-        onPrepare: () => {
-          const version = welcome?.Engine;
-          if (!version) return;
-          setManagedError(undefined);
-          setManagedProgress(undefined);
-          setManagedBusy(true);
-          installEngine(version)
-            .then(async root => {
-              /* Point the rest of the app at the directory we just filled.
-                 `installRoot` is already threaded through detection, the
-                 content preflight, the archive reader and the launcher, so
-                 setting it here is what turns an engine on disk into the
-                 installation Shiro actually uses - there is no second path to
-                 build. */
-              const dir = managedInfo?.root;
-              if (dir) useSettings.getState().set({ installRoot: dir });
-              if (redetect) redetect();
-
-              /* And pull the game in now rather than at the first battle. The
-                 pr-downloader that does it is the one that arrived inside the
-                 engine, in that same directory. */
-              const game = welcome?.Game;
-              if (dir && game) {
-                await useContent.getState()
-                  .fetch(version, [{ kind: "game", name: game }], dir)
-                  .catch(e => setManagedError(String(e?.message ?? e)));
-              }
-              refreshManaged(version);
-              return root;
-            }, e => setManagedError(String(e?.message ?? e)))
-            .finally(() => setManagedBusy(false));
-        },
+        onPrepare: () => void installManaged(welcome?.Engine),
         onRemove: () => {
           setManagedError(undefined);
           removeManaged()
@@ -746,6 +779,15 @@ export default function App() {
       away={away}
       onAway={live ? next => { setAway(next); void send("ChangeUserStatus", { IsAfk: next }); } : undefined} />
   );
+  /* Without this, being on "room" with no room to show fell through to the
+     bottom of the chain and rendered the debriefing. Leaving from anywhere but
+     the room itself - a kick, the host closing it - lands here. */
+  else if (view === "room") body = <BattleListScreen battles={battles} empty={empty}
+    occupants={live ? occupantsOf : null}
+    onToggleEmpty={e => setEmpty(e.target.checked)}
+    onHost={() => setHosting(true)}
+    onSpectate={b => (live ? useRoom.getState().join(b.id, undefined, true) : setRoom(b))}
+    onJoin={joinBattle} />;
   else body = (
     <DebriefingScreen
       d={live
@@ -937,25 +979,7 @@ export default function App() {
           onSettings={() => setView("settings")}
           onInstall={() => {
             setView("settings");
-            const version = welcome?.Engine;
-            if (!version) return;
-            setManagedError(undefined);
-            setManagedProgress(undefined);
-            setManagedBusy(true);
-            installEngine(version)
-              .then(async () => {
-                const dir = managedInfo?.root;
-                if (dir) useSettings.getState().set({ installRoot: dir });
-                if (redetect) redetect();
-                const game = welcome?.Game;
-                if (dir && game) {
-                  await useContent.getState()
-                    .fetch(version, [{ kind: "game", name: game }], dir)
-                    .catch(e => setManagedError(String(e?.message ?? e)));
-                }
-                refreshManaged(version);
-              }, e => setManagedError(String(e?.message ?? e)))
-              .finally(() => setManagedBusy(false));
+            void installManaged(welcome?.Engine);
           }} />
       <ErrorBoundary>{body}</ErrorBoundary>
     </AppShell>

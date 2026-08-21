@@ -7,7 +7,17 @@ import {
 } from "./connection";
 import { parseLine, serialize } from "../protocol/wire";
 import type { CommandName, Message, MessageMap } from "../protocol/registry";
-import { useLobby } from "../store/lobby";
+import type * as T from "../protocol/types";
+import type { Login_ClientTypes, SayPlace } from "../protocol/enums";
+
+/**
+ * `Login_ClientTypes.ZeroKLobby` restated as a literal, so this module does not
+ * import a runtime enum. Checked against the generated enum at compile time -
+ * the same pattern the stores use, and the reason these payloads no longer need
+ * an `as never` to get past the typed registry.
+ */
+const CLIENT_TYPE_ZKLOBBY: Login_ClientTypes.ZeroKLobby = 1;
+import { useLobby, type ConnectionState } from "../store/lobby";
 import { describeRegisterFailure } from "../store/adapters";
 import { useRoom } from "../store/room";
 import { fanout } from "../store/slices";
@@ -32,6 +42,8 @@ let timer = 0;
 let session: { creds: Credentials; hash: string; host: string; port: number } | null = null;
 let retry: ReturnType<typeof setTimeout> | null = null;
 let attempt = 0;
+/** Has this session logged in before? A second time is a reconnect. */
+let loggedInBefore = false;
 
 /** Coalesce inbound messages into one store write per animation frame. */
 /* Batching is on the frame, with a timer behind it.
@@ -81,6 +93,21 @@ export function send<K extends CommandName>(cmd: K, data: MessageMap[K]): Promis
 export interface Credentials {
   name: string;
   password: string;
+}
+
+/**
+ * This installation's id for `Login.InstallID`.
+ *
+ * Lazily imported like the other store reaches, so this module's import graph
+ * stays free of anything that needs a browser.
+ */
+async function installIdentity(): Promise<string> {
+  try {
+    const { useSettings } = await import("../store/settings");
+    return useSettings.getState().ensureInstallId();
+  } catch {
+    return "";
+  }
 }
 
 function cancelRetry(): void {
@@ -137,22 +164,27 @@ export async function login(
   creds: Credentials,
   host: string = LIVE.host,
   port: number = LIVE.port,
-): Promise<void> {
+): Promise<ConnectionState> {
   await teardown();
 
   const store = useLobby.getState();
   store.reset();
 
   const hash = await passwordHash(creds.password);
+  const installId = await installIdentity();
   session = { creds, hash, host, port };
   attempt = 0;
 
-  const settled = new Promise<void>(resolve => {
+  /* Resolves with the state it settled on, not just "it settled". Re-reading
+     the store afterwards is a race: a refusal is followed by a drop, and the
+     caller would report whichever arrived last rather than the one that
+     decided the outcome. */
+  const settled = new Promise<ConnectionState>(resolve => {
     const stop = useLobby.subscribe(s => {
       const k = s.connection.kind;
       if (k === "online" || k === "rejected" || k === "disconnected") {
         stop();
-        resolve();
+        resolve(s.connection);
       }
     });
   });
@@ -162,7 +194,13 @@ export async function login(
     // A drop after a good login is a transport problem, not a credentials
     // problem, so it is ours to fix without bothering anyone.
     if (s.kind === "disconnected") scheduleReconnect();
-    if (s.kind === "connected") { attempt = 0; useLobby.getState().setReconnect(0); }
+    /* A socket that opened is not yet a session that works, so the backoff is
+       not reset here: a server that accepts TCP and then drops us would have
+       reset it every time and retried at the first step for ever. What does
+       happen here is cancelling any retry still pending - we are connected,
+       and letting that timer fire would tear this connection down to make
+       another one. */
+    if (s.kind === "connected") cancelRetry();
   }));
   unlisten.push(await onLine(line => {
     const m = parseLine(line);
@@ -188,6 +226,32 @@ export async function login(
     if (m.cmd === "LoginResponse" && (m.data as { ResultCode?: number }).ResultCode !== 0) {
       session = null;
       cancelRetry();
+      /* And say so now rather than on the next frame. Inbound messages are
+         batched, but the drop that follows a refusal arrives on the status
+         channel and is applied immediately - so the batch that would have
+         recorded "rejected" landed after "disconnected" had already overwritten
+         it, and the player was told they had lost the connection instead of
+         being told their password was wrong. */
+      const d = m.data as T.LoginResponse;
+      useLobby.getState().setConnection({
+        kind: "rejected",
+        code: d.ResultCode,
+        message: d.BanReason ?? "",
+      });
+    }
+
+    /* A login the server accepted is what "working" means, and the only thing
+       the backoff should count from. */
+    if (m.cmd === "LoginResponse" && (m.data as { ResultCode?: number }).ResultCode === 0) {
+      attempt = 0;
+      useLobby.getState().setReconnect(0);
+      /* Second time on this session means we dropped and came back. The server
+         re-joins the default channels itself but knows nothing about the ones
+         this player joined by hand. */
+      if (loggedInBefore) {
+        void import("../store/chat").then(c => c.useChat.getState().rejoinChannels());
+      }
+      loggedInBefore = true;
     }
 
     // The server sends Welcome unprompted on connect; that is our cue to log in.
@@ -197,16 +261,16 @@ export async function login(
         Name: creds.name,
         PasswordHash: hash,
         UserID: 0,
-        InstallID: "",
-        ClientType: 1,
+        InstallID: installId,
+        ClientType: CLIENT_TYPE_ZKLOBBY,
         LobbyVersion: LOBBY_VERSION,
-      } as never));
+      }));
     }
     enqueue(m);
   }));
 
   await connect(host, port);
-  await settled;
+  return settled;
 }
 
 /**
@@ -227,16 +291,20 @@ export async function register(
 ): Promise<void> {
   await teardown();
   const hash = await passwordHash(creds.password);
+  const installId = await installIdentity();
 
+  /* Attached before connecting, and *awaited*. `Welcome` arrives the moment the
+     socket opens, and a listener that is still a pending promise when it does
+     misses it - the registration then waits for a reply to a command it never
+     sent, until the connection drops. */
+  const listeners: Array<() => void> = [];
+  let settle: (err?: Error) => void = () => {};
   const outcome = new Promise<void>((resolve, reject) => {
-    let stop: (() => void) | undefined;
-    const finish = (err?: Error) => {
-      stop?.();
-      void disconnect().catch(() => {});
-      if (err) reject(err); else resolve();
-    };
+    settle = err => (err ? reject(err) : resolve());
+  });
 
-    void onLine(line => {
+  try {
+    listeners.push(await onLine(line => {
       const m = parseLine(line);
       if (!m) return;
       if (m.cmd === "Welcome") {
@@ -245,27 +313,31 @@ export async function register(
           PasswordHash: hash,
           Email: email,
           UserID: 0,
-          InstallID: "",
-        } as never));
+          InstallID: installId,
+        }));
       }
       if (m.cmd === "RegisterResponse") {
         const d = m.data as { ResultCode: number; BanReason?: string };
-        finish(d.ResultCode === 0
+        settle(d.ResultCode === 0
           ? undefined
           : new Error(describeRegisterFailure(d.ResultCode, d.BanReason)));
       }
-    }).then(fn => { stop = fn; });
+    }));
+    listeners.push(await onStatus(s => {
+      if (s.kind === "disconnected") settle(new Error(`Lost connection: ${s.reason}`));
+    }));
 
-    void onStatus(s => {
-      if (s.kind === "disconnected") finish(new Error(`Lost connection: ${s.reason}`));
-    }).then(fn => {
-      const inner = stop;
-      stop = () => { inner?.(); fn(); };
-    });
-  });
+    await connect(host, port);
+    await outcome;
+  } finally {
+    /* However this ended - registered, refused, dropped, or the connect itself
+       failing before either listener could matter - these do not survive it.
+       They used to: a failed connect left them attached, and the next healthy
+       login's own disconnect then reached this handler and tore it down. */
+    for (const off of listeners) off();
+    await disconnect().catch(() => {});
+  }
 
-  await connect(host, port);
-  await outcome;
   await login(creds, host, port);
 }
 
@@ -274,15 +346,21 @@ export async function teardown(): Promise<void> {
   session = null;
   cancelRetry();
   attempt = 0;
+  loggedInBefore = false;
   for (const fn of unlisten) fn();
   unlisten = [];
+  // Both halves of the batcher. Cancelling only the frame left the fallback
+  // timer to fire into a torn-down session - harmless while `flush` no-ops on
+  // an empty queue, and exactly the asymmetry that stops being harmless the
+  // day flush does something else.
   if (frame) { cancelAnimationFrame(frame); frame = 0; }
+  if (timer) { clearTimeout(timer); timer = 0; }
   queue = [];
   await disconnect().catch(() => {});
 }
 
-export function say(text: string, place: number, target?: string): Promise<void> {
+export function say(text: string, place: SayPlace, target?: string): Promise<void> {
   return sendLine(serialize("Say", {
     Place: place, Target: target, Text: text, IsEmote: false, Ring: false, AllowRelay: true,
-  } as never));
+  }));
 }

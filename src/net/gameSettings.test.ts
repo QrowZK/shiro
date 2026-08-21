@@ -323,3 +323,56 @@ test("settings the user has never chosen are left alone entirely", () => {
   const out = springSettingsFor({ Shadows: "None" }, ENV);
   assert.deepEqual(Object.keys(out), ["Shadows"]);
 });
+
+test("pan speed zero does not write the word Infinity into the engine's config", () => {
+  // 0 is the slider's own minimum, and the middle-click speed is derived by
+  // dividing by it. `-Infinity` went into springsettings.cfg as text, and the
+  // engine could then not parse a file it had written itself.
+  const chosen = { ...defaultChoices(ENV), CameraPanSpeed: 0, MiddlePanSpeed: 15 };
+  const out = springSettingsFor(chosen, ENV, n => n === "CameraPanSpeed");
+  assert.equal(out.OverheadScrollSpeed, "0", "the choice itself still applies");
+  assert.ok(out.MiddleClickScrollSpeed !== undefined);
+  assert.ok(
+    Number.isFinite(Number(out.MiddleClickScrollSpeed)),
+    `wrote ${out.MiddleClickScrollSpeed}`,
+  );
+});
+
+test("a cleared number box leaves the setting alone rather than writing a default", () => {
+  const chosen = { ...defaultChoices(ENV), CameraPanSpeed: "" };
+  const out = springSettingsFor(chosen, ENV, n => n === "CameraPanSpeed");
+  assert.deepEqual(out, {}, "clearing a field silently applied Zero-K's default");
+});
+
+test("changing anti-aliasing does not defeat a compatibility override that is still on", () => {
+  /* The override owns six keys on ATI/Intel hardware, and Anti Aliasing writes
+     some of the same ones. Apply carries only the diff, so changing Anti
+     Aliasing alone used to write its values over an override still selected in
+     the menu - the setting said one thing and the file said another. */
+  const env: Environment = { ...ENV, notNvidia: true };
+  const before = { ...defaultChoices(env), AtiIntelCompatibility_2: "On", AntiAliasing: "Off" };
+  const after = { ...before, AntiAliasing: "High" };
+  const out = changedSpringSettings(before, after, env);
+
+  const overridden = springSettingsFor(
+    { ...after, AntiAliasing: "Off" }, env, n => n === "AtiIntelCompatibility_2",
+  );
+  for (const [key, value] of Object.entries(overridden)) {
+    if (key in out) {
+      assert.equal(out[key], value, `${key} was written over the compatibility override`);
+    }
+  }
+});
+
+test("the override does not drag in keys nobody touched", () => {
+  const env: Environment = { ...ENV, notNvidia: true };
+  const before = { ...defaultChoices(env), AtiIntelCompatibility_2: "On", CameraPanSpeed: 50 };
+  const after = { ...before, CameraPanSpeed: 60 };
+  const out = changedSpringSettings(before, after, env);
+  assert.deepEqual(
+    Object.keys(out).sort(),
+    ["CamFreeScrollSpeed", "FPSScrollSpeed", "MiddleClickScrollSpeed",
+      "OverheadScrollSpeed", "RotOverheadScrollSpeed"],
+    "Apply wrote settings the player never changed",
+  );
+});

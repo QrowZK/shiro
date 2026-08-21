@@ -220,3 +220,14 @@ test("only the founder may edit, which is the server's rule read backwards", () 
   assert.equal(canEdit("qrow", undefined), false);
   assert.equal(canEdit("", ""), false);
 });
+
+test("an admin may change options in a room they did not open", () => {
+  // The server's rule ends `&& !IsAdmin`: the founder may, and so may an
+  // admin, anywhere. Dropping that half left moderators looking at a locked
+  // panel for something the server would have accepted.
+  assert.equal(canEdit("hexed", "zk-admin", true), true);
+  assert.equal(canEdit("hexed", "zk-admin", false), false);
+  assert.equal(canEdit("hexed", "hexed"), true, "the founder still may");
+  assert.equal(canEdit(undefined, "zk-admin", true), true, "even with no founder named");
+  assert.equal(canEdit("hexed", undefined, true), false, "but not while logged out");
+});

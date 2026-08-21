@@ -13,3 +13,13 @@ like every other entry in the launcher: it downloads on demand.
 
 Only the executable is copied in. The archive also contains Sprofiler's own
 README, and unpacking the whole thing here once landed it on top of this file.
+
+## Windows only
+
+`bundle.resources` in `tauri.conf.json` names this directory, and that applies
+to every target. `src-tauri/tauri.linux.conf.json` clears it again so the
+`.deb`, `.rpm` and `.AppImage` do not carry a Windows executable no Linux
+machine can run - nine megabytes of dead weight, and a launcher entry that
+looked installed and did nothing. The catalogue refuses to seed, install or
+launch a `.exe` off Windows (`why_not` in `src-tauri/src/apps.rs`), so the
+absence is the same story the app already tells there.

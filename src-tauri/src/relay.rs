@@ -6,6 +6,7 @@
 //!
 //! Wire format is `CommandName {json}\n`, UTF-8, newline delimited.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -40,6 +41,20 @@ const STATUS_EVENT: &str = "zks://status";
 const KEEPALIVE_IDLE: Duration = Duration::from_secs(60);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(15);
 
+/// A connect that never answers must not hang the caller.
+///
+/// The OS gives up on an unanswered SYN after a minute or more, and the login
+/// screen sits on "Connecting" for all of it. A server that is up answers in
+/// milliseconds; one that does not is worth reporting quickly, because the
+/// reconnect above this already knows how to wait and try again.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Which connection a reader belongs to.
+///
+/// Without it a reader that outlives its own connection clears whatever is in
+/// the slot on its way out - including a healthy connection that replaced it.
+static CONN_SEQ: AtomicU64 = AtomicU64::new(1);
+
 #[derive(Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum Status {
@@ -49,6 +64,7 @@ pub enum Status {
 }
 
 struct Conn {
+    id: u64,
     tx: mpsc::UnboundedSender<String>,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -66,6 +82,14 @@ impl Conn {
 #[derive(Default)]
 pub struct Relay {
     conn: Arc<Mutex<Option<Conn>>>,
+    /// One connect at a time, start to finish.
+    ///
+    /// The lock on `conn` is dropped while connecting, so two overlapping
+    /// calls used to interleave: the slower one installed itself last and
+    /// clobbered the faster one's slot, leaving a live, logged-in socket with
+    /// nothing pointing at it - still reading lines, still emitting them, and
+    /// clearing the healthy connection when it eventually died.
+    connecting: Arc<Mutex<()>>,
 }
 
 #[tauri::command]
@@ -75,6 +99,11 @@ pub async fn zks_connect(
     host: String,
     port: u16,
 ) -> Result<(), String> {
+    // Held for the whole call, connect included, so two of these cannot
+    // interleave and leave the loser's socket running unattended.
+    let _turn = relay.connecting.lock().await;
+    let id = CONN_SEQ.fetch_add(1, Ordering::SeqCst);
+
     // Never leave a previous socket running underneath a new one.
     if let Some(prev) = relay.conn.lock().await.take() {
         prev.shutdown();
@@ -82,8 +111,9 @@ pub async fn zks_connect(
 
     app.emit(STATUS_EVENT, Status::Connecting).ok();
 
-    let stream = TcpStream::connect((host.as_str(), port))
+    let stream = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((host.as_str(), port)))
         .await
+        .map_err(|_| format!("connect {host}:{port} timed out"))?
         .map_err(|e| format!("connect {host}:{port} failed: {e}"))?;
     stream.set_nodelay(true).ok();
 
@@ -126,14 +156,24 @@ pub async fn zks_connect(
                 Err(e) => break format!("read error: {e}"),
             }
         };
-        // Clear the slot so the UI cannot keep writing into a dead socket.
-        *slot.lock().await = None;
+        /* Clear the slot so the UI cannot keep writing into a dead socket -
+           but only if the slot is still ours. A superseded connection dying is
+           not news, and announcing it would tell the UI it had disconnected
+           while the connection it is actually using is fine. */
+        {
+            let mut current = slot.lock().await;
+            if current.as_ref().map(|c| c.id) != Some(id) {
+                return;
+            }
+            *current = None;
+        }
         reader_app
             .emit(STATUS_EVENT, Status::Disconnected { reason })
             .ok();
     });
 
     *relay.conn.lock().await = Some(Conn {
+        id,
         tx,
         tasks: vec![reader, writer],
     });

@@ -210,22 +210,48 @@ fn element_text<'a>(xml: &'a str, local: &str) -> Option<&'a str> {
 }
 
 /// Every `<string>` inside a named container.
+///
+/// Walks by tag position rather than by searching for the text it just read.
+/// An empty `<string></string>` has empty text, `find("")` answers 0, and the
+/// old loop then re-read the same element forever - a hang, and an unbounded
+/// `Vec`, reachable from a response on a plaintext channel.
 fn string_array(xml: &str, container: &str) -> Vec<String> {
     let Some(inner) = element_text(xml, container) else {
         return Vec::new();
     };
     let mut out = Vec::new();
     let mut rest = inner;
-    while let Some(text) = element_text(rest, "string") {
-        out.push(xml_unescape(text));
-        // Step past this item.
-        let Some(idx) = rest.find(text) else { break };
-        rest = &rest[idx + text.len()..];
-        if rest.is_empty() {
-            break;
-        }
+    loop {
+        let Some(open) = find_open_tag(rest, "string") else { break };
+        let Some(close_at) = rest[open.1..].find("</") else { break };
+        let close = open.1 + close_at;
+        out.push(xml_unescape(&rest[open.1..close]));
+        // Past the closing tag, whatever it contained: this always advances.
+        let Some(end) = rest[close..].find('>') else { break };
+        rest = &rest[close + end + 1..];
     }
     out
+}
+
+/// Where a `<local>` open tag starts and its content begins, namespace or not.
+fn find_open_tag(xml: &str, local: &str) -> Option<(usize, usize)> {
+    let mut i = 0;
+    loop {
+        let at = i + xml[i..].find('<')?;
+        let after = &xml[at + 1..];
+        let end = after.find('>')?;
+        let name = after[..end].split_whitespace().next().unwrap_or("");
+        if !name.starts_with('/') && name.rsplit(':').next() == Some(local) {
+            // A self-closing tag has no content to read.
+            if !after[..end].ends_with('/') {
+                return Some((at, at + 1 + end + 1));
+            }
+        }
+        i = at + 1 + end + 1;
+        if i >= xml.len() {
+            return None;
+        }
+    }
 }
 
 /// The 32 hex digits before `.torrent`, if they are there.
@@ -367,15 +393,24 @@ fn search_request(words: &[String], kind: &str) -> Result<String, String> {
 }
 
 /// Search Zero-K's map catalogue.
+///
+/// Async so the SOAP round trip lands on a worker rather than the main thread,
+/// where it froze the window for the length of a search.
 #[tauri::command]
-pub fn zks_find_maps(query: String) -> Result<Vec<MapHit>, String> {
+pub async fn zks_find_maps(query: String) -> Result<Vec<MapHit>, String> {
+    tauri::async_runtime::spawn_blocking(move || find_maps_blocking(query))
+        .await
+        .map_err(|e| format!("the map search did not finish: {e}"))?
+}
+
+fn find_maps_blocking(query: String) -> Result<Vec<MapHit>, String> {
     let words: Vec<String> =
         query.split_whitespace().map(str::to_string).filter(|w| !w.is_empty()).collect();
     if words.is_empty() {
         return Ok(Vec::new());
     }
     let body = search_request(&words, "Map")?;
-    let res = client()?
+    let res = soap_client()?
         .post(ENDPOINT)
         .header("Content-Type", "text/xml; charset=utf-8")
         .header("SOAPAction", format!("\"{}\"", "http://tempuri.org/IContentService/FindResourceData"))
@@ -470,14 +505,20 @@ pub fn parse_game_modes(xml: &str) -> Result<Vec<GameMode>, String> {
 
 /// The featured custom game modes, for the host dialog.
 #[tauri::command]
-pub fn zks_game_modes() -> Result<Vec<GameMode>, String> {
+pub async fn zks_game_modes() -> Result<Vec<GameMode>, String> {
+    tauri::async_runtime::spawn_blocking(game_modes_blocking)
+        .await
+        .map_err(|e| format!("the game-mode list did not finish: {e}"))?
+}
+
+fn game_modes_blocking() -> Result<Vec<GameMode>, String> {
     let body = concat!(
         r#"<?xml version="1.0" encoding="utf-8"?>"#,
         r#"<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>"#,
         r#"<GetFeaturedCustomGameModes xmlns="http://tempuri.org/"/>"#,
         r#"</s:Body></s:Envelope>"#,
     );
-    let res = client()?
+    let res = soap_client()?
         .post(ENDPOINT)
         .header("Content-Type", "text/xml; charset=utf-8")
         .header(
@@ -533,7 +574,7 @@ pub fn parse_catalogue(xml: &str) -> Result<Vec<CatalogueMap>, String> {
 #[tauri::command]
 pub fn zks_map_catalogue() -> Result<Vec<CatalogueMap>, String> {
     let body = "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><GetPublicCommunityInfo xmlns=\"http://tempuri.org/\"/></s:Body></s:Envelope>";
-    let res = client()?
+    let res = soap_client()?
         .post(ENDPOINT)
         .header("Content-Type", "text/xml; charset=utf-8")
         .header(
@@ -575,10 +616,36 @@ pub fn file_name_for(url: &str) -> Result<String, String> {
 
 // ----------------------------------------------------------------- http ----
 
+/// A connection that is never going to be answered.
+///
+/// The body deliberately has no bound - a 90 MB map on a slow line is not a
+/// hung request - but reaching the server should take milliseconds, and
+/// without this a black-holed connect sat there for the OS's own timeout with
+/// the download UI showing nothing at all.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// How long a SOAP call may take, start to finish.
+///
+/// These are two-line requests answered from a database; anything approaching
+/// this is a service that is not going to answer. Bounded where the file
+/// downloads are not, because there is nothing large about them.
+const SOAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 fn client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .user_agent("shiro")
+        .connect_timeout(CONNECT_TIMEOUT)
         .timeout(None) // a 90 MB map on a slow line is not a hung request
+        .build()
+        .map_err(|e| format!("could not build an HTTP client: {e}"))
+}
+
+/// The same, for the small SOAP calls that resolve a name.
+fn soap_client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .user_agent("shiro")
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(SOAP_TIMEOUT)
         .build()
         .map_err(|e| format!("could not build an HTTP client: {e}"))
 }
@@ -586,7 +653,7 @@ fn client() -> Result<reqwest::blocking::Client, String> {
 /// Ask the service where a name lives.
 pub fn resolve(internal_name: &str) -> Result<Option<Resolved>, String> {
     let body = build_request(internal_name)?;
-    let res = client()?
+    let res = soap_client()?
         .post(ENDPOINT)
         .header("Content-Type", "text/xml; charset=utf-8")
         .header("SOAPAction", format!("\"{SOAP_ACTION}\""))
@@ -619,12 +686,38 @@ pub fn fetch_to(
             .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
     }
 
-    let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
-    let mut req = client()?.get(url);
-    if have > 0 {
-        req = req.header("Range", format!("bytes={have}-"));
+    let http = client()?;
+    let mut have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+
+    /* Resuming splices the tail of one response onto the head of another, with
+       nothing tying the two together - no If-Range, no ETag, no validator of
+       any kind. A checksum at the end is what makes that safe, so a resume is
+       only attempted when the service named an md5. Without one the leftover is
+       thrown away and the file fetched whole: re-downloading is cheap next to
+       installing a splice nobody can check. */
+    if have > 0 && expect_md5.is_none() {
+        let _ = std::fs::remove_file(&part);
+        have = 0;
     }
-    let mut res = req.send().map_err(|e| format!("download failed: {e}"))?;
+
+    let fetch = |from: u64| -> Result<reqwest::blocking::Response, String> {
+        let mut req = http.get(url);
+        if from > 0 {
+            req = req.header("Range", format!("bytes={from}-"));
+        }
+        req.send().map_err(|e| format!("download failed: {e}"))
+    };
+
+    let mut res = fetch(have)?;
+
+    /* 416 means the leftover is already as long as the resource - a completed
+       or over-long `.part`. Asking again tomorrow gets the same answer, so the
+       download was stuck for good; drop it and fetch the file whole. */
+    if res.status().as_u16() == 416 {
+        let _ = std::fs::remove_file(&part);
+        have = 0;
+        res = fetch(0)?;
+    }
 
     // Resume only if the server actually agreed to; a 200 to a Range request
     // means it is sending the whole file and appending would corrupt it.
@@ -673,23 +766,45 @@ pub fn fetch_to(
     /* Already there, and in use.
        Windows refuses to replace a file another process has open, and the
        obvious other process is the game: the map being fetched is often the one
-       currently loaded. If a full-sized archive is already sitting at the
-       destination then it is the thing we were about to write, and failing here
-       would report "could not download" about content that is installed and
-       working.
+       currently loaded. If the archive already sitting at the destination is
+       the thing we were about to write, then failing here would report "could
+       not download" about content that is installed and working.
 
-       Only when the existing file is a plausible archive rather than a stub -
-       a zero-length leftover should still be replaced, and if the replace fails
-       for that, the error is real. */
+       Two ways to be sure of that, in order of how sure they are:
+
+       - the file there hashes to the checksum we just verified, so it *is* the
+         content, whatever went wrong with the rename; or
+       - the rename failed the way an in-use file fails, and something
+         full-sized is there.
+
+       Anything else - a full disk, a missing directory, a cross-device move -
+       is a real error, and taking the fallback for it would silently prefer an
+       unverified file already on disk over the verified one just downloaded. */
     if let Err(e) = std::fs::rename(&part, dest) {
         let already = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
-        if already > 0 {
+        let is_the_same = expect_md5.is_some_and(|want| {
+            md5_of(dest).is_ok_and(|got| got.eq_ignore_ascii_case(want))
+        });
+        if is_the_same || (already > 0 && looks_like_in_use(&e)) {
             let _ = std::fs::remove_file(&part);
             return Ok(());
         }
         return Err(format!("could not put {} in place: {e}", dest.display()));
     }
     Ok(())
+}
+
+/// Did this rename fail because something else has the file open?
+///
+/// Windows says so with ERROR_SHARING_VIOLATION (32) or ERROR_ACCESS_DENIED
+/// (5). Rust has no stable `ErrorKind` for the first, so the raw codes are
+/// checked as well as the kind - a wrong guess here would turn a real failure
+/// into a silent success.
+fn looks_like_in_use(e: &std::io::Error) -> bool {
+    if matches!(e.kind(), std::io::ErrorKind::PermissionDenied) {
+        return true;
+    }
+    matches!(e.raw_os_error(), Some(5) | Some(32) | Some(33))
 }
 
 fn md5_of(path: &Path) -> Result<String, String> {
@@ -787,7 +902,9 @@ mod tests {
 
     #[test]
     fn a_blank_search_never_reaches_the_wire() {
-        assert_eq!(zks_find_maps("   ".into()).unwrap(), Vec::new());
+        // The blocking half, since the command itself is now a thin async
+        // wrapper around it - and a test must not need a Tauri runtime.
+        assert_eq!(find_maps_blocking("   ".into()).unwrap(), Vec::new());
     }
 
     #[test]
@@ -970,5 +1087,47 @@ word".into()], "Map").is_err());
     #[test]
     fn a_response_without_maps_is_empty_rather_than_an_error() {
         assert!(parse_catalogue("<s:Envelope/>").unwrap().is_empty());
+    }
+
+    #[test]
+    fn only_an_in_use_failure_is_treated_as_one() {
+        use std::io::{Error, ErrorKind};
+        // What Windows says when the game has the map open.
+        assert!(looks_like_in_use(&Error::from_raw_os_error(32)));
+        assert!(looks_like_in_use(&Error::from_raw_os_error(5)));
+        assert!(looks_like_in_use(&Error::new(ErrorKind::PermissionDenied, "denied")));
+        // A full disk or a missing directory is a real failure, and accepting
+        // it would keep an unverified file already on disk in preference to the
+        // verified one just downloaded.
+        assert!(!looks_like_in_use(&Error::new(ErrorKind::NotFound, "gone")));
+        assert!(!looks_like_in_use(&Error::new(ErrorKind::Other, "no space left on device")));
+    }
+
+    #[test]
+    fn an_empty_string_element_does_not_spin_forever() {
+        /* `<string></string>` has empty text; a loop that advanced by searching
+           for the text it had just read found it at offset zero and read the
+           same element again, for ever, growing a Vec as it went. Reachable
+           from a response on a plaintext channel, so it is a hang somebody else
+           can cause. */
+        let xml = "<links><string></string><string>a</string><string></string></links>";
+        assert_eq!(string_array(xml, "links"), vec!["", "a", ""]);
+    }
+
+    #[test]
+    fn a_namespaced_string_array_still_reads() {
+        let xml = "<a:words><a:string>one</a:string><a:string>two</a:string></a:words>";
+        assert_eq!(string_array(xml, "words"), vec!["one", "two"]);
+    }
+
+    #[test]
+    fn an_unterminated_string_element_ends_the_walk() {
+        let xml = "<links><string>one</string><string>never closed</links>";
+        assert_eq!(string_array(xml, "links"), vec!["one"]);
+    }
+
+    #[test]
+    fn a_container_that_is_not_there_is_empty_rather_than_an_error() {
+        assert!(string_array("<other/>", "links").is_empty());
     }
 }

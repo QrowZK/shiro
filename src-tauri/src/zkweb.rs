@@ -502,8 +502,18 @@ pub fn parse_ratings(html: &str) -> Vec<RatingPoint> {
 // --------------------------------------------------------------- commands ---
 
 /// A name (case-sensitive) or a numeric account id.
+///
+/// Async so the blocking fetch lands on a worker. A sync Tauri command runs on
+/// the main thread, and a profile lookup is an HTTP round trip to zero-k.info -
+/// the whole window stopped for the length of it, on a click.
 #[tauri::command]
-pub fn zkw_profile(who: String) -> Result<Option<Profile>, String> {
+pub async fn zkw_profile(who: String) -> Result<Option<Profile>, String> {
+    tauri::async_runtime::spawn_blocking(move || profile_blocking(who))
+        .await
+        .map_err(|e| format!("the profile lookup did not finish: {e}"))?
+}
+
+fn profile_blocking(who: String) -> Result<Option<Profile>, String> {
     let who = who.trim();
     if who.is_empty() {
         return Ok(None);
@@ -524,7 +534,13 @@ pub fn zkw_profile(who: String) -> Result<Option<Profile>, String> {
 /// The rating series for an account. A 500 from the site means there is no
 /// such series, which is an empty answer rather than an error.
 #[tauri::command]
-pub fn zkw_ratings(account_id: u32, category: u8) -> Result<Vec<RatingPoint>, String> {
+pub async fn zkw_ratings(account_id: u32, category: u8) -> Result<Vec<RatingPoint>, String> {
+    tauri::async_runtime::spawn_blocking(move || ratings_blocking(account_id, category))
+        .await
+        .map_err(|e| format!("the rating lookup did not finish: {e}"))?
+}
+
+fn ratings_blocking(account_id: u32, category: u8) -> Result<Vec<RatingPoint>, String> {
     let key = format!("{account_id}:{category}");
     if let Some(hit) = cached(&RATINGS, &key, RATINGS_TTL) {
         return Ok(hit);

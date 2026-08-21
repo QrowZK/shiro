@@ -99,3 +99,60 @@ test("two notices in one batch both survive", () => {
   ]);
   assert.deepEqual(useLobby.getState().notices, ["a", "b"]);
 });
+
+test("a user who left a battle is not still in it", () => {
+  fresh();
+  useLobby.getState().applyMessage(msg("User", {
+    Name: "hexed", AccountID: 2, BattleID: 11, PartyID: 4,
+    AwaySince: "2026-08-18T09:00:00Z", InGameSince: "2026-08-18T09:30:00Z",
+  }));
+  assert.equal(useLobby.getState().users.hexed.BattleID, 11);
+
+  /* The server rebuilds the whole record on every change and omits what is
+     null, so leaving a room arrives as a `User` with no BattleID at all.
+     Merged as "absent means unchanged", they never left. */
+  useLobby.getState().applyMessage(msg("User", { Name: "hexed", AccountID: 2, Clan: "ZKF" }));
+  const u = useLobby.getState().users.hexed;
+  assert.equal(u.BattleID, undefined, "still listed in a battle they left");
+  assert.equal(u.AwaySince, undefined, "still greyed out as away");
+  assert.equal(u.InGameSince, undefined, "still shown as in a game");
+  assert.equal(u.PartyID, undefined, "still in a party");
+  assert.equal(u.Clan, "ZKF", "and the rest of the record still merges");
+});
+
+test("a user update that still names a battle keeps it", () => {
+  fresh();
+  useLobby.getState().applyMessage(msg("User", { Name: "hexed", AccountID: 2, BattleID: 11 }));
+  useLobby.getState().applyMessage(msg("User", { Name: "hexed", AccountID: 2, BattleID: 11, Country: "US" }));
+  assert.equal(useLobby.getState().users.hexed.BattleID, 11);
+  assert.equal(useLobby.getState().users.hexed.Country, "US");
+});
+
+test("an engine change in the same batch as a Welcome does not throw the Welcome away", () => {
+  fresh();
+  useLobby.getState().applyBatch([
+    msg("Welcome", {
+      Engine: "2025.06.21", Game: "Zero-K v1.14.8.0", UserCount: 100, UserCountLimited: false,
+    }),
+    msg("DefaultEngineChanged", { Engine: "2025.07.01" }),
+  ]);
+  const w = useLobby.getState().welcome!;
+  assert.equal(w.Engine, "2025.07.01", "the newer engine wins");
+  assert.equal(w.Game, "Zero-K v1.14.8.0", "and the Welcome it arrived with survives");
+  assert.equal(w.UserCount, 100);
+});
+
+test("a batch that changes nothing leaves the directories alone", () => {
+  fresh();
+  useLobby.getState().applyMessage(msg("User", { Name: "hexed", AccountID: 2 }));
+  const before = useLobby.getState();
+  // A room full of chatter is `Say` after `Say`; cloning every directory for
+  // each frame of it is four new objects a frame, sized by everyone online.
+  useLobby.getState().applyBatch([
+    msg("Say", { Place: 0, Target: "zk", User: "hexed", Text: "hi",
+      IsEmote: false, Ring: false, AllowRelay: true }),
+  ]);
+  const after = useLobby.getState();
+  assert.equal(after.users, before.users, "the user directory was rebuilt for nothing");
+  assert.equal(after.battles, before.battles);
+});

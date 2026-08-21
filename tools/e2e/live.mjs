@@ -213,6 +213,28 @@ await page.evaluate(() => window.__ZKS.push("BattleUpdate " + JSON.stringify({
 })));
 check("and say so when we do not",
   await waitFor("unsynced", () => sentSince(beforeUnsync, /^UpdateUserBattleStatus \{.*"Sync":2/)));
+
+/* And the other half of *that*: once the download finishes we have the map, and
+   the room has to be told again. `fetch()` resolves when the job is queued, not
+   when it is done, so this used to re-check against the state before the
+   download - reporting Unsynced and then never revisiting it, which left the
+   one player who actually downloaded the map named as unready all game. */
+const beforeResync = await mark();
+await page.evaluate(() => {
+  window.__ZKS.missing = [{ kind: "map", name: "Slowly Arriving v2" }];
+});
+await page.evaluate(() => window.__ZKS.push("BattleUpdate " + JSON.stringify({
+  Header: { BattleID: 11, Map: "Slowly Arriving v2" },
+})));
+check("a missing map is fetched",
+  await waitFor("fetching", () => page.evaluate(() => Boolean(window.__ZKS.lastJobId))));
+// The download lands: the map is there now, and the job reports done.
+await page.evaluate(() => {
+  window.__ZKS.missing = [];
+  window.__ZKS.emitContent({ kind: "finished", id: window.__ZKS.lastJobId, outcome: "ok" });
+});
+check("and once it lands we say so, without waiting for a rejoin",
+  await waitFor("resynced", () => sentSince(beforeResync, /^UpdateUserBattleStatus \{.*"Sync":1/)));
 await page.evaluate(() => { window.__ZKS.missing = []; });
 
 /* Ratings carry the colour their rank icon carries, so the number in the

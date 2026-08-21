@@ -46,7 +46,6 @@ interface LobbyState {
 
   users: Record<string, T.User>;
   battles: Record<number, T.BattleHeader>;
-  channels: Record<string, { name: string; users: string[] }>;
   chat: ChatLine[];
 
   /** Messages seen but not yet handled - useful while wiring the remaining screens. */
@@ -81,13 +80,41 @@ interface LobbyState {
 const EMPTY = {
   users: {} as Record<string, T.User>,
   battles: {} as Record<number, T.BattleHeader>,
-  channels: {} as Record<string, { name: string; users: string[] }>,
   chat: [] as ChatLine[],
   unhandled: {} as Record<string, number>,
   reconnect: 0,
   kicked: undefined as { reason: string } | undefined,
   notices: [] as string[],
 };
+
+/**
+ * Fields of `User` that mean "no longer" when they are absent.
+ *
+ * `User` is broadcast as a whole record, not a patch: the server rebuilds it on
+ * every change. So the merge rule that is right for `BattleHeader` - an absent
+ * key means unchanged, because the server omits what did not change - is wrong
+ * here in one direction. These four are the ones that can go from set to unset,
+ * and `NullValueHandling.Ignore` drops them entirely when they do:
+ *
+ * - `BattleID`   leaving a room
+ * - `AwaySince`  coming back
+ * - `InGameSince` the game ending
+ * - `PartyID`    leaving a party
+ *
+ * Merged the general way, none of them ever cleared: somebody who left a battle
+ * stayed listed in it, and somebody who came back stayed greyed out as away,
+ * until they disconnected entirely.
+ */
+const USER_CLEARED_WHEN_ABSENT = ["BattleID", "AwaySince", "InGameSince", "PartyID"] as const;
+
+/** Merge a `User` broadcast, honouring the fields above. */
+export function mergeUser(base: T.User | undefined, patch: T.User): T.User {
+  const merged = mergePatch(base, patch) as T.User & Record<string, unknown>;
+  for (const field of USER_CLEARED_WHEN_ABSENT) {
+    if (patch[field] === undefined) delete merged[field];
+  }
+  return merged;
+}
 
 const MAX_CHAT = 500;
 
@@ -112,12 +139,24 @@ export const useLobby = create<LobbyState>((set, get) => ({
    * batches per animation frame rather than setting state per message.
    */
   applyBatch: messages => set(state => {
-    const users = { ...state.users };
-    const battles = { ...state.battles };
-    const channels = { ...state.channels };
-    const unhandled = { ...state.unhandled };
+    /* Copy on write. Most batches touch one map, often none - a room's chatter
+       is all `Say` - and cloning every directory on every animation frame was
+       four new objects a frame, each the size of everyone online. */
+    let users = state.users;
+    let battles = state.battles;
+    let unhandled = state.unhandled;
+    const mutUsers = () => (users === state.users ? (users = { ...users }) : users);
+    const mutBattles = () => (battles === state.battles ? (battles = { ...battles }) : battles);
+    const mutUnhandled = () =>
+      (unhandled === state.unhandled ? (unhandled = { ...unhandled }) : unhandled);
     let chat = state.chat;
     let patch: Partial<LobbyState> = {};
+
+    /* What `Welcome` currently says, including a change made earlier in this
+       same batch. Reading `state.welcome` here meant a `DefaultEngineChanged`
+       arriving alongside a `Welcome` threw the Welcome away and kept the old
+       engine and game. */
+    const welcomeNow = () => patch.welcome ?? state.welcome ?? ({} as T.Welcome);
 
     for (const m of messages) {
       switch (m.cmd) {
@@ -143,31 +182,31 @@ export const useLobby = create<LobbyState>((set, get) => ({
 
         case "User": {
           const u = m.data as T.User;
-          if (u.Name) users[u.Name] = mergePatch(users[u.Name], u);
+          if (u.Name) mutUsers()[u.Name] = mergeUser(users[u.Name], u);
           break;
         }
 
         case "UserDisconnected": {
           const d = m.data as T.UserDisconnected;
-          if (d.Name) delete users[d.Name];
+          if (d.Name && users[d.Name]) delete mutUsers()[d.Name];
           break;
         }
 
         case "BattleAdded":
         case "BattleUpdate": {
           const h = (m.data as T.BattleAdded).Header;
-          if (h?.BattleID != null) battles[h.BattleID] = mergePatch(battles[h.BattleID], h);
+          if (h?.BattleID != null) mutBattles()[h.BattleID] = mergePatch(battles[h.BattleID], h);
           break;
         }
 
         case "DefaultEngineChanged":
           // The status bar reads the engine from Welcome, so keep it current.
-          patch.welcome = { ...(state.welcome ?? {} as T.Welcome),
+          patch.welcome = { ...welcomeNow(),
             Engine: (m.data as T.DefaultEngineChanged).Engine };
           break;
 
         case "DefaultGameChanged":
-          patch.welcome = { ...(state.welcome ?? {} as T.Welcome),
+          patch.welcome = { ...welcomeNow(),
             Game: (m.data as T.DefaultGameChanged).Game };
           break;
 
@@ -175,38 +214,15 @@ export const useLobby = create<LobbyState>((set, get) => ({
           patch.kicked = { reason: (m.data as T.KickFromServer).Reason ?? "No reason given." };
           break;
 
-        case "BattleRemoved":
-          delete battles[(m.data as T.BattleRemoved).BattleID];
-          break;
-
-        case "JoinChannelResponse": {
-          const d = m.data as T.JoinChannelResponse;
-          const name = d.ChannelName ?? d.Channel?.ChannelName;
-          if (d.Success && name) {
-            channels[name] = channels[name] ?? { name, users: [] };
-          }
+        case "BattleRemoved": {
+          const id = (m.data as T.BattleRemoved).BattleID;
+          if (battles[id]) delete mutBattles()[id];
           break;
         }
 
-        case "ChannelUserAdded": {
-          const d = m.data as T.ChannelUserAdded;
-          if (d.ChannelName && d.UserName) {
-            const c = channels[d.ChannelName] ?? { name: d.ChannelName, users: [] };
-            if (!c.users.includes(d.UserName)) {
-              channels[d.ChannelName] = { ...c, users: [...c.users, d.UserName] };
-            }
-          }
-          break;
-        }
-
-        case "ChannelUserRemoved": {
-          const d = m.data as T.ChannelUserRemoved;
-          const c = d.ChannelName ? channels[d.ChannelName] : undefined;
-          if (c && d.UserName) {
-            channels[d.ChannelName!] = { ...c, users: c.users.filter(u => u !== d.UserName) };
-          }
-          break;
-        }
+        /* Channels themselves live in store/chat.ts, which owns the rooms,
+           the membership and the backlog. This store kept a second, thinner
+           copy that nothing ever read. */
 
         case "Say": {
           const d = m.data as T.Say;
@@ -228,19 +244,19 @@ export const useLobby = create<LobbyState>((set, get) => ({
         }
 
         default:
-          unhandled[m.cmd] = (unhandled[m.cmd] ?? 0) + 1;
+          mutUnhandled()[m.cmd] = (unhandled[m.cmd] ?? 0) + 1;
       }
     }
 
     if (chat !== state.chat && chat.length > MAX_CHAT) chat = chat.slice(-MAX_CHAT);
 
-    return { ...patch, users, battles, channels, chat, unhandled };
+    return { ...patch, users, battles, chat, unhandled };
   }),
 
   /* A reconnect replays the whole directory, so the old one has to go first -
      otherwise battles that closed while we were away never disappear. Chat
      scrollback is deliberately kept: it is the one thing a player would lose. */
-  resetDirectory: () => set({ users: {}, battles: {}, channels: {} }),
+  resetDirectory: () => set({ users: {}, battles: {} }),
 
   /** Acknowledge the kick notice so the dialog can close. */
   clearKick: () => set({ kicked: undefined }),

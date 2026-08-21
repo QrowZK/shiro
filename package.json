@@ -21,7 +21,8 @@
     "gen:modoptions": "node tools/gen-modoptions.mjs",
     "typecheck": "tsc --noEmit",
     "check:names": "node tools/check-names.mjs",
-    "fetch:apps": "node tools/fetch-bundled-apps.mjs"
+    "fetch:apps": "node tools/fetch-bundled-apps.mjs",
+    "test:demo": "node tools/e2e/demo.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.1.1",

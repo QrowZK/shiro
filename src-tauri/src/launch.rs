@@ -112,8 +112,40 @@ pub fn spawn_plan(exe: &Path, root: &Path, script: &Path) -> SpawnPlan {
 /// `Program Files` is not writable by a per-user process, and failing to launch
 /// because of that would be a maddening bug to diagnose.
 pub fn script_path() -> PathBuf {
-    std::env::temp_dir().join("shiro").join("connect_script.txt")
+    script_dir().join("connect_script.txt")
 }
+
+/// A directory only this user can read.
+///
+/// The script carries `ScriptPassword`, which is what proves to the game server
+/// that a connection is this player. On Windows the temp directory is per-user
+/// and that is enough; on Linux `/tmp` is shared, so anyone with an account on
+/// the machine could read the password out of it - and `/tmp/shiro` is
+/// first-come-first-served, so they could own the directory before we do.
+fn script_dir() -> PathBuf {
+    if cfg!(windows) {
+        return std::env::temp_dir().join("shiro");
+    }
+    if let Some(run) = std::env::var_os("XDG_RUNTIME_DIR") {
+        // Created by the session manager, 0700, and ours.
+        return PathBuf::from(run).join("shiro");
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join(".cache").join("shiro");
+    }
+    std::env::temp_dir().join("shiro")
+}
+
+/// Make the script readable only by us, on platforms where that is a question.
+#[cfg(unix)]
+fn restrict(path: &Path, dir: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = if dir { 0o700 } else { 0o600 };
+    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode));
+}
+
+#[cfg(not(unix))]
+fn restrict(_path: &Path, _dir: bool) {}
 
 /// One running game at a time. Zero-K itself is single-instance and two engines
 /// fighting over the same write dir corrupts the config.
@@ -176,6 +208,17 @@ pub fn zks_launch_preview(
         script_path,
         script,
     })
+}
+
+impl Game {
+    /// Is an engine running right now?
+    ///
+    /// Asked by anything that writes into the data directory: the engine
+    /// rewrites `springsettings.cfg` from memory when it exits, so a change
+    /// saved while it runs is thrown away without a word.
+    pub fn is_running(&self) -> bool {
+        self.running.lock().map(|r| *r).unwrap_or(false)
+    }
 }
 
 #[tauri::command]
@@ -243,9 +286,11 @@ fn start(req: &ConnectRequest, root: Option<&str>) -> Result<std::process::Child
     let script = script_path();
     if let Some(dir) = script.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        restrict(dir, true);
     }
     std::fs::write(&script, connect_script(req)?)
         .map_err(|e| format!("cannot write {}: {e}", script.display()))?;
+    restrict(&script, false);
 
     let plan = spawn_plan(&exe, &install.root, &script);
     let mut cmd = Command::new(&plan.exe);
@@ -321,7 +366,29 @@ mod tests {
 
     #[test]
     fn the_script_never_lands_inside_the_install() {
-        // A Steam install under Program Files is read-only for a per-user process.
-        assert!(script_path().starts_with(std::env::temp_dir()));
+        /* A Steam install under Program Files is read-only for a per-user
+           process, so the script goes somewhere scratch. Which scratch
+           directory depends on the platform - see script_dir - so the property
+           worth pinning is that it is not in the install and is somewhere only
+           this user can reach. */
+        let path = script_path();
+        assert!(path.ends_with("connect_script.txt"));
+        assert_eq!(path.parent().and_then(|p| p.file_name()), Some("shiro".as_ref()));
+        assert!(!path.to_string_lossy().contains("Zero-K"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_script_directory_is_not_world_readable() {
+        use std::os::unix::fs::PermissionsExt;
+        // It carries ScriptPassword, which is what proves a connection is this
+        // player. On a shared machine /tmp is everybody's.
+        let dir = std::env::temp_dir().join("shiro-perm-test");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        restrict(&dir, true);
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o077;
+        assert_eq!(mode, 0, "another user on this machine can read the script");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

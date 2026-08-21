@@ -56,6 +56,16 @@ export interface Settings {
   /** Overrides install detection when someone keeps Zero-K somewhere odd. */
   installRoot?: string;
   /**
+   * This installation's id, as `Login.InstallID`.
+   *
+   * The server uses it with the account id to tell one machine from another -
+   * multi-account detection, and ban evasion. Every Shiro sent the empty
+   * string, so every Shiro looked like the same installation to it. Random,
+   * stable, and not derived from anything about the machine: it identifies this
+   * copy of the app and nothing else.
+   */
+  installId?: string;
+  /**
    * Whether the first-run install question has been asked.
    *
    * Asked once and then never again: somebody who declined an install does not
@@ -82,6 +92,8 @@ export interface Settings {
 
 export interface SettingsState extends Settings {
   set: (patch: Partial<Settings>) => void;
+  /** This installation's id, creating one on first use. */
+  ensureInstallId: () => string;
   /** Forget the password but keep the name, which is not a secret. */
   forgetPassword: () => void;
 }
@@ -109,10 +121,10 @@ function load(): Settings {
 
 function save(s: Settings): void {
   try {
-    const { name, password, remember, host, port, installRoot, skin,
+    const { name, password, remember, host, port, installRoot, installId, skin,
             autoOpenDebriefing, roomChatHeight } = s;
     globalThis.localStorage?.setItem(KEY, JSON.stringify({
-      name, remember, host, port, installRoot, skin, autoOpenDebriefing,
+      name, remember, host, port, installRoot, installId, skin, autoOpenDebriefing,
       roomChatHeight,
       password: remember ? password : undefined,
     }));
@@ -128,6 +140,20 @@ export const useSettings = create<SettingsState>((setState, get) => ({
     setState(patch);
     save(get());
     if (patch.skin) applySkin(patch.skin);
+  },
+
+  ensureInstallId: () => {
+    const existing = get().installId;
+    if (existing) return existing;
+    /* Random rather than derived. A hash of the machine would identify the
+       machine; this identifies this copy of the app, which is all the server's
+       multi-account checks need and all we are entitled to send. */
+    const made = typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : Array.from({ length: 4 }, () => Math.random().toString(36).slice(2, 10)).join("");
+    setState({ installId: made });
+    save(get());
+    return made;
   },
 
   forgetPassword: () => {

@@ -74,6 +74,8 @@ pub struct DownloadPlan {
 
 /// Locate `pr-downloader`, which lives beside the engine binary.
 pub fn find_pr_downloader(root: &Path, engine: &str) -> Result<PathBuf, String> {
+    // Same server string, same path component, same guard.
+    crate::engine::check_version(engine)?;
     let spring = install::find_engine(root, engine)?;
     let dir = spring
         .parent()
@@ -315,11 +317,35 @@ struct Job {
     id: String,
     engine: String,
     items: Vec<ContentItem>,
+    /// The data directory this job was queued for.
+    ///
+    /// Carried on the job rather than read off whichever call happened to start
+    /// it: a job can sit in the queue across a settings change, and running it
+    /// against the new root downloads into one directory while recording it in
+    /// another - after which the next preflight fetches it all over again.
+    root: Option<String>,
 }
 
 struct ActiveJob {
     id: String,
-    child: std::process::Child,
+    /// `None` in two moments when the job is still very much active: after the
+    /// slot is reserved and before the downloader is spawned, and after the
+    /// downloader exits while the zero-k.info fallback runs. The slot stays
+    /// occupied throughout, because "something is writing to the pool" is what
+    /// it means, and two writers into `pool/` is the thing the queue exists to
+    /// prevent.
+    child: Option<std::process::Child>,
+    /// What this job is downloading, so a request for the same thing can be
+    /// told it is already happening. The queue is not enough: this job was
+    /// popped off it to start.
+    items: Vec<ContentItem>,
+    /// Somebody pressed cancel.
+    ///
+    /// Read rather than inferred from the exit code: on Windows a killed
+    /// process exits 1, which is indistinguishable from "not found" - so a
+    /// cancel used to be reported as a failure *and* send the fallback off to
+    /// download the thing that had just been cancelled.
+    cancelled: bool,
 }
 
 /// One pr-downloader at a time, with a queue rather than a rejection.
@@ -436,18 +462,30 @@ fn start_next(app: tauri::AppHandle, state: Content2) {
     use tauri::Emitter;
 
     let job = {
-        let active = state.active.lock().ok();
-        if active.as_ref().map(|a| a.is_some()).unwrap_or(true) {
-            return; // busy, or poisoned - either way do not start another
+        let mut slot = match state.active.lock() {
+            Ok(s) => s,
+            Err(_) => return, // poisoned - do not start another
+        };
+        if slot.is_some() {
+            return; // busy
         }
         let mut q = match state.queue.lock() {
             Ok(q) => q,
             Err(_) => return,
         };
-        match q.pop_front() {
-            Some(j) => j,
-            None => return,
-        }
+        let Some(job) = q.pop_front() else { return };
+        /* Reserve the slot here, under the same lock that found it empty. The
+           check and the spawn used to be separate, so two callers could both
+           see nothing running, both pop a job, and both start a downloader -
+           two processes writing `pool/` and `packages/`, which rapid's
+           non-atomic `.sdp` writes do not survive. */
+        *slot = Some(ActiveJob {
+            id: job.id.clone(),
+            child: None,
+            items: job.items.clone(),
+            cancelled: false,
+        });
+        job
     };
 
     let started = spawn_job(&app, &job, &state);
@@ -551,7 +589,7 @@ fn try_zk_content(
 fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), String> {
     use tauri::Emitter;
 
-    let install = install::detect_with(state.root.as_deref())?;
+    let install = install::detect_with(job.root.as_deref().or(state.root.as_deref()))?;
     let exe = find_pr_downloader(&install.root, &job.engine)?;
     let plan = download_plan(&exe, &install.root, &job.items)?;
 
@@ -586,7 +624,17 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
     }
 
     if let Ok(mut slot) = state.active.lock() {
-        *slot = Some(ActiveJob { id: job.id.clone(), child });
+        match slot.as_mut() {
+            // The reservation start_next made. Fill it in.
+            Some(a) if a.id == job.id => a.child = Some(child),
+            // Reserved by somebody else, or cancelled out from under us while
+            // the process was starting: do not leave an orphan running.
+            _ => {
+                let mut child = child;
+                let _ = child.kill();
+                return Err("the download was cancelled".into());
+            }
+        }
     }
     let _ = app.emit(CONTENT_EVENT, ContentStatus::Started { id: job.id.clone() });
 
@@ -596,8 +644,14 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
     let state_w = state.clone();
     let id = job.id.clone();
     let items_w = job.items.clone();
-    let root_w = state.root.clone();
+    // The job's own root, so a settings change while it waited cannot send the
+    // download and its record to two different places.
+    let root_w = job.root.clone().or_else(|| state.root.clone());
     std::thread::spawn(move || {
+        /* Waits for the downloader, then hands the job to the fallback without
+           letting go of the slot: the fallback writes into the same pool, and
+           releasing here let the next queued job start alongside it. */
+        let mut cancelled = false;
         let code = loop {
             std::thread::sleep(std::time::Duration::from_millis(120));
             let mut slot = match state_w.active.lock() {
@@ -608,21 +662,32 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
             if a.id != id {
                 break None; // superseded
             }
-            match a.child.try_wait() {
+            let Some(child) = a.child.as_mut() else {
+                // Reserved but not spawned yet, or already reaped.
+                continue;
+            };
+            match child.try_wait() {
                 Ok(Some(status)) => {
                     let c = status.code();
-                    *slot = None;
+                    cancelled = a.cancelled;
+                    a.child = None;
                     break c;
                 }
                 Ok(None) => continue,
                 Err(_) => {
-                    *slot = None;
+                    cancelled = a.cancelled;
+                    a.child = None;
                     break None;
                 }
             }
         };
 
-        let mut outcome = classify_exit(code);
+        /* A cancel is not a failure, whatever the exit code says. Windows
+           reports a killed process as exit 1, which classifies as
+           NotFoundOrFailed - so cancelling used to be announced as "could not
+           download it" and then send the fallback to fetch the very thing that
+           had just been cancelled. */
+        let mut outcome = if cancelled { Outcome::Killed } else { classify_exit(code) };
         let mut message = outcome.message();
         let mut log = if matches!(outcome, Outcome::Ok) {
             None
@@ -641,7 +706,15 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
            This is only correct because each job now carries a single item: the
            exit code used to be an OR over the batch, so there was no per-item
            failure to fall back from. See docs/DOWNLOADS-ZK-CONTENT.md. */
-        if !matches!(outcome, Outcome::Ok | Outcome::Killed) {
+        let cancelled_since = || {
+            state_w
+                .active
+                .lock()
+                .ok()
+                .and_then(|s| s.as_ref().map(|a| a.id == id && a.cancelled))
+                .unwrap_or(false)
+        };
+        if !matches!(outcome, Outcome::Ok | Outcome::Killed) && !cancelled_since() {
             if let Some(item) = items_w.first() {
                 match try_zk_content(&app_w, &id, item, root_w.as_deref()) {
                     Fallback::Installed(what) => {
@@ -695,6 +768,13 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
             }
         }
 
+        // Done writing: release the slot, then let the queue move on.
+        if let Ok(mut slot) = state_w.active.lock() {
+            if slot.as_ref().map(|a| a.id.as_str()) == Some(id.as_str()) {
+                *slot = None;
+            }
+        }
+
         let _ = app_w.emit(
             CONTENT_EVENT,
             ContentStatus::Finished { id: id.clone(), outcome, message, log },
@@ -732,6 +812,58 @@ impl Content {
 }
 
 /// Queue an acquisition. Progress arrives on `zks://content`.
+/// What a fetch request should do about work that is already under way.
+#[derive(Debug, PartialEq, Eq)]
+enum Dedup {
+    /// Nothing new: wait on this job instead.
+    Existing(String),
+    /// Download these; the rest is already covered.
+    Fetch(Vec<ContentItem>),
+}
+
+/// Decide against both the running job and the queue.
+///
+/// The running job is the one that matters most and the one that used to be
+/// missed: it was popped off the queue to start, so a queue-only check says
+/// "not happening" about the download in progress. Joining at the whistle -
+/// prefetch queues the map, then the launch asks for it again - then queues a
+/// full duplicate run, and the launch waits behind its own second copy.
+fn dedup_fetch(
+    running: Option<(&str, &[ContentItem])>,
+    queued: &std::collections::VecDeque<Job>,
+    items: &[ContentItem],
+) -> Dedup {
+    let same = |a: &ContentItem, b: &ContentItem| a.kind == b.kind && a.name == b.name;
+    let covered = |i: &ContentItem| {
+        running.map(|(_, r)| r.iter().any(|e| same(e, i))).unwrap_or(false)
+            || queued.iter().any(|j| j.items.iter().any(|e| same(e, i)))
+    };
+
+    let fresh: Vec<ContentItem> = items.iter().filter(|i| !covered(i)).cloned().collect();
+    if !fresh.is_empty() {
+        return Dedup::Fetch(fresh);
+    }
+
+    /* Everything asked for is already happening, so hand back the id of the job
+       doing it rather than a sentinel. The running job is preferred: it is the
+       one that will finish first. */
+    let from_running = running
+        .filter(|(_, r)| r.iter().any(|e| items.iter().any(|i| same(i, e))))
+        .map(|(id, _)| id.to_string());
+    let existing = from_running.or_else(|| {
+        queued
+            .iter()
+            .find(|j| j.items.iter().any(|e| items.iter().any(|i| same(i, e))))
+            .map(|j| j.id.clone())
+    });
+    match existing {
+        Some(id) => Dedup::Existing(id),
+        // Nothing covers it and nothing is fresh only if `items` was empty,
+        // which the caller has already refused.
+        None => Dedup::Fetch(items.to_vec()),
+    }
+}
+
 #[tauri::command]
 pub fn zks_content_fetch(
     app: tauri::AppHandle,
@@ -749,38 +881,30 @@ pub fn zks_content_fetch(
         check_name(&item.name)?;
     }
 
-    // Deduplicate against what is already queued or running. Joining two battles
-    // on the same map, or a BattleUpdate flapping between maps, must not enqueue
-    // the same download twice.
+    // Deduplicate against what is already queued *or running*. Joining two
+    // battles on the same map, or a BattleUpdate flapping between maps, must not
+    // enqueue the same download twice.
     let id = next_job_id();
     {
+        /* Both locks, in the order start_next takes them, so the decision is
+           atomic against a job starting underneath it. Holding `active` also
+           means the supervisor cannot retire the job between deciding to wait
+           on it and returning its id. */
+        let active = self_lock(&content.active)?;
         let mut q = self_lock(&content.queue)?;
-        let already: Vec<&ContentItem> = q.iter().flat_map(|j| j.items.iter()).collect();
-        let fresh: Vec<ContentItem> = items
-            .iter()
-            .filter(|i| !already.iter().any(|e| e.kind == i.kind && e.name == i.name))
-            .cloned()
-            .collect();
-        if fresh.is_empty() {
-            /* Everything asked for is already queued, so hand back the id of
-               the job doing it rather than a sentinel.
 
-               This used to return the literal "already-queued", which the
-               caller then used as a job id: it waited on a job that would never
-               exist, and Cancel aimed at nothing. Returning the real id means a
-               second caller waits for the first one's download, which is what
-               "it is already happening" should mean. */
-            let existing = q
-                .iter()
-                .find(|j| {
-                    j.items
-                        .iter()
-                        .any(|e| items.iter().any(|i| i.kind == e.kind && i.name == e.name))
-                })
-                .map(|j| j.id.clone());
-            return existing.ok_or_else(|| "already queued, but the job is gone".to_string());
-        }
-        q.push_back(Job { id: id.clone(), engine, items: fresh.clone() });
+        let running = active.as_ref().map(|a| (a.id.as_str(), a.items.as_slice()));
+        let fresh = match dedup_fetch(running, &q, &items) {
+            Dedup::Existing(existing) => return Ok(existing),
+            Dedup::Fetch(fresh) => fresh,
+        };
+
+        q.push_back(Job {
+            id: id.clone(),
+            engine,
+            items: fresh.clone(),
+            root: install_root.clone(),
+        });
         let _ = app.emit(CONTENT_EVENT, ContentStatus::Queued { id: id.clone(), items: fresh });
     }
 
@@ -810,19 +934,50 @@ pub fn zks_content_log(content: tauri::State<'_, Content>, id: Option<String>) -
 /// leaves a partial pool rather than a corrupt archive and the next run resumes.
 /// UNVERIFIED against a real download - confirm on first use.
 #[tauri::command]
-pub fn zks_content_cancel(content: tauri::State<'_, Content>, id: String) -> Result<(), String> {
-    {
+pub fn zks_content_cancel(
+    app: tauri::AppHandle,
+    content: tauri::State<'_, Content>,
+    id: String,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
+    let was_queued = {
         let mut q = self_lock(&content.queue)?;
+        let before = q.len();
         q.retain(|j| j.id != id);
-    }
-    let mut slot = content
-        .active
-        .lock()
-        .map_err(|_| "content state is poisoned".to_string())?;
-    if let Some(a) = slot.as_mut() {
-        if a.id == id {
-            let _ = a.child.kill();
+        q.len() != before
+    };
+
+    {
+        let mut slot = self_lock(&content.active)?;
+        if let Some(a) = slot.as_mut() {
+            if a.id == id {
+                /* Recorded, not inferred. The supervisor reads this rather than
+                   the exit code, because Windows reports a killed process as
+                   exit 1 and that is also what "not found" looks like. It also
+                   stops the fallback, which would otherwise go and download the
+                   thing that was just cancelled. */
+                a.cancelled = true;
+                if let Some(child) = a.child.as_mut() {
+                    let _ = child.kill();
+                }
+            }
         }
+    }
+
+    /* A job cancelled while still in the queue has no supervisor to announce
+       it, and callers wait on `Finished` before giving up. Without this they
+       waited for a job that would never speak again. */
+    if was_queued {
+        let _ = app.emit(
+            CONTENT_EVENT,
+            ContentStatus::Finished {
+                id,
+                outcome: Outcome::Killed,
+                message: Outcome::Killed.message(),
+                log: None,
+            },
+        );
     }
     Ok(())
 }
@@ -908,6 +1063,76 @@ pub fn zks_content_preflight(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn item(kind: ContentKind, name: &str) -> ContentItem {
+        ContentItem { kind, name: name.into() }
+    }
+
+    fn queue_of(jobs: &[(&str, &[ContentItem])]) -> std::collections::VecDeque<Job> {
+        jobs.iter()
+            .map(|(id, items)| Job {
+                id: (*id).into(),
+                engine: "2025.06.21".into(),
+                items: items.to_vec(),
+                root: None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_job_already_downloading_counts_as_covered() {
+        // It was popped off the queue to start, so a queue-only check calls it
+        // "not happening" and queues a second copy of the same download - which
+        // the launch then waits behind.
+        let map = [item(ContentKind::Map, "Comet Catcher Redux")];
+        let empty = queue_of(&[]);
+        assert_eq!(
+            dedup_fetch(Some(("dl-1", &map)), &empty, &map),
+            Dedup::Existing("dl-1".into())
+        );
+    }
+
+    #[test]
+    fn a_queued_job_still_counts() {
+        let map = [item(ContentKind::Map, "Barren v3")];
+        let q = queue_of(&[("dl-7", &map)]);
+        assert_eq!(dedup_fetch(None, &q, &map), Dedup::Existing("dl-7".into()));
+    }
+
+    #[test]
+    fn the_running_job_is_preferred_over_a_queued_one() {
+        // It finishes first, so waiting on it is the shorter wait.
+        let map = [item(ContentKind::Map, "TartarusV7")];
+        let q = queue_of(&[("dl-9", &map)]);
+        assert_eq!(
+            dedup_fetch(Some(("dl-4", &map)), &q, &map),
+            Dedup::Existing("dl-4".into())
+        );
+    }
+
+    #[test]
+    fn only_the_parts_that_are_not_covered_are_fetched() {
+        let map = item(ContentKind::Map, "Comet Catcher Redux");
+        let game = item(ContentKind::Game, "zk:stable");
+        let running = [map.clone()];
+        let empty = queue_of(&[]);
+        assert_eq!(
+            dedup_fetch(Some(("dl-1", &running)), &empty, &[map, game.clone()]),
+            Dedup::Fetch(vec![game])
+        );
+    }
+
+    #[test]
+    fn a_different_kind_of_the_same_name_is_not_the_same_thing() {
+        let as_map = item(ContentKind::Map, "Titan");
+        let as_game = item(ContentKind::Game, "Titan");
+        let running = [as_map];
+        let empty = queue_of(&[]);
+        assert_eq!(
+            dedup_fetch(Some(("dl-1", &running)), &empty, &[as_game.clone()]),
+            Dedup::Fetch(vec![as_game])
+        );
+    }
 
     fn items() -> Vec<ContentItem> {
         vec![

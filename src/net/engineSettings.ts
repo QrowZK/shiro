@@ -95,10 +95,16 @@ export async function loadGameSettings(installRoot?: string): Promise<LoadedGame
     readLups(installRoot),
     readInfolog(installRoot),
   ]);
+  /* Device pixels, not CSS pixels. `screen.width` is what the browser reports
+     after Windows' display scaling, so a 4K screen at 200% says 1920 - and the
+     UI scale was then computed for a resolution the game will never run at,
+     which is exactly the "in-game UI comes up at the wrong size" this module
+     exists to fix. The engine goes fullscreen at the real resolution. */
+  const dpr = globalThis.devicePixelRatio || 1;
   const env: Environment = {
     screen: {
-      width: globalThis.screen?.width || 1920,
-      height: globalThis.screen?.height || 1080,
+      width: Math.round((globalThis.screen?.width || 1920) * dpr),
+      height: Math.round((globalThis.screen?.height || 1080) * dpr),
     },
     notNvidia: notNvidiaFromInfolog(infolog),
     current,
