@@ -56,6 +56,14 @@ export interface Settings {
   /** Overrides install detection when someone keeps Zero-K somewhere odd. */
   installRoot?: string;
   /**
+   * Whether the first-run install question has been asked.
+   *
+   * Asked once and then never again: somebody who declined an install does not
+   * want to be asked at every launch, and somebody who has one does not need
+   * telling twice.
+   */
+  installPromptSeen?: boolean;
+  /**
    * Jump to the debriefing when a match ends. Spectators are never pulled
    * there regardless - they have no progression to look at.
    */

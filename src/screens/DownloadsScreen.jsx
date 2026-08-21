@@ -64,16 +64,37 @@ export default function DownloadsScreen({ jobs, order, onCancel, onClear, onSett
   const list = (order || []).map(id => jobs[id]).filter(Boolean);
   const finished = list.filter(j => !["queued", "running"].includes(j.state)).length;
 
+  /* What the downloader printed. Off by default - it is engine output, not a
+     thing to read for pleasure - but one press away, because the alternative
+     when a download misbehaves is describing it over chat and guessing. */
+  const [log, setLog] = React.useState(undefined);
+  const showLog = async id => {
+    const { contentLog } = await import("../net/content.ts");
+    setLog(await contentLog(id).catch(e => String(e?.message ?? e)));
+  };
+
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
       <div style={{ maxWidth: 720 }}>
         <div style={{ display: "flex", alignItems: "center", gap: "var(--sp-5)",
           padding: "var(--sp-7) var(--sp-8)", borderBottom: "1px solid var(--w-06)" }}>
           <span className="lab" style={{ flex: 1 }}>DOWNLOADS</span>
+          <Button variant="ghost" size="sm"
+            onClick={() => (log === undefined ? showLog() : setLog(undefined))}>
+            {log === undefined ? "Show log" : "Hide log"}
+          </Button>
           {finished > 0 && onClear && (
             <Button variant="quiet" size="sm" onClick={onClear}>Clear finished</Button>
           )}
         </div>
+        {log !== undefined && (
+          <pre style={{ margin: 0, padding: "var(--sp-5) var(--sp-8)",
+            borderBottom: "1px solid var(--w-06)", maxHeight: 260, overflow: "auto",
+            font: "var(--w-regular) var(--size-tiny)/1.5 var(--font-mono)",
+            color: "var(--text-body)", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+            {log || "Nothing recorded yet."}
+          </pre>
+        )}
 
         {list.length === 0 ? (
           <div style={{ padding: "var(--sp-8)" }}>

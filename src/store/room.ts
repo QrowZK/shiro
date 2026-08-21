@@ -385,9 +385,20 @@ export const useRoom = create<RoomState>((set, get) => ({
 
   reportSync: synced => {
     const next: SyncStatuses = synced ? SYNC_SYNCED : SYNC_UNSYNCED;
-    if (get().battleID == null || get().sync === next) return;
+    const me = get().me;
+    /* `Name` is not optional, whatever the schema says. The server looks the
+       name up in a dictionary before it does anything else, so an absent one
+       arrives as a null key and throws ArgumentNullException - the same trap
+       the bot path below documents, seen for real in a host's server log:
+
+         error processing line UpdateUserBattleStatus {"Sync":2}
+         System.ArgumentNullException: Value cannot be null. Parameter name: key
+
+       Sending it without a name did not report an unknown sync state; it threw
+       inside the server, every time we tried. */
+    if (get().battleID == null || !me || get().sync === next) return;
     set({ sync: next });
-    tx("UpdateUserBattleStatus", { Sync: next });
+    tx("UpdateUserBattleStatus", { Name: me, Sync: next });
   },
 
   setModOptions: options => {

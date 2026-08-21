@@ -74,6 +74,17 @@ export function contentCancel(id: string): Promise<void> {
   return invoke("zks_content_cancel", { id });
 }
 
+/**
+ * What a download printed.
+ *
+ * Kept because the alternative, when one behaves oddly, is guessing: a download
+ * that stalls, finishes suspiciously fast, or quietly falls back to the HTTP
+ * path all look identical from outside. Without an id this is the most recent.
+ */
+export async function contentLog(id?: string): Promise<string> {
+  return invoke<string>("zks_content_log", { id });
+}
+
 export function onContent(cb: (s: ContentStatus) => void): Promise<UnlistenFn> {
   return listen<ContentStatus>("zks://content", e => cb(e.payload));
 }

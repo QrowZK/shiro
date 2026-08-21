@@ -21,6 +21,7 @@ import HostBattleDialog from "./screens/HostBattleDialog.jsx";
 import ModOptionsDialog from "./screens/ModOptionsDialog.jsx";
 import JoinPasswordDialog from "./screens/JoinPasswordDialog.jsx";
 import RegisterDialog from "./screens/RegisterDialog.jsx";
+import FirstRunInstallDialog from "./screens/FirstRunInstallDialog.jsx";
 import LoadingDialog from "./screens/LoadingDialog.jsx";
 
 import { inTauri } from "./net/connection";
@@ -139,6 +140,11 @@ export default function App() {
   const [managedProgress, setManagedProgress] = React.useState(undefined);
   const [managedError, setManagedError] = React.useState(undefined);
 
+  /* Asked once, when Shiro first knows the answer: an existing install should
+     be named rather than silently used, and a missing one should be offered
+     here rather than in a Settings section nobody opens. */
+  const [askInstall, setAskInstall] = React.useState(false);
+
   const refreshManaged = React.useCallback(version => {
     managedState(version).then(setManagedInfo, () => setManagedInfo(undefined));
   }, []);
@@ -155,6 +161,7 @@ export default function App() {
 
   React.useEffect(() => { if (live) refreshManaged(welcome?.Engine); },
     [live, welcome?.Engine, refreshManaged]);
+
 
   /* Joining is a request, not an arrival - the room only exists once the server
      answers - so following it has to happen when it turns up rather than when
@@ -207,6 +214,16 @@ export default function App() {
      the settings screen asks, or the override changes. */
   const [detectNonce, redetect] = React.useReducer(n => n + 1, 0);
   const [installError, setInstallError] = React.useState("");
+  /* Only once detection has actually run - asking before that would tell
+     somebody with Zero-K installed that they have not got it. */
+  React.useEffect(() => {
+    /* After logging in, not before. The login screen is not the place to be
+       interrupted, and the offer needs the engine version the server only
+       sends once you are on. */
+    if (!live || !loggedIn || settings.installPromptSeen) return;
+    if (!install && !installError) return;
+    setAskInstall(true);
+  }, [live, loggedIn, install, installError, settings.installPromptSeen]);
   React.useEffect(() => {
     if (!live) return;
     let cancelled = false;
@@ -440,6 +457,7 @@ export default function App() {
         </ErrorBoundary>
         <RegisterDialog open={registering} onClose={() => setRegistering(false)}
           onRegister={handleRegister} />
+
         <LoadingDialog open={live && loadingIn} />
       </AppShell>
     );
@@ -907,6 +925,38 @@ export default function App() {
   return (
     <AppShell view={view} onView={setView} inRoom={Boolean(liveRoom || room)} {...shell}
       overlay={overlay} me={me}>
+        <FirstRunInstallDialog
+          open={askInstall}
+          install={live ? install : undefined}
+          engine={welcome?.Engine}
+          root={managedInfo?.root}
+          onClose={() => {
+            setAskInstall(false);
+            useSettings.getState().set({ installPromptSeen: true });
+          }}
+          onSettings={() => setView("settings")}
+          onInstall={() => {
+            setView("settings");
+            const version = welcome?.Engine;
+            if (!version) return;
+            setManagedError(undefined);
+            setManagedProgress(undefined);
+            setManagedBusy(true);
+            installEngine(version)
+              .then(async () => {
+                const dir = managedInfo?.root;
+                if (dir) useSettings.getState().set({ installRoot: dir });
+                if (redetect) redetect();
+                const game = welcome?.Game;
+                if (dir && game) {
+                  await useContent.getState()
+                    .fetch(version, [{ kind: "game", name: game }], dir)
+                    .catch(e => setManagedError(String(e?.message ?? e)));
+                }
+                refreshManaged(version);
+              }, e => setManagedError(String(e?.message ?? e)))
+              .finally(() => setManagedBusy(false));
+          }} />
       <ErrorBoundary>{body}</ErrorBoundary>
     </AppShell>
   );
