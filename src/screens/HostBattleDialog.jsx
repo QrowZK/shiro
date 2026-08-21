@@ -8,10 +8,26 @@ import { findMaps, gameModes } from "../net/zkcatalogue.ts";
    everyone else is running and is joinable by everyone else. */
 const SIZES = ["2", "4", "6", "8", "12", "16", "24", "32"];
 
+/* What kind of room this is. The wire calls it `Mode` and it is a number -
+   restated here as literals for the same reason the stores do it: the runner
+   strips types and cannot execute a TypeScript enum.
+
+   Planetwars is deliberately absent. It is a real mode, but it belongs to the
+   campaign rather than to anybody opening a room, and offering it here would
+   host something the server will not run. */
+const ROOM_TYPES = [
+  { value: "6", label: "Teams" },
+  { value: "3", label: "1v1" },
+  { value: "4", label: "FFA" },
+  { value: "5", label: "Cooperative" },
+  { value: "0", label: "Custom" },
+];
+
 export default function HostBattleDialog({ open, onClose, onHost, defaultTitle, maps }) {
   const [title, setTitle] = React.useState("");
   const [map, setMap] = React.useState("");
   const [size, setSize] = React.useState("16");
+  const [roomType, setRoomType] = React.useState("6");
   const [password, setPassword] = React.useState("");
   const [found, setFound] = React.useState([]);
   const [modes, setModes] = React.useState([]);
@@ -28,6 +44,7 @@ export default function HostBattleDialog({ open, onClose, onHost, defaultTitle, 
     if (!open) return;
     setTitle(defaultTitle || "");
     setMap("");
+    setRoomType("6");
     setSize("16");
     setPassword("");
     setFound([]);
@@ -92,6 +109,7 @@ export default function HostBattleDialog({ open, onClose, onHost, defaultTitle, 
       title: title.trim(),
       map: map.trim(),
       maxPlayers: Number(size),
+      mode: Number(roomType),
       password: password.trim(),
       // Only when the mode names one; otherwise the caller's default stands.
       game: mode && mode.game ? mode.game : undefined,
@@ -124,6 +142,8 @@ export default function HostBattleDialog({ open, onClose, onHost, defaultTitle, 
         <Select label="Game" value={modeName} onChange={e => chooseMode(e.target.value)}
           options={[{ value: "", label: "Zero-K" },
             ...modes.map(m => ({ value: m.shortName, label: m.displayName }))]} />
+        <Select label="Room type" value={roomType} onChange={e => setRoomType(e.target.value)}
+          options={ROOM_TYPES} />
         <Select label="Player slots" value={size} onChange={e => setSize(e.target.value)} options={SIZES} />
         <Input label="Password" placeholder="Leave empty for an open room" value={password}
           onChange={e => setPassword(e.target.value)}

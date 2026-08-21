@@ -195,6 +195,9 @@ export function describeFailure(c: ConnectionState): string {
  *  are not among them get no mark rather than a wrong one. */
 const FACTION_MARKS = new Set(["machines", "hegemony", "rising"]);
 
+/** What the engine supports, and so the most columns worth drawing. */
+const MAX_ALLY_TEAMS = 16;
+
 export interface ChipModel {
   name: string;
   clan?: string;
@@ -371,13 +374,29 @@ export function roomModel(
     });
   }
 
-  const teams = [...byAlly.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([ally, list]) => ({
-      ally,
-      players: list.sort((a, b) => Number(b.host ?? 0) - Number(a.host ?? 0)
+  /* Every team up to one past the highest in use, and never fewer than two.
+     This used to be the ally numbers actually present, which made a team you
+     could join a team somebody was already on: a fresh room showed one column,
+     so there was nowhere to put a second side and hosting a 1v1 was impossible
+     from this screen. `!balance 2` looked broken for the same reason - with
+     everyone still on ally 0 there was only ever one column to show.
+
+     Contiguous rather than sparse, because the gap between an occupied ally 0
+     and an occupied ally 3 is two teams a person can join, not a hole. Capped
+     at the sixteen the engine supports, so a room that somehow reports ally 15
+     does not render seventeen columns.
+
+     Two is the floor rather than "one past the highest": a 1v1 that is already
+     two columns does not need an empty third, and a room where everyone sits on
+     ally 0 needs somewhere to send half of them. */
+  const highest = byAlly.size ? Math.max(...byAlly.keys()) : -1;
+  const count = Math.min(MAX_ALLY_TEAMS, Math.max(2, highest + 1));
+  const teams = Array.from({ length: count }, (_, ally) => ({
+    ally,
+    players: (byAlly.get(ally) ?? []).sort(
+      (a, b) => Number(b.host ?? 0) - Number(a.host ?? 0)
         || a.user.name.localeCompare(b.user.name)),
-    }));
+  }));
 
   return {
     id: battle.BattleID,
@@ -391,7 +410,7 @@ export function roomModel(
        defaults has nothing to say, and upstream shows non-hosts the same
        thing. Names rather than keys, where we have a name. */
     options: changedOptions(modOptions),
-    teams: teams.length ? teams : [{ ally: 0, players: [] }],
+    teams,
     spectators: spectators.sort((a, b) => a.user.name.localeCompare(b.user.name)),
   };
 }

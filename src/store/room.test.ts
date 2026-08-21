@@ -195,7 +195,10 @@ test("the view enriches players from the user directory", () => {
   assert.equal(bot.elo, undefined, "a bot has no account to enrich from");
 });
 
-test("ally numbers are the ones present, not a range", () => {
+test("a gap between ally numbers is teams you can join, not a hole", () => {
+  /* This used to assert [0, 3] - the allies actually occupied. That made a
+     joinable team one somebody was already on: the columns between were never
+     drawn, so there was no way to move into them. */
   fresh();
   useRoom.getState().applyMessage(msg("JoinBattleSuccess", {
     BattleID: 7,
@@ -203,7 +206,23 @@ test("ally numbers are the ones present, not a range", () => {
   }));
   const s = useRoom.getState();
   const room = roomModel(HEADER, s.players, s.bots, {}, {})!;
-  assert.deepEqual(room.teams.map(t => t.ally), [0, 3]);
+  assert.deepEqual(room.teams.map(t => t.ally), [0, 1, 2, 3]);
+  assert.deepEqual(room.teams[1].players, [], "an empty team is still a column");
+});
+
+test("a room always offers a second team to join", () => {
+  /* The reported failure: a fresh room drew one column, so there was nowhere to
+     put a second side and hosting a 1v1 was impossible from this screen.
+     `!balance 2` looked broken for the same reason - with everyone still on
+     ally 0 there was only ever one column to show. */
+  fresh();
+  useRoom.getState().applyMessage(msg("JoinBattleSuccess", {
+    BattleID: 7,
+    Players: [{ Name: "a", AllyNumber: 0 }],
+  }));
+  const s = useRoom.getState();
+  const room = roomModel(HEADER, s.players, s.bots, {}, {})!;
+  assert.deepEqual(room.teams.map(t => t.ally), [0, 1]);
 });
 
 test("options are shown by name, and a key we do not know is still shown", () => {
