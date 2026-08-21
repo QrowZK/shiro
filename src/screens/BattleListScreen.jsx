@@ -1,13 +1,14 @@
 import React from "react";
 import { BattleRow, Button, Input, Select, Checkbox, Badge,
-  MapImage, UserChip, EmptyState, IconButton } from "../ds/shiro.js";
+  MapImage, UserChip, EmptyState } from "../ds/shiro.js";
 import { useMapResourceId } from "../hooks/useMapResourceId.js";
 
 const DEMO_OCCUPANTS = ["hexed", "quantum", "tinman", "lorelei", "marrow", "nine"];
 
 /* Screen 3 - the default view and the highest-traffic surface.
    Left: filter strip. Centre: the list. Right: detail for the selected battle. */
-export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty, occupants, onHost, onSpectate }) {
+export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty, occupants,
+  onHost, onSpectate, inRoom, onReturn, onLeaveRoom }) {
   /* Nothing is selected until somebody selects something. The default is
      worked out below from the list as it stands, so there is one rule for it
      rather than one at mount and another afterwards - the mount-time one used
@@ -44,6 +45,21 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", minWidth: 0, minHeight: 0 }}>
+        {/* You can look at the list while you are in a room, so the list has to
+            say so. Without this the only evidence of still being in one was
+            that leaving it changed something. */}
+        {inRoom && (
+          <div style={{ flex: "0 0 auto", display: "flex", alignItems: "center", gap: "var(--sp-4)",
+            padding: "var(--sp-4) var(--sp-5)", borderBottom: "1px solid var(--w-12)",
+            background: "var(--surface-selected)" }}>
+            <Badge tone="solid">In a room</Badge>
+            <span style={{ flex: 1, minWidth: 0, font: "var(--w-medium) var(--size-small)/1.2 var(--font-core)",
+              color: "var(--text-hi)", whiteSpace: "nowrap", overflow: "hidden",
+              textOverflow: "ellipsis" }}>{inRoom.title}</span>
+            {onLeaveRoom && <Button variant="ghost" size="sm" onClick={onLeaveRoom}>Leave</Button>}
+            {onReturn && <Button variant="secondary" size="sm" onClick={onReturn}>Back to room</Button>}
+          </div>
+        )}
         <div style={{ height: 26, flex: "0 0 auto", display: "flex", alignItems: "center",
           gap: "var(--sp-5)", padding: "0 var(--sp-5) 0 var(--sp-5)", borderBottom: "1px solid var(--w-12)" }}>
           <span className="lab" style={{ width: 96 }}>MAP</span>
@@ -58,9 +74,16 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
             ? <EmptyState numeral={100} title="No battles open right now."
                 action={<Button variant="primary" icon="plus" onClick={onHost}>Host a battle</Button>} />
             : list.map((b, i) => (
-              <BattleRow key={b.id} {...b} selected={current && current.id === b.id}
-                onClick={() => setSel(b.id)} onJoin={() => onJoin(b)}
-                style={{ animation: "shiro-enter var(--dur-base) var(--ease-out) " + Math.min(i, 12) * 12 + "ms both" }} />
+              /* Double-click joins. BattleRow takes an `onJoin` and never calls
+                 it - there is no double-click handler anywhere in the component
+                 - so the prop has always been accepted and dropped. The design
+                 system is generated and must not be hand-edited, so the
+                 handler goes on a wrapper here instead. */
+              <div key={b.id} onDoubleClick={() => onJoin(b)}>
+                <BattleRow {...b} selected={current && current.id === b.id}
+                  onClick={() => setSel(b.id)}
+                  style={{ animation: "shiro-enter var(--dur-base) var(--ease-out) " + Math.min(i, 12) * 12 + "ms both" }} />
+              </div>
             ))}
         </div>
       </div>
@@ -113,11 +136,15 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
                 })()}
               </div>
             </div>
+            {/* Two named actions rather than one button plus an unlabelled eye.
+                Joining and spectating are different intentions, and which one
+                the icon meant was a guess - it also said "Watch" on the primary
+                for a running game, so both buttons claimed to spectate. */}
             <div style={{ padding: "var(--sp-5)", borderTop: "1px solid var(--w-12)", display: "flex", gap: "var(--sp-4)" }}>
-              <Button variant="primary" size="lg" style={{ flex: 1 }} icon={current.running ? "eye" : "play"}
-                onClick={() => onJoin(current)}>{current.running ? "Watch" : "Join battle"}</Button>
-              <IconButton icon="eye" label="Spectate" variant="outline" size="lg"
-                onClick={() => (onSpectate ? onSpectate(current) : onJoin(current))} />
+              <Button variant="primary" size="lg" style={{ flex: 1 }} icon="play"
+                onClick={() => onJoin(current)}>Join room</Button>
+              <Button variant="outline" size="lg" icon="eye"
+                onClick={() => (onSpectate ? onSpectate(current) : onJoin(current))}>Spectate</Button>
             </div>
           </>
         ) : <EmptyState icon="swords" title="Nothing selected." />}

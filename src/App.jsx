@@ -129,6 +129,18 @@ export default function App() {
   /* The live battle room. `useRoom` holds membership; the header it decorates
      still comes from the public battle directory in `useLobby`. */
   const liveRoomID = useRoom(s => s.battleID);
+
+  /* Joining is a request, not an arrival - the room only exists once the server
+     answers - so following it has to happen when it turns up rather than when
+     the button is pressed. Leaving is the same in reverse. */
+  const wasInRoom = React.useRef(false);
+  React.useEffect(() => {
+    const now = Boolean(liveRoomID);
+    if (now && !wasInRoom.current) setView("room");
+    else if (!now && wasInRoom.current) setView(v => (v === "room" ? "battles" : v));
+    wasInRoom.current = now;
+  }, [liveRoomID]);
+
   const roomPlayers = useRoom(s => s.players);
   const roomBots = useRoom(s => s.bots);
   const roomOptions = useRoom(s => s.modOptions);
@@ -426,7 +438,7 @@ export default function App() {
   };
 
   const joinBattle = b => {
-    if (!live) { setRoom(b); return; }
+    if (!live) { setRoom(b); setView("room"); return; }
     // A locked room needs its password before the join, not after a refusal.
     if (b.locked) setLocked(b);
     else useRoom.getState().join(b.id);
@@ -457,12 +469,15 @@ export default function App() {
 
   // ---------------------------------------------------------------- view ---
   let body;
-  // Being in a room does not pin you to it - the sidebar still navigates.
-  if (liveRoom && view === "battles") body = (
-    <BattleRoomScreen room={liveRoom}
+  /* The room is its own destination rather than something that stands in front
+     of the battle list. It used to render whenever `view` was "battles", which
+     meant the only way to look at what else was open was to leave - and nothing
+     on screen said you were still in one. */
+  if ((liveRoom || room) && view === "room") body = (
+    <BattleRoomScreen room={liveRoom || D.room}
       download={activeDownload}
       chat={battleChat ? chatLines(battleChat.messages, liveUsers, ignored) : []}
-      onLeave={() => useRoom.getState().leave()}
+      onLeave={() => { if (live) useRoom.getState().leave(); setRoom(null); setView("battles"); }}
       onSay={text => void say(text, 1)}
       onTeam={ally => setBattleStatus({ AllyNumber: ally, IsSpectator: false })}
       onSpectate={() => setBattleStatus({ IsSpectator: true })}
@@ -483,12 +498,6 @@ export default function App() {
       onChatHeight={h => useSettings.getState().set({ roomChatHeight: h })}
       onStart={startRoom} />
   );
-  else if (room) body = <BattleRoomScreen room={D.room} onLeave={() => setRoom(null)}
-    // The demo room belongs to somebody else, so the options are theirs to set.
-    optionsLocked="Only the room's host can change these"
-    chatHeight={settings.roomChatHeight}
-    onChatHeight={h => useSettings.getState().set({ roomChatHeight: h })}
-    onStart={() => { setLaunching(true); setTimeout(() => { setLaunching(false); setRoom(null); setView("debrief"); }, 1600); }} />;
   else if (view === "apps") body = (
     <AppsScreen apps={appCatalogue} statuses={appStatusList} error={appError}
       installing={installing}
@@ -512,7 +521,15 @@ export default function App() {
     occupants={live ? occupantsOf : null}
     onToggleEmpty={e => setEmpty(e.target.checked)}
     onHost={() => setHosting(true)}
-    onSpectate={b => (live ? useRoom.getState().join(b.id, undefined, true) : setRoom(b))}
+    onSpectate={b => {
+      if (live) useRoom.getState().join(b.id, undefined, true);
+      else { setRoom(b); setView("room"); }
+    }}
+    /* So that being in a room is visible from the one screen you would go to
+       looking for another one. */
+    inRoom={liveRoom || (room ? D.room : null)}
+    onReturn={() => setView("room")}
+    onLeaveRoom={() => { if (live) useRoom.getState().leave(); setRoom(null); }}
     onJoin={joinBattle} />;
   else if (view === "chat") body = (
     <ChatScreen
@@ -811,7 +828,7 @@ export default function App() {
   );
 
   return (
-    <AppShell view={view} onView={v => { setRoom(null); setView(v); }} {...shell}
+    <AppShell view={view} onView={setView} inRoom={Boolean(liveRoom || room)} {...shell}
       overlay={overlay} me={me}>
       <ErrorBoundary>{body}</ErrorBoundary>
     </AppShell>

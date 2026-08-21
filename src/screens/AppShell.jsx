@@ -40,7 +40,7 @@ export function TitleBar({ version = "0.1.0", updateReady }) {
   );
 }
 
-export function NavRail({ view, onView }) {
+export function NavRail({ view, onView, inRoom }) {
   return (
     <nav style={{ width: "var(--shell-nav)", flex: "0 0 auto", display: "flex", flexDirection: "column",
       alignItems: "center", gap: "var(--sp-2)", padding: "var(--sp-4) 0",
@@ -51,6 +51,12 @@ export function NavRail({ view, onView }) {
               item it marks, and only the semantic layer follows a skin. */}
           {view === n.id && <span style={{ position: "absolute", left: 0, top: 3, bottom: 3, width: 2, background: "var(--text-hi)" }} />}
           <IconButton icon={n.icon} label={n.label} size="lg" active={view === n.id} onClick={() => onView(n.id)} />
+          {/* A room you are in is a thing you can walk away from and forget.
+              The dot follows Battles because that is where the room lives. */}
+          {inRoom && n.id === "battles" && (
+            <span aria-hidden style={{ position: "absolute", right: 6, top: 6, width: 6, height: 6,
+              borderRadius: "50%", background: "var(--text-hi)", pointerEvents: "none" }} />
+          )}
         </div>
       ))}
       <span style={{ flex: 1 }} />
@@ -94,14 +100,14 @@ export function StatusBar({ connection = "online", users, engine, game, onReconn
   );
 }
 
-export default function AppShell({ view, onView, connection, users, engine, game, onReconnect, attempt, children, overlay,
+export default function AppShell({ view, onView, inRoom, connection, users, engine, game, onReconnect, attempt, children, overlay,
   version, updateReady }) {
   return (
     <div style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%",
       minHeight: 0, background: "var(--surface-base)", overflow: "hidden" }}>
       <TitleBar version={version} updateReady={updateReady} />
       <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
-        <NavRail view={view} onView={onView} />
+        <NavRail view={view} onView={onView} inRoom={inRoom} />
         <main style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex" }}>{children}</main>
       </div>
       <StatusBar connection={connection} users={users} engine={engine} game={game} onReconnect={onReconnect} attempt={attempt} />
