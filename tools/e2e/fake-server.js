@@ -121,6 +121,16 @@
         break;
       case "Login":
         soon(() => {
+          /* "shiro-wrong" is refused, and the connection drops straight after -
+             which is what the real server does, and the reason a refused login
+             could turn into a reconnect loop replaying the same bad hash. */
+          if (data.Name === "shiro-wrong") {
+            state.logins = (state.logins ?? 0) + 1;
+            // 3 is InvalidPassword; 2 would be InvalidName, which is a different message.
+            state.push(line("LoginResponse", { ResultCode: 3, BanReason: "" }));
+            soon(() => state.drop());
+            return;
+          }
           state.me = data.Name;
           state.push(line("LoginResponse", { ResultCode: 0, Name: data.Name, SessionToken: "t" }));
           flood();

@@ -26,6 +26,7 @@ const BACKOFF = [2000, 4000, 8000, 16000, 30000];
 let unlisten: Array<() => void> = [];
 let queue: Message[] = [];
 let frame = 0;
+let timer = 0;
 
 /** Everything needed to re-establish the session without asking again. */
 let session: { creds: Credentials; hash: string; host: string; port: number } | null = null;
@@ -33,16 +34,38 @@ let retry: ReturnType<typeof setTimeout> | null = null;
 let attempt = 0;
 
 /** Coalesce inbound messages into one store write per animation frame. */
+/* Batching is on the frame, with a timer behind it.
+
+   A lobby's normal state during a match is minimised, and WebView2 and
+   WebKitGTK both suspend requestAnimationFrame for a hidden window - so a
+   frame-only batcher stops processing the protocol at exactly the moment the
+   game is running. Ready checks expire unanswered, ConnectSpring is not acted
+   on, kick notices go unseen, and the queue grows until the window is looked
+   at again.
+
+   Login survived that, which is what kept it hidden: the Welcome -> Login
+   reply is sent straight from the line handler, above, and never waits for a
+   batch.
+
+   Whichever of the two fires first flushes and cancels the other, so a visible
+   window still batches per frame and pays nothing for the fallback. */
+const FLUSH_MS = 100;
+
+function flush() {
+  if (frame) { cancelAnimationFrame(frame); frame = 0; }
+  if (timer) { clearTimeout(timer); timer = 0; }
+  const batch = queue;
+  queue = [];
+  if (!batch.length) return;
+  useLobby.getState().applyBatch(batch);
+  fanout(batch);
+}
+
 function enqueue(m: Message) {
   queue.push(m);
-  if (frame) return;
-  frame = requestAnimationFrame(() => {
-    frame = 0;
-    const batch = queue;
-    queue = [];
-    useLobby.getState().applyBatch(batch);
-    fanout(batch);
-  });
+  if (frame || timer) return;
+  frame = requestAnimationFrame(flush);
+  timer = setTimeout(flush, FLUSH_MS) as unknown as number;
 }
 
 /**
@@ -148,6 +171,21 @@ export async function login(
     // An admin threw us off. Retrying would be pointless and rude, so the
     // session is dropped before the disconnect that follows can schedule one.
     if (m.cmd === "KickFromServer") {
+      session = null;
+      cancelRetry();
+    }
+
+    /* A refused login, dropped for the same reason and more urgently.
+       The server closes the connection after refusing, which reaches
+       `onStatus` as a plain disconnect - and `scheduleReconnect` only asks
+       whether there is a session, not whether the credentials were any good.
+       So the reconnect fired, `Welcome` arrived, and the handler below sent
+       the same bad hash again, on a backoff, indefinitely.
+
+       That is the LoginChecker.LogIpFailure spiral this file's comments
+       promise never to enter: a mistyped password could earn the player's IP
+       a server-side ban while they sat looking at the login screen. */
+    if (m.cmd === "LoginResponse" && (m.data as { ResultCode?: number }).ResultCode !== 0) {
       session = null;
       cancelRetry();
     }
