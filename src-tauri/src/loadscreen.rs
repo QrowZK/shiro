@@ -10,9 +10,16 @@
 //! ```
 //!
 //! which searches the raw data directory before any archive. A file written to
-//! `<datadir>/LuaIntro/addons/main.lua` is therefore found ahead of Zero-K's
+//! `<datadir>/LuaIntro/Addons/main.lua` is therefore found ahead of Zero-K's
 //! addon of the same name and replaces it. Nothing is patched, nothing is
 //! injected, and the game's checksum is exactly what it was.
+//!
+//! **Every path here is spelled the way the engine spells it, capitals and
+//! all.** The addon handler scans `LUA_DIRNAME .. 'Addons/'` and the addon asks
+//! for `LuaIntro/Images/…`; a raw file is found by handing those strings to the
+//! filesystem unchanged. Windows does not care about the difference and Linux
+//! does, so a lowercase `addons/` is a screen that works on one platform and is
+//! invisible on the other - which is exactly how it was reported.
 //!
 //! Two limits worth stating plainly:
 //!
@@ -56,11 +63,38 @@ const IMAGES: [(&str, &[u8]); 2] = [
 
 /// Where the file goes, relative to a data directory.
 ///
-/// `LuaIntro/addons/main.lua` deliberately matches the name Zero-K uses, since
-/// replacing that addon is the point - a second addon with a different name
-/// would draw on top of the original rather than instead of it.
+/// `main.lua` deliberately matches the name Zero-K uses, since replacing that
+/// addon is the point - a second addon with a different name would draw on top
+/// of the original rather than instead of it.
+///
+/// `Addons` is capitalised because the engine capitalises it. The handler in
+/// `springcontent.sdz` builds its search list as `LUA_DIRNAME .. 'Addons/'`
+/// with `LUA_DIRNAME` coming from `Script.GetName()`, which for this handle is
+/// `LuaIntro` - so the string it hands the filesystem is `LuaIntro/Addons/`.
+/// Zero-K's own copy lives at `luaintro/addons/` inside the archive and is
+/// found anyway, because archive lookups are lowercased; raw ones are not.
 pub fn path(root: &Path) -> PathBuf {
+    root.join("LuaIntro").join("Addons").join("main.lua")
+}
+
+/// The spelling an older Shiro wrote, kept so it can be cleaned up.
+///
+/// It was `addons`, which on Windows is the same file as the path above and on
+/// Linux is a different one that nothing ever reads. Only ever removed, never
+/// written - and removed before the real one is written, because on a
+/// case-insensitive filesystem these two are one file and the order is what
+/// keeps that from deleting the screen it just placed.
+fn legacy(root: &Path) -> PathBuf {
     root.join("LuaIntro").join("addons").join("main.lua")
+}
+
+/// Clear a screen left at the old spelling, and the directory if it emptied.
+fn clear_legacy(root: &Path) {
+    let file = legacy(root);
+    if ours(&file) {
+        let _ = std::fs::remove_file(&file);
+    }
+    let _ = std::fs::remove_dir(root.join("LuaIntro").join("addons"));
 }
 
 /// Written when somebody turns the screen off, so it stays off.
@@ -124,8 +158,11 @@ fn image(root: &Path, name: &str) -> PathBuf {
 }
 
 /// Is the addon at that path one Shiro wrote?
-fn ours(root: &Path) -> bool {
-    std::fs::read_to_string(path(root))
+///
+/// Takes the file rather than the directory, because the old spelling has to be
+/// asked the same question before it is deleted.
+fn ours(file: &Path) -> bool {
+    std::fs::read_to_string(file)
         .map(|t| t.contains("Shiro's loading screen"))
         .unwrap_or(false)
 }
@@ -136,13 +173,14 @@ fn ours(root: &Path) -> bool {
 /// behind without them, and reporting that as installed would leave the switch
 /// saying yes while the screen drew with two textures missing.
 pub fn installed(root: &Path) -> bool {
-    ours(root) && IMAGES.iter().all(|(name, _)| image(root, name).is_file())
+    ours(&path(root)) && IMAGES.iter().all(|(name, _)| image(root, name).is_file())
 }
 
 /// Write it, replacing anything already at those paths.
 pub fn install(root: &Path) -> Result<(), String> {
     // Asking for it back cancels the note that said not to.
     let _ = std::fs::remove_file(off_marker(root));
+    clear_legacy(root);
     let file = path(root);
     write(&file, ADDON.as_bytes())?;
     for (name, bytes) in IMAGES {
@@ -167,7 +205,7 @@ fn write(file: &Path, bytes: &[u8]) -> Result<(), String> {
 pub fn remove(root: &Path) -> Result<(), String> {
     let file = path(root);
     if file.exists() {
-        if !ours(root) {
+        if !ours(&file) {
             return Err(format!(
                 "{} was not written by Shiro, so it will not be removed.",
                 file.display()
@@ -187,12 +225,16 @@ pub fn remove(root: &Path) -> Result<(), String> {
                 .map_err(|e| format!("could not remove {}: {e}", picture.display()))?;
         }
     }
+    /* And an addon an older Shiro left at the lowercase spelling. On Linux that
+       is a second file, at a path this version never touches again, so nothing
+       else is ever going to notice it is there. */
+    clear_legacy(root);
     /* And the directories, if this is all that was in them. `remove_dir`
        refuses a directory that still has something in it, which is exactly the
        question worth asking: anything left is somebody else's. */
     let luaintro = root.join("LuaIntro");
     let _ = std::fs::remove_dir(luaintro.join("Images"));
-    let _ = std::fs::remove_dir(luaintro.join("addons"));
+    let _ = std::fs::remove_dir(luaintro.join("Addons"));
     let _ = std::fs::remove_dir(&luaintro);
     /* And remember that it was deliberate, so startup does not helpfully put it
        back. Best-effort: failing to write the note is not a reason to refuse
@@ -224,6 +266,18 @@ mod tests {
         (at(16), at(20))
     }
 
+    /// The last `n` components of a path, as plain strings.
+    ///
+    /// Compared this way rather than with `ends_with` so the assertion reads as
+    /// the literal spelling being pinned, which is the entire point of it.
+    fn tail(path: &Path, n: usize) -> Vec<String> {
+        let all: Vec<String> = path
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        all[all.len() - n..].to_vec()
+    }
+
     #[test]
     fn it_lands_where_zero_k_looks_first() {
         let root = temp("place");
@@ -231,8 +285,59 @@ mod tests {
         install(&root).unwrap();
         // The path matters: it has to be the addon Zero-K also calls main, or
         // it draws alongside the original instead of replacing it.
-        assert!(root.join("LuaIntro").join("addons").join("main.lua").is_file());
+        assert!(root.join("LuaIntro").join("Addons").join("main.lua").is_file());
         assert!(installed(&root));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_paths_are_spelled_the_way_the_engine_spells_them() {
+        /* The reported Linux failure, pinned. A raw file is found by handing
+           the engine's own string to the filesystem, so the name on disk and
+           the name in the VFS have to agree byte for byte - which a Windows
+           filesystem will forgive and a Linux one will not. This runs on both
+           and passes on neither by accident, because it compares components
+           rather than asking the filesystem anything.
+
+           The addon has no Lua string to check it against: the handler in
+           springcontent.sdz scans `LUA_DIRNAME .. 'Addons/'`, and
+           `Script.GetName()` for this handle is `LuaIntro`. */
+        let root = Path::new("/zk");
+        assert_eq!(tail(&path(root), 3), ["LuaIntro", "Addons", "main.lua"]);
+
+        /* The pictures and the match file do have one, in ADDON, and nothing
+           but this connects the two sides. Renaming one and not the other costs
+           two textures and a roster at runtime and nothing at compile time,
+           which is the kind of silence this repo has been bitten by before. */
+        for (name, _) in IMAGES {
+            assert_eq!(tail(&image(root, name), 3), ["LuaIntro", "Images", name]);
+            assert!(ADDON.contains(&format!("LuaIntro/Images/{name}")),
+                "the addon asks for {name} under some other path");
+        }
+        assert_eq!(tail(&crate::sidecar::path(root), 2), ["LuaIntro", "shiro-match.lua"]);
+        assert!(ADDON.contains("LuaIntro/shiro-match.lua"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_lowercase_spelling_an_older_shiro_used_is_cleared() {
+        /* Only on a filesystem that can hold both at once. On Windows these are
+           one file, which is why the lowercase one went unnoticed for as long
+           as it did. */
+        let root = temp("legacy");
+        let old = legacy(&root);
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(&old, "-- Shiro's loading screen, from before this was fixed\n").unwrap();
+
+        install(&root).unwrap();
+        assert!(installed(&root));
+        assert!(!old.exists(), "a screen the engine cannot see was left behind");
+
+        // And a hand-written one at that path is still somebody else's file.
+        std::fs::create_dir_all(old.parent().unwrap()).unwrap();
+        std::fs::write(&old, "-- my own load screen\n").unwrap();
+        remove(&root).unwrap();
+        assert!(old.is_file());
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -365,17 +470,6 @@ mod tests {
         assert!(ADDON.contains("function addon.DrawLoadScreen"));
         assert!(ADDON.contains("function addon.LoadProgress"));
         assert!(ADDON.contains("depend"));
-    }
-
-    #[test]
-    fn the_addon_asks_for_the_pictures_by_the_names_they_are_written_under() {
-        /* The two sides of this are a Lua string and a Rust constant, and
-           nothing else connects them. Renaming one and not the other costs two
-           textures at runtime and nothing at compile time, which is exactly the
-           kind of silence this repo has been bitten by before. */
-        for (name, _) in IMAGES {
-            assert!(ADDON.contains(name), "the addon never mentions {name}");
-        }
     }
 
     #[test]

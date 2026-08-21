@@ -46,8 +46,12 @@ pub struct Match {
     pub teams: Vec<Team>,
 }
 
-/// Where it goes. Beside the addon, not inside `addons/`, because the handler
+/// Where it goes. Beside the addon, not inside `Addons/`, because the handler
 /// scans that directory and would try to load this as an addon.
+///
+/// `LuaIntro` is capitalised to match the string the addon reads it back
+/// through - see `loadscreen::path`, where the same rule is the difference
+/// between a screen that draws on Linux and one that does not.
 pub fn path(root: &Path) -> PathBuf {
     root.join("LuaIntro").join("shiro-match.lua")
 }
@@ -78,7 +82,7 @@ fn lua_string(value: &str) -> String {
 /// The file's contents for a match.
 pub fn render(m: &Match) -> String {
     let mut out = String::from(
-        "-- Written by Shiro at launch. Read by LuaIntro/addons/main.lua.\n\
+        "-- Written by Shiro at launch. Read by LuaIntro/Addons/main.lua.\n\
          -- Replaced every launch; safe to delete.\n\
          return {\n",
     );
@@ -201,7 +205,7 @@ mod tests {
 
     #[test]
     fn it_sits_beside_the_addon_not_among_them() {
-        // `LuaIntro/addons/` is scanned by the handler; a data file in there
+        // `LuaIntro/Addons/` is scanned by the handler; a data file in there
         // would be loaded as an addon and fail.
         let root = temp("place");
         let p = path(&root);
