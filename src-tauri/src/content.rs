@@ -332,6 +332,10 @@ struct ActiveJob {
 pub struct Content {
     active: std::sync::Arc<std::sync::Mutex<Option<ActiveJob>>>,
     queue: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<Job>>>,
+    /// What each finished job printed, so a download that behaved oddly can be
+    /// read afterwards rather than guessed at. Ordered by job id, which is
+    /// sequential, so the oldest are the ones dropped.
+    logs: std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, String>>>,
 }
 
 static JOB_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -372,12 +376,33 @@ fn pump<R: std::io::Read + Send + 'static>(
             acc = carry;
 
             for chunk in chunks {
-                if errors_only {
+                /* Both streams, not just stderr.
+                   The tail used to hold stderr only, which is the half without
+                   the progress or the "Using rapid" lines - so when a download
+                   behaved oddly there was nothing recorded that said what it
+                   had been doing. Diagnosing it meant guessing.
+
+                   Progress records are dropped: there are thousands of them and
+                   they say the same thing, and a log that is 99% progress bar
+                   is one nobody can read. */
+                if !matches!(parse_line(&chunk), Line::Progress { .. }) {
                     if let Ok(mut t) = tail.lock() {
-                        t.push_str(&chunk);
+                        t.push_str(chunk.trim_end());
                         t.push('\n');
                         if t.len() > LOG_TAIL {
-                            let cut = t.len() - LOG_TAIL;
+                            /* Floor to a character boundary. `t[cut..]` panics
+                               off one, and the tail routinely holds multi-byte
+                               text: non-ASCII paths, and the U+FFFD this pump
+                               creates itself by lossy-decoding each read
+                               independently. That panic kills the pump thread,
+                               the pipe stops draining, pr-downloader blocks on
+                               a full pipe, and the download is stuck at
+                               whatever percent it had reached - with no way to
+                               tell why. */
+                            let mut cut = t.len() - LOG_TAIL;
+                            while cut < t.len() && !t.is_char_boundary(cut) {
+                                cut += 1;
+                            }
                             *t = t[cut..].to_string();
                         }
                     }
@@ -626,7 +651,34 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
                     }
                     Fallback::NotThere => {}
                     Fallback::Failed(why) => {
-                        message = format!("{} {why}", outcome.message());
+                        /* Lead with what actually happened. The generic
+                           explanation - that custom games and their maps are
+                           distributed separately - is true and useless when the
+                           real error was a permission or a disk problem, and
+                           reading it sent somebody looking on the wrong side of
+                           the machine. */
+                        message = if why.contains("os error") || why.contains("denied") {
+                            why.clone()
+                        } else {
+                            format!("{} {why}", outcome.message())
+                        };
+                    }
+                }
+            }
+        }
+
+        /* Keep the log whether or not it went well. A download that succeeded
+           strangely - no progress, far too fast, a fallback nobody expected -
+           is exactly the one worth reading afterwards. */
+        if let Ok(mut logs) = state_w.logs.lock() {
+            if let Some(text) = tail_w.lock().ok().map(|t| t.clone()) {
+                logs.insert(id.clone(), text);
+                /* A handful, so a long session does not accumulate megabytes of
+                   download chatter. */
+                if logs.len() > 12 {
+                    let oldest: Vec<String> = logs.keys().take(logs.len() - 12).cloned().collect();
+                    for k in oldest {
+                        logs.remove(&k);
                     }
                 }
             }
@@ -658,6 +710,7 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
 struct Content2 {
     active: std::sync::Arc<std::sync::Mutex<Option<ActiveJob>>>,
     queue: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<Job>>>,
+    logs: std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, String>>>,
     root: Option<String>,
 }
 
@@ -669,7 +722,12 @@ impl Content2 {
 
 impl Content {
     fn shared(&self, root: Option<String>) -> Content2 {
-        Content2 { active: self.active.clone(), queue: self.queue.clone(), root }
+        Content2 {
+            active: self.active.clone(),
+            queue: self.queue.clone(),
+            logs: self.logs.clone(),
+            root,
+        }
     }
 }
 
@@ -728,6 +786,22 @@ pub fn zks_content_fetch(
 
     start_next(app, content.shared(install_root));
     Ok(id)
+}
+
+/// What a download printed.
+///
+/// Kept because the alternative, when something goes wrong, is guessing: a
+/// download that stalls, or finishes suspiciously fast, or quietly falls back
+/// to the HTTP path, all look the same from the outside. Without an id this
+/// returns the most recent, which is almost always the one being asked about.
+#[tauri::command]
+pub fn zks_content_log(content: tauri::State<'_, Content>, id: Option<String>) -> Result<String, String> {
+    let logs = self_lock(&content.logs)?;
+    let text = match id {
+        Some(id) => logs.get(&id).cloned(),
+        None => logs.values().next_back().cloned(),
+    };
+    Ok(text.unwrap_or_else(|| "Nothing recorded yet.".into()))
 }
 
 /// Stop a running job, or drop a queued one.

@@ -46,6 +46,7 @@ pub fn run() {
             content::zks_content_fetch,
             content::zks_content_cancel,
             content::zks_content_preflight,
+            content::zks_content_log,
             zkcontent::zks_find_maps,
             zkcontent::zks_game_modes,
             zkcontent::zks_map_catalogue,

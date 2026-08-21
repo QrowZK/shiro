@@ -83,7 +83,10 @@ export default function LoginScreen({ onLogin, onRegister, live, defaultName, de
         <Button variant="primary" size="lg" block loading={busy} onClick={submit}>
           {busy ? "Connecting" : "Log in"}
         </Button>
-        <Button variant="ghost" size="sm" block onClick={onRegister}>Create an account</Button>
+        {/* Not a ghost button. Registration is one of the two things this
+            screen is for, and at ghost weight it read as decoration - it was
+            reported missing by somebody looking straight at it. */}
+        <Button variant="secondary" size="sm" block onClick={onRegister}>Create an account</Button>
         <div style={{ display: "flex", gap: "var(--sp-4)", padding: "var(--sp-5)",
           background: "var(--surface-sunken)", border: "1px solid var(--w-06)" }}>
           <Icon name="info" size={14} style={{ color: "var(--text-low)", marginTop: 2 }} />

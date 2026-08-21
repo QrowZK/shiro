@@ -16,8 +16,15 @@ function msg<K extends string>(cmd: K, data: unknown): Message {
   return { cmd, data } as unknown as Message;
 }
 
+/* The room store learns our name from LoginResponse, exactly as it does in the
+   app. Tests need it because `UpdateUserBattleStatus` carries a Name, and the
+   server throws ArgumentNullException on a null one rather than defaulting it
+   to the sender. */
+const LOGGED_IN = msg("LoginResponse", { ResultCode: 0, Name: "Qrow" });
+
 function fresh() {
   useRoom.getState().reset();
+  useRoom.getState().applyMessage(LOGGED_IN);
   return useRoom.getState();
 }
 
@@ -243,6 +250,20 @@ test("having the content is Synced, missing it is Unsynced", () => {
   assert.equal(useRoom.getState().sync, SYNC_SYNCED);
   useRoom.getState().reportSync(false);
   assert.equal(useRoom.getState().sync, SYNC_UNSYNCED);
+});
+
+test("without a name there is nothing safe to report", () => {
+  /* `UpdateUserBattleStatus` carries a Name, and the server looks it up in a
+     dictionary before doing anything else - an omitted one is not "the sender",
+     it is an ArgumentNullException in the host's log. Seen for real:
+       error processing line UpdateUserBattleStatus {"Sync":2}
+       System.ArgumentNullException: Value cannot be null. Parameter name: key
+     The wire form is asserted in the e2e suite, which can see what was sent. */
+  useRoom.getState().reset();
+  useRoom.getState().applyMessage(JOINED);
+  useRoom.getState().reportSync(true);
+  assert.equal(useRoom.getState().sync, SYNC_UNKNOWN,
+    "reported a sync status before knowing who we are");
 });
 
 test("leaving forgets what we told the room, so a rejoin says it again", () => {

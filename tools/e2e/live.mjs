@@ -167,6 +167,15 @@ check("but the default selection is a room you can actually join",
     return seen >= 2;
   }));
 
+/* Asked once, after logging in: an existing install should be named rather
+   than silently used, and a missing one offered here rather than in a Settings
+   section nobody opens. */
+check("the first run says whether Zero-K was found",
+  await waitFor("first-run", () => seeing(/Zero-K is already here|Zero-K is not installed/)));
+await clickText(/Good to go|Not now/);
+check("and it goes away when dismissed",
+  await waitFor("first-run-gone", async () => !(await seeing(/Zero-K is already here/))));
+
 await shot("live-01-battles");
 
 console.log("battle room");

@@ -670,8 +670,26 @@ pub fn fetch_to(
         }
     }
 
-    std::fs::rename(&part, dest)
-        .map_err(|e| format!("could not put {} in place: {e}", dest.display()))
+    /* Already there, and in use.
+       Windows refuses to replace a file another process has open, and the
+       obvious other process is the game: the map being fetched is often the one
+       currently loaded. If a full-sized archive is already sitting at the
+       destination then it is the thing we were about to write, and failing here
+       would report "could not download" about content that is installed and
+       working.
+
+       Only when the existing file is a plausible archive rather than a stub -
+       a zero-length leftover should still be replaced, and if the replace fails
+       for that, the error is real. */
+    if let Err(e) = std::fs::rename(&part, dest) {
+        let already = std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+        if already > 0 {
+            let _ = std::fs::remove_file(&part);
+            return Ok(());
+        }
+        return Err(format!("could not put {} in place: {e}", dest.display()));
+    }
+    Ok(())
 }
 
 fn md5_of(path: &Path) -> Result<String, String> {
