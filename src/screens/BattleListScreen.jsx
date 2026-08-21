@@ -122,14 +122,19 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
                   loud: it moves the arrival to spectator and sends them a
                   private line. Worth knowing before the click rather than
                   after, and worth saying that no queue is holding you a
-                  place - people ask, and the answer is no. */}
+                  place - people ask, and the answer is no.
+
+                  Names belong to the room screen, not here. A `BattleHeader`
+                  carries counts only, and the per-person statuses that identify
+                  who is waiting are broadcast to members of that battle - so
+                  the list can say how many and the room can say who. */}
               {current.full && (
                 <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
                   color: "var(--text-low)" }}>
                   {current.queued > 0
                     ? current.queued + " past the cap. This room runs Zero-K's time queue, "
                       + "so everyone counts as a player until the game starts - then whoever "
-                      + "claimed a slot last is moved to the spectators."
+                      + "claimed a slot last is moved to the spectators. Join to see who."
                     : "Joining makes you a spectator. Nothing holds you a place: "
                       + "a slot that frees up goes to whoever takes it first."}
                 </span>

@@ -334,6 +334,151 @@ await page.evaluate(() =>
 check("and stops saying so when they are not",
   await waitFor("room-not-full", async () => !(await badgeSaying("Full"))));
 
+/* ------------------------------------------------------ who is waiting ---
+   The room used to say "Full" and nothing else, which is the one thing a
+   person can already see. `QueueOrder` rides on every UpdateUserBattleStatus,
+   and `ValidateBattleStatus` stamps a positive one on anyone who entered
+   wanting to play - so the people waiting can be named. */
+console.log("who is waiting");
+
+/** The names listed under WAITING TO PLAY, in the order drawn. */
+const waitingNames = () => page.evaluate(() => {
+  const head = [...document.querySelectorAll("span")]
+    .find(el => el.textContent.trim() === "WAITING TO PLAY");
+  if (!head) return null;
+  const list = head.parentElement.nextElementSibling;
+  return [...list.querySelectorAll("div")]
+    .filter(d => (d.getAttribute("style") || "").includes("--row-default"))
+    .map(d => d.textContent);
+});
+
+check("a room nobody is queueing for names nobody", (await waitingNames()) === null);
+
+/* lorelei is already spectating with no QueueOrder at all, which is not the
+   same as a positive one - absent must not be read as waiting. */
+await page.evaluate(() => {
+  window.__ZKS.push('BattleUpdate {"Header":{"BattleID":11,"MaxPlayers":2}}');
+  window.__ZKS.push('UpdateUserBattleStatus {"Name":"marrow","IsSpectator":true,"QueueOrder":7}');
+  window.__ZKS.push('UpdateUserBattleStatus {"Name":"nine","IsSpectator":true,"QueueOrder":3}');
+});
+check("a spectator the server turned away is named as waiting",
+  await waitFor("waiting-panel", async () => {
+    const n = await waitingNames();
+    return n !== null && n.length === 2;
+  }));
+check("in the order the server will act on, not the order they arrived",
+  (await waitingNames()).join("|").indexOf("nine") <
+    (await waitingNames()).join("|").indexOf("marrow"));
+check("and a full room is told it is the cap doing it",
+  await seeing(/Asked to play after the room filled up/));
+check("someone spectating by choice is not accused of waiting",
+  !(await waitingNames()).some(n => n.includes("lorelei")));
+check("and is still listed as the spectator they are",
+  await page.evaluate(() => {
+    const head = [...document.querySelectorAll("span")]
+      .find(el => el.textContent.trim() === "SPECTATORS");
+    return head.parentElement.nextElementSibling.textContent.includes("lorelei");
+  }));
+
+/* Not full, so the cap cannot be the explanation. ValidateBattleStatus flips
+   the same bit for an Elo, level or rank limit and never says which. */
+await page.evaluate(() =>
+  window.__ZKS.push('BattleUpdate {"Header":{"BattleID":11,"MaxPlayers":16}}'));
+check("a room that is not full says it does not know why they were refused",
+  await waitFor("refused-why", () => seeing(/likely a rating, level or rank limit/)));
+
+/* With the time queue on nobody is refused on the way in: everyone stays a
+   player and StartGame spectates the overflow by QueueOrder. That set is
+   arithmetic we can redo exactly, so the wording gets to be definite. */
+await page.evaluate(() => {
+  window.__ZKS.push('BattleUpdate {"Header":{"BattleID":11,"MaxPlayers":2,"TimeQueueEnabled":true}}');
+  window.__ZKS.push('UpdateUserBattleStatus {"Name":"marrow","IsSpectator":false,"AllyNumber":0,"QueueOrder":7}');
+  window.__ZKS.push('UpdateUserBattleStatus {"Name":"nine","IsSpectator":false,"AllyNumber":1,"QueueOrder":3}');
+});
+/* Waiting on the wording rather than on the names: the refused panel above
+   already listed exactly these two, so a check for "two names" is satisfied by
+   the state we are trying to leave and races the update we are testing. */
+check("and says so definitely, because the cut is computable",
+  await waitFor("time-queue", () => seeing(/If the game started now/)));
+check("naming exactly who StartGame would move to the spectators",
+  await (async () => {
+    const n = await waitingNames();
+    return n !== null && n.length === 2
+      && n.some(x => x.includes("nine")) && n.some(x => x.includes("marrow"));
+  })());
+await shot("live-06-waiting");
+
+/* Put the room back as it was found, so the checks after this one are testing
+   what they think they are rather than a room two people are queueing for. */
+await page.evaluate(() => {
+  window.__ZKS.push('UserDisconnected {"Name":"marrow"}');
+  window.__ZKS.push('UserDisconnected {"Name":"nine"}');
+  window.__ZKS.push('BattleUpdate {"Header":{"BattleID":11,"MaxPlayers":16,"TimeQueueEnabled":false}}');
+});
+check("and the queue empties when the people in it leave",
+  await waitFor("waiting-gone", async () => (await waitingNames()) === null));
+
+/* --------------------------------------------------------- team columns ---
+   Sixteen allyteams is what ScriptGenerator declares, and sixteen equal
+   columns across this pane is 56px each - narrower than a name. They wrap
+   instead, so every team stays readable and every team stays joinable. */
+console.log("team columns");
+
+/** The team grid: its track sizes, and how many rows the columns occupy. */
+const teamGrid = () => page.evaluate(() => {
+  const g = [...document.querySelectorAll("div")]
+    .filter(d => getComputedStyle(d).display === "grid")
+    .find(d => d.children.length > 0
+      && [...d.children].every(c => c.textContent.startsWith("TEAM ")));
+  if (!g) return null;
+  const boxes = [...g.children].map(c => c.getBoundingClientRect());
+  return {
+    columns: g.children.length,
+    width: Math.round(boxes[0].width),
+    rows: new Set(boxes.map(b => Math.round(b.top))).size,
+    overflows: g.scrollWidth > g.clientWidth + 1,
+  };
+});
+
+const twoTeams = await teamGrid();
+check("a 1v1 still gets two columns filling the pane",
+  twoTeams.columns === 2 && twoTeams.rows === 1, JSON.stringify(twoTeams));
+
+/* One player on ally 15 is what a `!balance 16` room looks like. */
+await page.evaluate(() =>
+  window.__ZKS.push('UpdateUserBattleStatus {"Name":"marrow","IsSpectator":false,"AllyNumber":15}'));
+check("a sixteen-team room draws all sixteen",
+  await waitFor("sixteen", async () => (await teamGrid()).columns === 16));
+const many = await teamGrid();
+check("wrapped onto several rows rather than shrunk into slivers",
+  many.rows > 1 && many.width >= 200, JSON.stringify(many));
+check("and never scrolls sideways, which would hide teams outright",
+  !many.overflows, JSON.stringify(many));
+check("every team is still joinable, including the last",
+  await page.evaluate(() => [...document.querySelectorAll("button")]
+    .some(b => b.textContent.trim() === "Join team 16")));
+await shot("live-07-sixteen-teams");
+
+await page.evaluate(() => window.__ZKS.push('UserDisconnected {"Name":"marrow"}'));
+check("and the columns go back when that player leaves",
+  await waitFor("back-to-two", async () => (await teamGrid()).columns === 2));
+
+/* An ally number past the sixteenth is one the script generator has no block
+   for - the engine rejects such a script outright rather than clamping it. Run
+   from two columns rather than from sixteen, so that a clamp which had stopped
+   working would show up as twenty columns instead of passing on the state the
+   previous check left behind. */
+await page.evaluate(() =>
+  window.__ZKS.push('UpdateUserBattleStatus {"Name":"marrow","IsSpectator":false,"AllyNumber":19}'));
+check("an ally number the engine would reject stops at the sixteenth column",
+  await waitFor("clamped", async () => (await teamGrid()).columns === 16));
+check("and no column is offered that would break the script",
+  !(await page.evaluate(() => [...document.querySelectorAll("button")]
+    .some(b => /^Join team (1[7-9]|20)$/.test(b.textContent.trim())))));
+
+await page.evaluate(() => window.__ZKS.push('UserDisconnected {"Name":"marrow"}'));
+await waitFor("teams-restored", async () => (await teamGrid()).columns === 2);
+
 /* Ratings carry the colour Zero-K tints a rating with, keyed by the rank the
    server sent - the exact values in gui_chili_share.lua's `rankColors`. Three
    players, three ranks: Qrow is Giant, hexed Subgiant, lorelei Red Dwarf. */

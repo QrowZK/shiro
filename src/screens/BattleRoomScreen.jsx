@@ -6,7 +6,20 @@ import { useMapResourceId } from "../hooks/useMapResourceId.js";
 
 /* Screen 4 - the largest and densest screen. Teams, spectators, bots, map,
    options, chat, ready/start. Team columns are a grid so 1v1 and 16-way FFA
-   use the same layout. */
+   use the same layout - see TEAM_MIN_WIDTH for how the wide case stays
+   readable. */
+
+/* The narrowest a team column may be before it stops being one.
+   Matched to the spectator panel beside it, which holds the same PlayerRow:
+   below this the name, clan mark and rating start colliding. Team columns wrap
+   onto further rows rather than shrink past it. */
+const TEAM_MIN_WIDTH = 220;
+
+/* At most this many blank rows under a team, however much room is left. They
+   are there to show the shape of a team that has space, not to pad the column
+   out to its capacity - a 16-a-side game would otherwise draw sixteen. */
+const MAX_EMPTY_ROWS = 3;
+
 export function TeamColumn({ ally, players, max = 8, onJoin, onKick, onAddBot, onPlayer }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", minWidth: 0,
@@ -29,7 +42,7 @@ export function TeamColumn({ ally, players, max = 8, onJoin, onKick, onAddBot, o
                 onClick={() => onKick(p.user)} />
             : null} />
       ))}
-      {Array.from({ length: Math.max(0, Math.min(3, max - players.length)) }).map((_, i) => (
+      {Array.from({ length: Math.max(0, Math.min(MAX_EMPTY_ROWS, max - players.length)) }).map((_, i) => (
         <div key={"e" + i} style={{ height: "var(--row-default)", display: "flex", alignItems: "center",
           padding: "0 var(--sp-4)", boxShadow: "var(--rule-inset)" }}>
           <span style={{ font: "var(--w-regular) var(--size-tiny)/1 var(--font-core)", color: "var(--text-faint)" }}>empty</span>
@@ -41,6 +54,56 @@ export function TeamColumn({ ally, players, max = 8, onJoin, onKick, onAddBot, o
           onClick={() => onAddBot(ally)}>Add AI</Button>}
       </div>
     </div>
+  );
+}
+
+/* Who wants to play and is not going to, by name.
+   The room used to say only "Full", which is the one thing everybody could
+   already see. The names come from `QueueOrder`, which the server broadcasts
+   per person - see `waitingToPlay` in store/adapters.ts for why that is the
+   people waiting and not just an ordering.
+
+   The two kinds are not equally certain and must not be worded as though they
+   were. `queue` is arithmetic we can redo exactly; `refused` is a thing that
+   already happened, for a reason the server keeps to itself. */
+function WaitingPanel({ waiting, full, onPlayer }) {
+  if (!waiting || waiting.players.length === 0) return null;
+  const { players, kind } = waiting;
+  const note = kind === "queue"
+    ? "Last to claim a slot. If the game started now, the server would move "
+      + (players.length === 1 ? "this player" : "these players") + " to the spectators."
+    : full
+      ? "Asked to play after the room filled up, so the server made "
+        + (players.length === 1 ? "them a spectator" : "them spectators") + ". "
+        + "Nothing holds a place - a slot that frees up goes to whoever takes it first."
+      /* Not full, so the cap is not the explanation. ValidateBattleStatus flips
+         the same bit for an Elo, level or rank limit and never says which, so
+         neither do we. */
+      : "Asked to play and the server said no. The room is not full, so this is "
+        + "likely a rating, level or rank limit - it does not say which.";
+  return (
+    <>
+      <div style={{ height: 26, flex: "0 0 auto", display: "flex", alignItems: "center",
+        justifyContent: "space-between", padding: "0 var(--sp-4)",
+        borderBottom: "1px solid var(--w-06)", background: "var(--w-04)" }}>
+        <span className="lab">WAITING TO PLAY</span>
+        <span style={{ font: "var(--w-medium) var(--size-micro)/1 var(--font-mono)",
+          color: "var(--text-low)", fontVariantNumeric: "tabular-nums" }}>{players.length}</span>
+      </div>
+      {/* Capped rather than scrolled: the spectator list below is the thing
+          people scroll, and two scrollers in a 220px column fight each other.
+          A long queue is rare and the count above still tells the truth. */}
+      <div style={{ flex: "0 0 auto", maxHeight: 132, overflowY: "auto" }}>
+        {players.map((p, i) => (
+          <PlayerRow key={i} {...p} spectator={undefined}
+            onClick={onPlayer ? () => onPlayer(p.user) : undefined} />
+        ))}
+      </div>
+      <div style={{ padding: "var(--sp-3) var(--sp-4)", borderBottom: "1px solid var(--w-06)" }}>
+        <span style={{ font: "var(--w-regular) var(--size-micro)/1.4 var(--font-core)",
+          color: "var(--text-faint)" }}>{note}</span>
+      </div>
+    </>
   );
 }
 
@@ -237,9 +300,23 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
           <UserChip name={room.founder} size="sm" presence="room" />
         </div>
 
-        <div style={{ flex: 1, minHeight: 0, display: "grid",
-          gridTemplateColumns: "repeat(" + room.teams.length + ", minmax(0,1fr))", overflowY: "auto" }}>
-          {room.teams.map(t => <TeamColumn key={t.ally} ally={t.ally} players={t.players} max={8}
+        {/* One track per team used to mean a sixteen-way game got sixteen
+            slivers - 56px each in this pane, narrower than a name. `auto-fit`
+            fixes both ends of the range from one rule: it lays down as many
+            TEAM_MIN_WIDTH tracks as the row will take and wraps the rest onto
+            further rows, then collapses the tracks it did not need so a 1v1
+            still gets two half-width columns rather than two narrow ones
+            against dead space. Up to four teams nothing moves at all; past
+            that the columns wrap instead of shrinking.
+
+            `min(...,100%)` keeps a pane narrower than one column from pushing
+            the track wider than the box, which would scroll the teams
+            sideways - and a team you have to scroll to find is one you miss.
+            Wrapped rows scroll down, which is why this box owns the overflow. */}
+        <div style={{ flex: 1, minHeight: 0, display: "grid", overflowY: "auto",
+          gridTemplateColumns: "repeat(auto-fit, minmax(min(" + TEAM_MIN_WIDTH + "px, 100%), 1fr))" }}>
+          {room.teams.map(t => <TeamColumn key={t.ally} ally={t.ally} players={t.players}
+            max={room.teamSize}
             onJoin={onTeam ? () => onTeam(t.ally) : undefined}
             onKick={onKick} onAddBot={onAddBot} onPlayer={onPlayer} />)}
         </div>
@@ -276,9 +353,12 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
             </div>
           </div>
           <div style={{ width: 220, flex: "0 0 auto", borderLeft: "1px solid var(--w-06)",
-            display: "flex", flexDirection: "column" }}>
-            <div style={{ height: 26, display: "flex", alignItems: "center", padding: "0 var(--sp-4)",
-              borderBottom: "1px solid var(--w-06)" }}><span className="lab">SPECTATORS</span></div>
+            display: "flex", flexDirection: "column", minHeight: 0 }}>
+            <WaitingPanel waiting={room.waitingToPlay} full={room.full} onPlayer={onPlayer} />
+            <div style={{ height: 26, flex: "0 0 auto", display: "flex", alignItems: "center",
+              padding: "0 var(--sp-4)", borderBottom: "1px solid var(--w-06)" }}>
+              <span className="lab">SPECTATORS</span>
+            </div>
             <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
               {room.spectators.map((s, i) => (
                 <PlayerRow key={i} spectator {...s}

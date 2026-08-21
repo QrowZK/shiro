@@ -233,3 +233,154 @@ test("the room counts its own slots rather than waiting for the server's number"
   assert.equal(r.full, true);
   assert.equal(r.queued, 0);
 });
+
+/* ----------------------------------------------------------- ally teams ---
+   The cap is ZkLobbyServer's `ScriptGenerator.MaxAllies`, not the engine's
+   team limit. Sixteen ALLYTEAM blocks get written, numbered 0 to 15, and a
+   player above that produces a script the engine refuses outright. */
+
+test("teams are contiguous, so a gap between occupied allies is joinable", () => {
+  /* Ally 1 is empty between an occupied 0 and 2. That is a team somebody can
+     take, not a hole to skip - which is what a sparse list made it. */
+  const r = room({ a: { Name: "a", AllyNumber: 0 }, b: { Name: "b", AllyNumber: 2 } });
+  assert.deepEqual(r.teams.map(t => t.ally), [0, 1, 2]);
+});
+
+test("a room never shows fewer than two teams, or a 1v1 cannot be set up", () => {
+  const r = room({ a: { Name: "a", AllyNumber: 0 } });
+  assert.deepEqual(r.teams.map(t => t.ally), [0, 1]);
+});
+
+test("teams stop at the sixteen the script generator declares", () => {
+  /* `!balance N` is bounded only by the player count, so a room really can
+     report ally 19. Ally 16 is Gaia in a running game and joins nothing. */
+  const r = room({ a: { Name: "a", AllyNumber: 19 } });
+  assert.equal(r.teams.length, 16);
+  assert.equal(r.teams[r.teams.length - 1].ally, 15, "no column the engine would reject");
+});
+
+test("a team holds the room's own share of its cap, not a hardcoded eight", () => {
+  // Sixteen players over two teams is eight a side; over sixteen it is one.
+  assert.equal(room({ a: { Name: "a", AllyNumber: 1 } }, {}, { MaxPlayers: 16 }).teamSize, 8);
+  assert.equal(room({ a: { Name: "a", AllyNumber: 15 } }, {}, { MaxPlayers: 16 }).teamSize, 1);
+});
+
+test("a room that never said its cap falls back rather than showing nothing", () => {
+  assert.equal(room({ a: { Name: "a", AllyNumber: 0 } }, {}, { MaxPlayers: 0 }).teamSize, 8);
+});
+
+test("a team already fuller than its share reports what it actually holds", () => {
+  /* Allyteams need not be balanced. A column of ten cannot claim to hold
+     eight, or the last two players render outside their own capacity. */
+  const r = room({
+    a: { Name: "a", AllyNumber: 0 }, b: { Name: "b", AllyNumber: 0 },
+    c: { Name: "c", AllyNumber: 0 }, d: { Name: "d", AllyNumber: 1 },
+  }, {}, { MaxPlayers: 4 });
+  assert.equal(r.teamSize, 3);
+});
+
+/* --------------------------------------------------- who is waiting -------
+   `QueueOrder` is a serialized field of `UpdateUserBattleStatus`, so the
+   ordering the server sorts by is on the wire per person. `ValidateBattleStatus`
+   stamps a positive one on anyone who entered wanting to play - including
+   somebody it then flips to spectator - and -1 on anyone who arrived
+   spectating. That difference is what names a waitlist. */
+
+const names = (r: ReturnType<typeof room>) =>
+  (r.waitingToPlay?.players ?? []).map(p => p.user.name);
+
+test("nobody is waiting in a room with room to spare", () => {
+  const r = room({ a: { Name: "a", AllyNumber: 0, QueueOrder: 1 } }, {}, { MaxPlayers: 8 });
+  assert.equal(r.waitingToPlay, null);
+});
+
+test("a spectator who asked to play is named, and one who chose it is not", () => {
+  /* The forced spectator falls through to the QueueOrder stamp; the voluntary
+     one takes the `else` and is set to -1. Same IsSpectator, different reason. */
+  const r = room({
+    playing: { Name: "playing", AllyNumber: 0, QueueOrder: 1 },
+    turnedAway: { Name: "turnedAway", IsSpectator: true, QueueOrder: 4 },
+    watching: { Name: "watching", IsSpectator: true, QueueOrder: -1 },
+  }, {}, { MaxPlayers: 1 });
+  assert.deepEqual(names(r), ["turnedAway"]);
+  assert.equal(r.waitingToPlay?.kind, "refused");
+});
+
+test("someone named as waiting is not also listed as a spectator", () => {
+  const r = room({
+    turnedAway: { Name: "turnedAway", IsSpectator: true, QueueOrder: 4 },
+    watching: { Name: "watching", IsSpectator: true, QueueOrder: -1 },
+  }, {}, { MaxPlayers: 1 });
+  assert.deepEqual(r.spectators.map(s => s.user.name), ["watching"]);
+});
+
+test("a spectator we were sent no QueueOrder for is not accused of waiting", () => {
+  // Absent is not the same as positive, and guessing here invents a queue.
+  const r = room({ quiet: { Name: "quiet", IsSpectator: true } }, {}, { MaxPlayers: 1 });
+  assert.equal(r.waitingToPlay, null);
+});
+
+test("the waiting are ordered the way the server will cut them", () => {
+  const r = room({
+    late: { Name: "late", IsSpectator: true, QueueOrder: 9 },
+    early: { Name: "early", IsSpectator: true, QueueOrder: 2 },
+    middle: { Name: "middle", IsSpectator: true, QueueOrder: 5 },
+  }, {}, { MaxPlayers: 1 });
+  assert.deepEqual(names(r), ["early", "middle", "late"]);
+});
+
+/* With the time queue on, nobody is refused on the way in. Everyone stays a
+   player and `StartGame` spectates the overflow by QueueOrder, so the exact
+   set is computable rather than merely countable. */
+
+test("a time queue names exactly who StartGame would cut", () => {
+  const r = room({
+    a: { Name: "a", AllyNumber: 0, QueueOrder: 1 },
+    b: { Name: "b", AllyNumber: 1, QueueOrder: 2 },
+    c: { Name: "c", AllyNumber: 0, QueueOrder: 7 },
+    d: { Name: "d", AllyNumber: 1, QueueOrder: 9 },
+  }, {}, { MaxPlayers: 2, TimeQueueEnabled: true });
+  assert.deepEqual(names(r), ["c", "d"]);
+  assert.equal(r.waitingToPlay?.kind, "queue");
+});
+
+test("the time queue cut counts a returning player's penalty, as the server does", () => {
+  /* `PrevBattleQueueOffset` is +100000 for whoever just played, which pushes
+     them behind everyone who has been waiting. Sorting numerically is the
+     whole of it - but only if we sort by QueueOrder and not by arrival. */
+  const r = room({
+    justPlayed: { Name: "justPlayed", AllyNumber: 0, QueueOrder: 100001 },
+    waited: { Name: "waited", AllyNumber: 1, QueueOrder: 3 },
+  }, {}, { MaxPlayers: 1, TimeQueueEnabled: true });
+  assert.deepEqual(names(r), ["justPlayed"]);
+});
+
+test("a time queue drops to an even number of players under MaxEvenPlayers", () => {
+  /* allowedPlayers = count & ~1 when the count is at or under MaxEvenPlayers:
+     an odd game is worse than a smaller one, so the last player sits out. */
+  const r = room({
+    a: { Name: "a", AllyNumber: 0, QueueOrder: 1 },
+    b: { Name: "b", AllyNumber: 1, QueueOrder: 2 },
+    c: { Name: "c", AllyNumber: 0, QueueOrder: 3 },
+  }, {}, { MaxPlayers: 16, TimeQueueEnabled: true, MaxEvenPlayers: 4 });
+  assert.deepEqual(names(r), ["c"]);
+});
+
+test("a time queue room that never said its cap claims nobody is waiting", () => {
+  /* Without MaxPlayers the skip count is zero, which would name the entire
+     room. Saying nothing is the only honest answer to a number we lack. */
+  const r = room({
+    a: { Name: "a", AllyNumber: 0, QueueOrder: 1 },
+    b: { Name: "b", AllyNumber: 1, QueueOrder: 2 },
+  }, {}, { MaxPlayers: 0, TimeQueueEnabled: true });
+  assert.equal(r.waitingToPlay, null);
+});
+
+test("a time queue ignores spectators, who are not in the running anyway", () => {
+  const r = room({
+    a: { Name: "a", AllyNumber: 0, QueueOrder: 1 },
+    b: { Name: "b", AllyNumber: 1, QueueOrder: 2 },
+    watching: { Name: "watching", IsSpectator: true, QueueOrder: -1 },
+  }, {}, { MaxPlayers: 2, TimeQueueEnabled: true });
+  assert.equal(r.waitingToPlay, null);
+});
