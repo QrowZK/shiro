@@ -89,6 +89,35 @@ const EMPTY = {
   notices: [] as string[],
 };
 
+/**
+ * Fields of `User` that mean "no longer" when they are absent.
+ *
+ * `User` is broadcast as a whole record, not a patch: the server rebuilds it on
+ * every change. So the merge rule that is right for `BattleHeader` - an absent
+ * key means unchanged, because the server omits what did not change - is wrong
+ * here in one direction. These four are the ones that can go from set to unset,
+ * and `NullValueHandling.Ignore` drops them entirely when they do:
+ *
+ * - `BattleID`   leaving a room
+ * - `AwaySince`  coming back
+ * - `InGameSince` the game ending
+ * - `PartyID`    leaving a party
+ *
+ * Merged the general way, none of them ever cleared: somebody who left a battle
+ * stayed listed in it, and somebody who came back stayed greyed out as away,
+ * until they disconnected entirely.
+ */
+const USER_CLEARED_WHEN_ABSENT = ["BattleID", "AwaySince", "InGameSince", "PartyID"] as const;
+
+/** Merge a `User` broadcast, honouring the fields above. */
+export function mergeUser(base: T.User | undefined, patch: T.User): T.User {
+  const merged = mergePatch(base, patch) as T.User & Record<string, unknown>;
+  for (const field of USER_CLEARED_WHEN_ABSENT) {
+    if (patch[field] === undefined) delete merged[field];
+  }
+  return merged;
+}
+
 const MAX_CHAT = 500;
 
 export const useLobby = create<LobbyState>((set, get) => ({
@@ -143,7 +172,7 @@ export const useLobby = create<LobbyState>((set, get) => ({
 
         case "User": {
           const u = m.data as T.User;
-          if (u.Name) users[u.Name] = mergePatch(users[u.Name], u);
+          if (u.Name) users[u.Name] = mergeUser(users[u.Name], u);
           break;
         }
 

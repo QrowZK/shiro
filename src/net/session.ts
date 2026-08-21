@@ -245,15 +245,18 @@ export async function register(
   await teardown();
   const hash = await passwordHash(creds.password);
 
+  /* Attached before connecting, and *awaited*. `Welcome` arrives the moment the
+     socket opens, and a listener that is still a pending promise when it does
+     misses it - the registration then waits for a reply to a command it never
+     sent, until the connection drops. */
+  const listeners: Array<() => void> = [];
+  let settle: (err?: Error) => void = () => {};
   const outcome = new Promise<void>((resolve, reject) => {
-    let stop: (() => void) | undefined;
-    const finish = (err?: Error) => {
-      stop?.();
-      void disconnect().catch(() => {});
-      if (err) reject(err); else resolve();
-    };
+    settle = err => (err ? reject(err) : resolve());
+  });
 
-    void onLine(line => {
+  try {
+    listeners.push(await onLine(line => {
       const m = parseLine(line);
       if (!m) return;
       if (m.cmd === "Welcome") {
@@ -267,22 +270,26 @@ export async function register(
       }
       if (m.cmd === "RegisterResponse") {
         const d = m.data as { ResultCode: number; BanReason?: string };
-        finish(d.ResultCode === 0
+        settle(d.ResultCode === 0
           ? undefined
           : new Error(describeRegisterFailure(d.ResultCode, d.BanReason)));
       }
-    }).then(fn => { stop = fn; });
+    }));
+    listeners.push(await onStatus(s => {
+      if (s.kind === "disconnected") settle(new Error(`Lost connection: ${s.reason}`));
+    }));
 
-    void onStatus(s => {
-      if (s.kind === "disconnected") finish(new Error(`Lost connection: ${s.reason}`));
-    }).then(fn => {
-      const inner = stop;
-      stop = () => { inner?.(); fn(); };
-    });
-  });
+    await connect(host, port);
+    await outcome;
+  } finally {
+    /* However this ended - registered, refused, dropped, or the connect itself
+       failing before either listener could matter - these do not survive it.
+       They used to: a failed connect left them attached, and the next healthy
+       login's own disconnect then reached this handler and tore it down. */
+    for (const off of listeners) off();
+    await disconnect().catch(() => {});
+  }
 
-  await connect(host, port);
-  await outcome;
   await login(creds, host, port);
 }
 

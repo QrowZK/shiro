@@ -210,22 +210,48 @@ fn element_text<'a>(xml: &'a str, local: &str) -> Option<&'a str> {
 }
 
 /// Every `<string>` inside a named container.
+///
+/// Walks by tag position rather than by searching for the text it just read.
+/// An empty `<string></string>` has empty text, `find("")` answers 0, and the
+/// old loop then re-read the same element forever - a hang, and an unbounded
+/// `Vec`, reachable from a response on a plaintext channel.
 fn string_array(xml: &str, container: &str) -> Vec<String> {
     let Some(inner) = element_text(xml, container) else {
         return Vec::new();
     };
     let mut out = Vec::new();
     let mut rest = inner;
-    while let Some(text) = element_text(rest, "string") {
-        out.push(xml_unescape(text));
-        // Step past this item.
-        let Some(idx) = rest.find(text) else { break };
-        rest = &rest[idx + text.len()..];
-        if rest.is_empty() {
-            break;
-        }
+    loop {
+        let Some(open) = find_open_tag(rest, "string") else { break };
+        let Some(close_at) = rest[open.1..].find("</") else { break };
+        let close = open.1 + close_at;
+        out.push(xml_unescape(&rest[open.1..close]));
+        // Past the closing tag, whatever it contained: this always advances.
+        let Some(end) = rest[close..].find('>') else { break };
+        rest = &rest[close + end + 1..];
     }
     out
+}
+
+/// Where a `<local>` open tag starts and its content begins, namespace or not.
+fn find_open_tag(xml: &str, local: &str) -> Option<(usize, usize)> {
+    let mut i = 0;
+    loop {
+        let at = i + xml[i..].find('<')?;
+        let after = &xml[at + 1..];
+        let end = after.find('>')?;
+        let name = after[..end].split_whitespace().next().unwrap_or("");
+        if !name.starts_with('/') && name.rsplit(':').next() == Some(local) {
+            // A self-closing tag has no content to read.
+            if !after[..end].ends_with('/') {
+                return Some((at, at + 1 + end + 1));
+            }
+        }
+        i = at + 1 + end + 1;
+        if i >= xml.len() {
+            return None;
+        }
+    }
 }
 
 /// The 32 hex digits before `.torrent`, if they are there.
@@ -375,7 +401,7 @@ pub fn zks_find_maps(query: String) -> Result<Vec<MapHit>, String> {
         return Ok(Vec::new());
     }
     let body = search_request(&words, "Map")?;
-    let res = client()?
+    let res = soap_client()?
         .post(ENDPOINT)
         .header("Content-Type", "text/xml; charset=utf-8")
         .header("SOAPAction", format!("\"{}\"", "http://tempuri.org/IContentService/FindResourceData"))
@@ -477,7 +503,7 @@ pub fn zks_game_modes() -> Result<Vec<GameMode>, String> {
         r#"<GetFeaturedCustomGameModes xmlns="http://tempuri.org/"/>"#,
         r#"</s:Body></s:Envelope>"#,
     );
-    let res = client()?
+    let res = soap_client()?
         .post(ENDPOINT)
         .header("Content-Type", "text/xml; charset=utf-8")
         .header(
@@ -533,7 +559,7 @@ pub fn parse_catalogue(xml: &str) -> Result<Vec<CatalogueMap>, String> {
 #[tauri::command]
 pub fn zks_map_catalogue() -> Result<Vec<CatalogueMap>, String> {
     let body = "<s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\"><s:Body><GetPublicCommunityInfo xmlns=\"http://tempuri.org/\"/></s:Body></s:Envelope>";
-    let res = client()?
+    let res = soap_client()?
         .post(ENDPOINT)
         .header("Content-Type", "text/xml; charset=utf-8")
         .header(
@@ -575,10 +601,36 @@ pub fn file_name_for(url: &str) -> Result<String, String> {
 
 // ----------------------------------------------------------------- http ----
 
+/// A connection that is never going to be answered.
+///
+/// The body deliberately has no bound - a 90 MB map on a slow line is not a
+/// hung request - but reaching the server should take milliseconds, and
+/// without this a black-holed connect sat there for the OS's own timeout with
+/// the download UI showing nothing at all.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// How long a SOAP call may take, start to finish.
+///
+/// These are two-line requests answered from a database; anything approaching
+/// this is a service that is not going to answer. Bounded where the file
+/// downloads are not, because there is nothing large about them.
+const SOAP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 fn client() -> Result<reqwest::blocking::Client, String> {
     reqwest::blocking::Client::builder()
         .user_agent("shiro")
+        .connect_timeout(CONNECT_TIMEOUT)
         .timeout(None) // a 90 MB map on a slow line is not a hung request
+        .build()
+        .map_err(|e| format!("could not build an HTTP client: {e}"))
+}
+
+/// The same, for the small SOAP calls that resolve a name.
+fn soap_client() -> Result<reqwest::blocking::Client, String> {
+    reqwest::blocking::Client::builder()
+        .user_agent("shiro")
+        .connect_timeout(CONNECT_TIMEOUT)
+        .timeout(SOAP_TIMEOUT)
         .build()
         .map_err(|e| format!("could not build an HTTP client: {e}"))
 }
@@ -586,7 +638,7 @@ fn client() -> Result<reqwest::blocking::Client, String> {
 /// Ask the service where a name lives.
 pub fn resolve(internal_name: &str) -> Result<Option<Resolved>, String> {
     let body = build_request(internal_name)?;
-    let res = client()?
+    let res = soap_client()?
         .post(ENDPOINT)
         .header("Content-Type", "text/xml; charset=utf-8")
         .header("SOAPAction", format!("\"{SOAP_ACTION}\""))
@@ -1006,5 +1058,33 @@ word".into()], "Map").is_err());
         // verified one just downloaded.
         assert!(!looks_like_in_use(&Error::new(ErrorKind::NotFound, "gone")));
         assert!(!looks_like_in_use(&Error::new(ErrorKind::Other, "no space left on device")));
+    }
+
+    #[test]
+    fn an_empty_string_element_does_not_spin_forever() {
+        /* `<string></string>` has empty text; a loop that advanced by searching
+           for the text it had just read found it at offset zero and read the
+           same element again, for ever, growing a Vec as it went. Reachable
+           from a response on a plaintext channel, so it is a hang somebody else
+           can cause. */
+        let xml = "<links><string></string><string>a</string><string></string></links>";
+        assert_eq!(string_array(xml, "links"), vec!["", "a", ""]);
+    }
+
+    #[test]
+    fn a_namespaced_string_array_still_reads() {
+        let xml = "<a:words><a:string>one</a:string><a:string>two</a:string></a:words>";
+        assert_eq!(string_array(xml, "words"), vec!["one", "two"]);
+    }
+
+    #[test]
+    fn an_unterminated_string_element_ends_the_walk() {
+        let xml = "<links><string>one</string><string>never closed</links>";
+        assert_eq!(string_array(xml, "links"), vec!["one"]);
+    }
+
+    #[test]
+    fn a_container_that_is_not_there_is_empty_rather_than_an_error() {
+        assert!(string_array("<other/>", "links").is_empty());
     }
 }

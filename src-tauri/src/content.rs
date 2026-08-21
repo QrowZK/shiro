@@ -326,11 +326,24 @@ struct Job {
 
 struct ActiveJob {
     id: String,
-    child: std::process::Child,
+    /// `None` in two moments when the job is still very much active: after the
+    /// slot is reserved and before the downloader is spawned, and after the
+    /// downloader exits while the zero-k.info fallback runs. The slot stays
+    /// occupied throughout, because "something is writing to the pool" is what
+    /// it means, and two writers into `pool/` is the thing the queue exists to
+    /// prevent.
+    child: Option<std::process::Child>,
     /// What this job is downloading, so a request for the same thing can be
     /// told it is already happening. The queue is not enough: this job was
     /// popped off it to start.
     items: Vec<ContentItem>,
+    /// Somebody pressed cancel.
+    ///
+    /// Read rather than inferred from the exit code: on Windows a killed
+    /// process exits 1, which is indistinguishable from "not found" - so a
+    /// cancel used to be reported as a failure *and* send the fallback off to
+    /// download the thing that had just been cancelled.
+    cancelled: bool,
 }
 
 /// One pr-downloader at a time, with a queue rather than a rejection.
@@ -447,18 +460,30 @@ fn start_next(app: tauri::AppHandle, state: Content2) {
     use tauri::Emitter;
 
     let job = {
-        let active = state.active.lock().ok();
-        if active.as_ref().map(|a| a.is_some()).unwrap_or(true) {
-            return; // busy, or poisoned - either way do not start another
+        let mut slot = match state.active.lock() {
+            Ok(s) => s,
+            Err(_) => return, // poisoned - do not start another
+        };
+        if slot.is_some() {
+            return; // busy
         }
         let mut q = match state.queue.lock() {
             Ok(q) => q,
             Err(_) => return,
         };
-        match q.pop_front() {
-            Some(j) => j,
-            None => return,
-        }
+        let Some(job) = q.pop_front() else { return };
+        /* Reserve the slot here, under the same lock that found it empty. The
+           check and the spawn used to be separate, so two callers could both
+           see nothing running, both pop a job, and both start a downloader -
+           two processes writing `pool/` and `packages/`, which rapid's
+           non-atomic `.sdp` writes do not survive. */
+        *slot = Some(ActiveJob {
+            id: job.id.clone(),
+            child: None,
+            items: job.items.clone(),
+            cancelled: false,
+        });
+        job
     };
 
     let started = spawn_job(&app, &job, &state);
@@ -597,11 +622,17 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
     }
 
     if let Ok(mut slot) = state.active.lock() {
-        *slot = Some(ActiveJob {
-            id: job.id.clone(),
-            child,
-            items: job.items.clone(),
-        });
+        match slot.as_mut() {
+            // The reservation start_next made. Fill it in.
+            Some(a) if a.id == job.id => a.child = Some(child),
+            // Reserved by somebody else, or cancelled out from under us while
+            // the process was starting: do not leave an orphan running.
+            _ => {
+                let mut child = child;
+                let _ = child.kill();
+                return Err("the download was cancelled".into());
+            }
+        }
     }
     let _ = app.emit(CONTENT_EVENT, ContentStatus::Started { id: job.id.clone() });
 
@@ -615,6 +646,10 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
     // download and its record to two different places.
     let root_w = job.root.clone().or_else(|| state.root.clone());
     std::thread::spawn(move || {
+        /* Waits for the downloader, then hands the job to the fallback without
+           letting go of the slot: the fallback writes into the same pool, and
+           releasing here let the next queued job start alongside it. */
+        let mut cancelled = false;
         let code = loop {
             std::thread::sleep(std::time::Duration::from_millis(120));
             let mut slot = match state_w.active.lock() {
@@ -625,21 +660,32 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
             if a.id != id {
                 break None; // superseded
             }
-            match a.child.try_wait() {
+            let Some(child) = a.child.as_mut() else {
+                // Reserved but not spawned yet, or already reaped.
+                continue;
+            };
+            match child.try_wait() {
                 Ok(Some(status)) => {
                     let c = status.code();
-                    *slot = None;
+                    cancelled = a.cancelled;
+                    a.child = None;
                     break c;
                 }
                 Ok(None) => continue,
                 Err(_) => {
-                    *slot = None;
+                    cancelled = a.cancelled;
+                    a.child = None;
                     break None;
                 }
             }
         };
 
-        let mut outcome = classify_exit(code);
+        /* A cancel is not a failure, whatever the exit code says. Windows
+           reports a killed process as exit 1, which classifies as
+           NotFoundOrFailed - so cancelling used to be announced as "could not
+           download it" and then send the fallback to fetch the very thing that
+           had just been cancelled. */
+        let mut outcome = if cancelled { Outcome::Killed } else { classify_exit(code) };
         let mut message = outcome.message();
         let mut log = if matches!(outcome, Outcome::Ok) {
             None
@@ -658,7 +704,15 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
            This is only correct because each job now carries a single item: the
            exit code used to be an OR over the batch, so there was no per-item
            failure to fall back from. See docs/DOWNLOADS-ZK-CONTENT.md. */
-        if !matches!(outcome, Outcome::Ok | Outcome::Killed) {
+        let cancelled_since = || {
+            state_w
+                .active
+                .lock()
+                .ok()
+                .and_then(|s| s.as_ref().map(|a| a.id == id && a.cancelled))
+                .unwrap_or(false)
+        };
+        if !matches!(outcome, Outcome::Ok | Outcome::Killed) && !cancelled_since() {
             if let Some(item) = items_w.first() {
                 match try_zk_content(&app_w, &id, item, root_w.as_deref()) {
                     Fallback::Installed(what) => {
@@ -709,6 +763,13 @@ fn spawn_job(app: &tauri::AppHandle, job: &Job, state: &Content2) -> Result<(), 
                 for item in &items_w {
                     archives::remember_downloaded(&install.root, &item.name);
                 }
+            }
+        }
+
+        // Done writing: release the slot, then let the queue move on.
+        if let Ok(mut slot) = state_w.active.lock() {
+            if slot.as_ref().map(|a| a.id.as_str()) == Some(id.as_str()) {
+                *slot = None;
             }
         }
 
@@ -871,19 +932,50 @@ pub fn zks_content_log(content: tauri::State<'_, Content>, id: Option<String>) -
 /// leaves a partial pool rather than a corrupt archive and the next run resumes.
 /// UNVERIFIED against a real download - confirm on first use.
 #[tauri::command]
-pub fn zks_content_cancel(content: tauri::State<'_, Content>, id: String) -> Result<(), String> {
-    {
+pub fn zks_content_cancel(
+    app: tauri::AppHandle,
+    content: tauri::State<'_, Content>,
+    id: String,
+) -> Result<(), String> {
+    use tauri::Emitter;
+
+    let was_queued = {
         let mut q = self_lock(&content.queue)?;
+        let before = q.len();
         q.retain(|j| j.id != id);
-    }
-    let mut slot = content
-        .active
-        .lock()
-        .map_err(|_| "content state is poisoned".to_string())?;
-    if let Some(a) = slot.as_mut() {
-        if a.id == id {
-            let _ = a.child.kill();
+        q.len() != before
+    };
+
+    {
+        let mut slot = self_lock(&content.active)?;
+        if let Some(a) = slot.as_mut() {
+            if a.id == id {
+                /* Recorded, not inferred. The supervisor reads this rather than
+                   the exit code, because Windows reports a killed process as
+                   exit 1 and that is also what "not found" looks like. It also
+                   stops the fallback, which would otherwise go and download the
+                   thing that was just cancelled. */
+                a.cancelled = true;
+                if let Some(child) = a.child.as_mut() {
+                    let _ = child.kill();
+                }
+            }
         }
+    }
+
+    /* A job cancelled while still in the queue has no supervisor to announce
+       it, and callers wait on `Finished` before giving up. Without this they
+       waited for a job that would never speak again. */
+    if was_queued {
+        let _ = app.emit(
+            CONTENT_EVENT,
+            ContentStatus::Finished {
+                id,
+                outcome: Outcome::Killed,
+                message: Outcome::Killed.message(),
+                log: None,
+            },
+        );
     }
     Ok(())
 }
