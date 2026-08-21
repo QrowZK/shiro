@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import type * as T from "../protocol/types.ts";
-import { battleList, userToChip, chatLines, shortTime, describeFailure, statusBarKind, describeRegisterFailure } from "./adapters.ts";
+import { battleList, battleToRow, userToChip, chatLines, shortTime, describeFailure, statusBarKind, describeRegisterFailure, roomModel, syncMark } from "./adapters.ts";
 
 const USERS: Record<string, T.User> = {
   hexed: { Name: "hexed", Clan: "ZKF", Country: "US", EffectiveElo: 1790.6, Level: 33 } as T.User,
@@ -125,4 +125,98 @@ test("registration failures name the actual problem", () => {
   assert.match(describeRegisterFailure(4, "cheating"), /^Banned: cheating$/);
   assert.match(describeRegisterFailure(11), /log in with your password/i);
   assert.match(describeRegisterFailure(99), /error 99/);
+});
+
+/* ------------------------------------------------------------------ sync ---
+   Three protocol states, three marks. The one that matters is `Unknown`: it is
+   what a client that has never reported looks like, and `!start` treats it as
+   unready without it being a claim that anybody lacks the map. */
+
+test("the three sync states get three different marks", () => {
+  assert.equal(syncMark(1), "ok");
+  assert.equal(syncMark(2), "missing");
+  assert.equal(syncMark(0), "downloading", "never reported is not the same as reported missing");
+  assert.equal(syncMark(undefined), "downloading", "and neither is a status we were never sent");
+});
+
+const ROOM: T.BattleHeader = { BattleID: 5, Title: "t", Founder: "host", MaxPlayers: 8 } as T.BattleHeader;
+
+function room(players: Record<string, Partial<T.UpdateUserBattleStatus>>,
+  bots: Record<string, Partial<T.UpdateBotStatus>> = {},
+  header: Partial<T.BattleHeader> = {}) {
+  return roomModel({ ...ROOM, ...header } as T.BattleHeader,
+    players as Record<string, T.UpdateUserBattleStatus>,
+    bots as Record<string, T.UpdateBotStatus>, {}, {})!;
+}
+
+test("players carry their sync mark into the row", () => {
+  const r = room({
+    ready: { Name: "ready", AllyNumber: 0, Sync: 1 },
+    missing: { Name: "missing", AllyNumber: 0, Sync: 2 },
+    quiet: { Name: "quiet", AllyNumber: 0 },
+  });
+  const marks = Object.fromEntries(r.teams[0].players.map(p => [p.user.name, p.sync]));
+  assert.deepEqual(marks, { ready: "ok", missing: "missing", quiet: "downloading" });
+});
+
+test("a bot is always ready, because it has nothing to download", () => {
+  const r = room({}, { "CAI (1)": { Name: "CAI (1)", AllyNumber: 0, AiLib: "CAI" } });
+  assert.equal(r.teams[0].players[0].sync, "ok");
+});
+
+test("a spectator gets no mark, because nobody is waiting for one", () => {
+  const r = room({ watcher: { Name: "watcher", IsSpectator: true, Sync: 2 } });
+  assert.equal(r.spectators[0].sync, undefined);
+  assert.deepEqual(r.waitingOn, [], "and is never named as holding the start up");
+});
+
+test("the room names everyone !start would name, and nobody else", () => {
+  const r = room({
+    ready: { Name: "ready", AllyNumber: 0, Sync: 1 },
+    zed: { Name: "zed", AllyNumber: 1, Sync: 2 },
+    alice: { Name: "alice", AllyNumber: 1 },
+    watcher: { Name: "watcher", IsSpectator: true },
+  });
+  // CmdStart gathers every non-spectator whose status is not Synced.
+  assert.deepEqual(r.waitingOn, ["alice", "zed"]);
+});
+
+/* -------------------------------------------------------------- capacity ---
+   There is no waitlist in the protocol. A full room silently spectates the
+   arrival, so the least a list can do is say which rooms those are. */
+
+test("a room is full when every player slot is taken", () => {
+  const row = (PlayerCount: number, MaxPlayers: number) =>
+    battleToRow({ BattleID: 1, PlayerCount, MaxPlayers } as T.BattleHeader)!;
+  assert.equal(row(7, 8).full, false);
+  assert.equal(row(8, 8).full, true);
+  assert.equal(row(8, 8).queued, 0);
+});
+
+test("a room that never said how big it is cannot be full", () => {
+  // Otherwise 0 >= 0 makes every unsized room look shut.
+  const row = battleToRow({ BattleID: 1, PlayerCount: 0 } as T.BattleHeader)!;
+  assert.equal(row.full, false);
+});
+
+test("players past the cap are the time queue, which is the nearest thing to a waitlist", () => {
+  /* Only reachable with the server's time queue on: everyone counts as a
+     player until `StartGame` spectates whoever claimed a slot last. */
+  const row = battleToRow({ BattleID: 1, PlayerCount: 18, MaxPlayers: 16 } as T.BattleHeader)!;
+  assert.equal(row.full, true);
+  assert.equal(row.queued, 2);
+});
+
+test("the room counts its own slots rather than waiting for the server's number", () => {
+  /* PlayerCount is re-broadcast on a five-second timer, and the roster beside
+     it is instant. Bots take no slot - the server counts them separately. */
+  const r = room({
+    a: { Name: "a", AllyNumber: 0 },
+    b: { Name: "b", AllyNumber: 1 },
+    watcher: { Name: "watcher", IsSpectator: true },
+  }, { "CAI (1)": { Name: "CAI (1)", AllyNumber: 1 } }, { MaxPlayers: 2, PlayerCount: 99 });
+  assert.equal(r.players, 2);
+  assert.equal(r.maxPlayers, 2);
+  assert.equal(r.full, true);
+  assert.equal(r.queued, 0);
 });

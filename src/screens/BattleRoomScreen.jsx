@@ -207,6 +207,7 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
   }, []);
   const chatMax = Math.max(CHAT_MIN, viewport - TEAMS_FLOOR);
   const total = room.teams.reduce((n, t) => n + t.players.length, 0);
+  const waiting = room.waitingOn || [];
   const lines = chat || room.chat || [];
   const scroll = useStickyScroll({ count: lines.length, resetKey: room.id });
   // Anything between "start pressed" and "engine running" counts as busy: the
@@ -224,6 +225,13 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
           <span style={{ font: "var(--w-semibold) var(--size-mid)/1 var(--font-core)", color: "var(--text-hi)",
             whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{room.title}</span>
           <Badge tone="outline">{room.mode}</Badge>
+          {/* The room never said how big it was: the team columns count to a
+              hardcoded eight, which is not this room's cap. Bots are left out
+              because the server leaves them out - they take no slot. */}
+          {room.maxPlayers > 0 && <Badge mono>{room.players}/{room.maxPlayers}</Badge>}
+          {room.full && (
+            <Badge tone="solid">{room.queued > 0 ? "Full +" + room.queued : "Full"}</Badge>
+          )}
           <span style={{ flex: 1 }} />
           <span className="lab">HOST</span>
           <UserChip name={room.founder} size="sm" presence="room" />
@@ -397,6 +405,21 @@ export default function BattleRoomScreen({ room, onLeave, onStart, chat, onSay,
                 </span>
               </div>
             )}
+
+            {/* Everyone else. `!start` gathers exactly this set, announces them
+                as still downloading and holds the game for ten seconds, so it
+                is worth reading before pressing Start rather than after - and
+                the marks in the team columns say which of them is which. */}
+            <div style={{ display: "flex", alignItems: "flex-start", gap: "var(--sp-4)" }}>
+              <Icon name={waiting.length ? "download" : "check"} size={16}
+                style={{ color: waiting.length ? "var(--signal-warn)" : "var(--text-mid)",
+                  marginTop: 2, flex: "0 0 auto" }} />
+              <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)" }}>
+                {waiting.length === 0
+                  ? "Everyone has the map"
+                  : "Waiting on " + waiting.join(", ")}
+              </span>
+            </div>
           </div>
         </div>
         <div style={{ padding: "var(--sp-5)", borderTop: "1px solid var(--w-12)",

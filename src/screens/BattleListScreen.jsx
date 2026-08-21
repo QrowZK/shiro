@@ -18,10 +18,12 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
   const [mode, setMode] = React.useState("All modes");
   const [hideRunning, setHideRunning] = React.useState(false);
   const [hideLocked, setHideLocked] = React.useState(false);
+  const [hideFull, setHideFull] = React.useState(false);
   const list = (empty ? [] : battles).filter(b =>
     (mode === "All modes" || b.mode === mode) &&
     (!hideRunning || !b.running) &&
     (!hideLocked || !b.locked) &&
+    (!hideFull || !b.full) &&
     (q === "" || (b.title + " " + b.founder + " " + b.map).toLowerCase().includes(q.toLowerCase())));
   /* Ordering is busiest-first, which can put a running game at the top - you
      cannot join one of those, so the default selection skips to the first room
@@ -40,6 +42,7 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--sp-4)" }}>
           <Checkbox label="Hide running" checked={hideRunning} onChange={e => setHideRunning(e.target.checked)} />
           <Checkbox label="Hide passworded" checked={hideLocked} onChange={e => setHideLocked(e.target.checked)} />
+          <Checkbox label="Hide full" checked={hideFull} onChange={e => setHideFull(e.target.checked)} />
           <Checkbox label="Show off-peak state" checked={empty} onChange={onToggleEmpty} hint="Demo toggle" />
         </div>
       </div>
@@ -79,10 +82,21 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
                  - so the prop has always been accepted and dropped. The design
                  system is generated and must not be hand-edited, so the
                  handler goes on a wrapper here instead. */
-              <div key={b.id} onDoubleClick={() => onJoin(b)}>
+              <div key={b.id} onDoubleClick={() => onJoin(b)} style={{ position: "relative" }}>
                 <BattleRow {...b} selected={current && current.id === b.id}
                   onClick={() => setSel(b.id)}
                   style={{ animation: "shiro-enter var(--dur-base) var(--ease-out) " + Math.min(i, 12) * 12 + "ms both" }} />
+                {/* A full room used to look exactly like one you could walk
+                    into - the count greys out, and that is the whole of it.
+                    Over the thumbnail because every other part of the row is
+                    text that truncates, and click-through because the row
+                    underneath is the thing you are aiming at. */}
+                {b.full && (
+                  <span style={{ position: "absolute", left: "var(--sp-3)", bottom: "var(--sp-3)",
+                    pointerEvents: "none" }}>
+                    <Badge tone="solid" mono>{b.queued > 0 ? "FULL +" + b.queued : "FULL"}</Badge>
+                  </span>
+                )}
               </div>
             ))}
         </div>
@@ -99,10 +113,27 @@ export default function BattleListScreen({ battles, onJoin, empty, onToggleEmpty
               <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--sp-3)" }}>
                 <Badge tone="outline">{current.mode}</Badge>
                 <Badge mono>{current.players}/{current.maxPlayers}</Badge>
+                {current.full && <Badge tone="solid">Full</Badge>}
                 {current.locked && <Badge tone="outline" icon="lock">Locked</Badge>}
                 {current.running && <Badge tone="danger">In progress</Badge>}
                 {current.matchmaker && <Badge tone="solid">MM</Badge>}
               </div>
+              {/* What being full costs you, since the server never says it out
+                  loud: it moves the arrival to spectator and sends them a
+                  private line. Worth knowing before the click rather than
+                  after, and worth saying that no queue is holding you a
+                  place - people ask, and the answer is no. */}
+              {current.full && (
+                <span style={{ font: "var(--w-regular) var(--size-tiny)/1.4 var(--font-core)",
+                  color: "var(--text-low)" }}>
+                  {current.queued > 0
+                    ? current.queued + " past the cap. This room runs Zero-K's time queue, "
+                      + "so everyone counts as a player until the game starts - then whoever "
+                      + "claimed a slot last is moved to the spectators."
+                    : "Joining makes you a spectator. Nothing holds you a place: "
+                      + "a slot that frees up goes to whoever takes it first."}
+                </span>
+              )}
               <div style={{ display: "grid", gridTemplateColumns: "auto 1fr", gap: "var(--sp-3) var(--sp-5)" }}>
                 <span className="lab">HOST</span>
                 <span style={{ font: "var(--text-ui-sm)", color: "var(--text-body)" }}>{current.founder}</span>
