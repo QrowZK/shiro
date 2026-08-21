@@ -92,6 +92,15 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      # The screens are .jsx and checkJs is off, so nothing else here looks
+      # at them. This catches the one thing in that gap that is a crash
+      # rather than an opinion: a name that was never imported.
+      - name: Undefined identifiers
+        run: npm run check:names
+
+      - name: Types
+        run: npm run typecheck
+
       - name: Rust tests
         working-directory: src-tauri
         run: cargo test
@@ -179,6 +188,15 @@ jobs:
 
       - name: Unit tests
         run: npm test
+
+      # The screens are .jsx and checkJs is off, so nothing else here looks
+      # at them. This catches the one thing in that gap that is a crash
+      # rather than an opinion: a name that was never imported.
+      - name: Undefined identifiers
+        run: npm run check:names
+
+      - name: Types
+        run: npm run typecheck
 
       - name: Rust tests
         working-directory: src-tauri
