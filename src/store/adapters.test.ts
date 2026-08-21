@@ -172,6 +172,27 @@ test("players carry their sync mark into the row", () => {
   assert.deepEqual(marks, { ready: "ok", missing: "missing", quiet: "downloading" });
 });
 
+test("the people in our party are marked as being in it", () => {
+  /* This never worked. The marker read `User.PartyID`, which the server
+     declares and never serialises, so it was undefined for everybody and the
+     row `PlayerRow` draws for it has not once appeared. `OnPartyStatus` is
+     where membership actually comes from. */
+  const r = roomModel({ ...ROOM } as T.BattleHeader, {
+    Qrow: { Name: "Qrow", AllyNumber: 0 },
+    hexed: { Name: "hexed", AllyNumber: 0 },
+    stranger: { Name: "stranger", AllyNumber: 1 },
+  } as Record<string, T.UpdateUserBattleStatus>, {}, {}, {},
+  { id: 7, members: ["Qrow", "hexed"] })!;
+  const marks = Object.fromEntries(
+    [...r.teams[0].players, ...r.teams[1].players].map(p => [p.user.name, p.party]));
+  assert.deepEqual(marks, { Qrow: 7, hexed: 7, stranger: undefined });
+});
+
+test("with no party, nobody is marked as being in one", () => {
+  const r = room({ Qrow: { Name: "Qrow", AllyNumber: 0 } });
+  assert.equal(r.teams[0].players[0].party, undefined);
+});
+
 test("a bot is always ready, because it has nothing to download", () => {
   const r = room({}, { "CAI (1)": { Name: "CAI (1)", AllyNumber: 0, AiLib: "CAI" } });
   assert.equal(r.teams[0].players[0].sync, "ok");

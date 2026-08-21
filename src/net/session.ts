@@ -361,6 +361,6 @@ export async function teardown(): Promise<void> {
 
 export function say(text: string, place: SayPlace, target?: string): Promise<void> {
   return sendLine(serialize("Say", {
-    Place: place, Target: target, Text: text, IsEmote: false, Ring: false, AllowRelay: true,
+    Place: place, Target: target, Text: text, IsEmote: false, Ring: false,
   }));
 }

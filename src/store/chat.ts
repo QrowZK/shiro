@@ -497,7 +497,6 @@ export const useChat = create<ChatState>((set, get) => ({
       Text: body,
       IsEmote: emote,
       Ring: false,
-      AllowRelay: true,
     });
   },
 

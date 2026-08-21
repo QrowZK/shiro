@@ -73,7 +73,7 @@ test("a server message box is not chat, and is not scrolled past", () => {
   fresh();
   useLobby.getState().applyMessage(msg("Say", {
     Place: 5, Text: "You have been muted for 10 minutes.",
-    IsEmote: false, Ring: false, AllowRelay: true,
+    IsEmote: false, Ring: false,
   }));
   assert.deepEqual(useLobby.getState().notices, ["You have been muted for 10 minutes."]);
   assert.equal(useLobby.getState().chat.length, 0, "and does not land in the chat log");
@@ -85,7 +85,7 @@ test("notices queue rather than replace each other", () => {
   fresh();
   for (const text of ["first", "second"]) {
     useLobby.getState().applyMessage(msg("Say", {
-      Place: 5, Text: text, IsEmote: false, Ring: false, AllowRelay: true,
+      Place: 5, Text: text, IsEmote: false, Ring: false,
     }));
   }
   assert.deepEqual(useLobby.getState().notices, ["first", "second"]);
@@ -94,8 +94,8 @@ test("notices queue rather than replace each other", () => {
 test("two notices in one batch both survive", () => {
   fresh();
   useLobby.getState().applyBatch([
-    msg("Say", { Place: 5, Text: "a", IsEmote: false, Ring: false, AllowRelay: true }),
-    msg("Say", { Place: 5, Text: "b", IsEmote: false, Ring: false, AllowRelay: true }),
+    msg("Say", { Place: 5, Text: "a", IsEmote: false, Ring: false }),
+    msg("Say", { Place: 5, Text: "b", IsEmote: false, Ring: false }),
   ]);
   assert.deepEqual(useLobby.getState().notices, ["a", "b"]);
 });
@@ -103,7 +103,7 @@ test("two notices in one batch both survive", () => {
 test("a user who left a battle is not still in it", () => {
   fresh();
   useLobby.getState().applyMessage(msg("User", {
-    Name: "hexed", AccountID: 2, BattleID: 11, PartyID: 4,
+    Name: "hexed", AccountID: 2, BattleID: 11,
     AwaySince: "2026-08-18T09:00:00Z", InGameSince: "2026-08-18T09:30:00Z",
   }));
   assert.equal(useLobby.getState().users.hexed.BattleID, 11);
@@ -116,7 +116,6 @@ test("a user who left a battle is not still in it", () => {
   assert.equal(u.BattleID, undefined, "still listed in a battle they left");
   assert.equal(u.AwaySince, undefined, "still greyed out as away");
   assert.equal(u.InGameSince, undefined, "still shown as in a game");
-  assert.equal(u.PartyID, undefined, "still in a party");
   assert.equal(u.Clan, "ZKF", "and the rest of the record still merges");
 });
 
@@ -150,7 +149,7 @@ test("a batch that changes nothing leaves the directories alone", () => {
   // each frame of it is four new objects a frame, sized by everyone online.
   useLobby.getState().applyBatch([
     msg("Say", { Place: 0, Target: "zk", User: "hexed", Text: "hi",
-      IsEmote: false, Ring: false, AllowRelay: true }),
+      IsEmote: false, Ring: false }),
   ]);
   const after = useLobby.getState();
   assert.equal(after.users, before.users, "the user directory was rebuilt for nothing");
