@@ -91,13 +91,26 @@ pub fn zks_read_engine_settings(
 }
 
 /// Write the given settings, leaving everything else in the file alone.
+///
+/// Refused while a game is running. The engine holds these settings in memory
+/// and writes the whole file back when it exits, so anything saved in the
+/// meantime is overwritten without a word - the change appears to work, and is
+/// gone by the time anybody looks.
 #[tauri::command]
 pub fn zks_write_engine_settings(
+    game: tauri::State<'_, crate::launch::Game>,
     install_root: Option<String>,
     changes: BTreeMap<String, String>,
 ) -> Result<(), String> {
     if changes.is_empty() {
         return Ok(());
+    }
+    if game.is_running() {
+        return Err(
+            "Zero-K is running. It rewrites this file when it exits, so changes saved now \
+             would be lost - close the game and try again."
+                .into(),
+        );
     }
     let found = install::detect_with(install_root.as_deref())?;
     let path = config_path(&found.root);

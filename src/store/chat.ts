@@ -149,6 +149,8 @@ interface ChatState {
   openDm: (name: string) => string;
   join: (channel: string) => void;
   leave: (channel: string) => void;
+  /** Ask for every channel we are in again, after a reconnect. */
+  rejoinChannels: () => void;
   close: (id: string) => void;
   say: (id: string, text: string) => void;
   reset: () => void;
@@ -445,6 +447,17 @@ export const useChat = create<ChatState>((set, get) => ({
   leave: channel => {
     tx("LeaveChannel", { ChannelName: channel });
     get().close(roomKey("channel", channel));
+  },
+
+  /* A reconnect is a fresh session on the server's side: it force-joins the
+     default channels again and knows nothing about the ones this player typed
+     `/join` for. Their tabs were still here, still showing scrollback, and
+     silent - messages went nowhere and none arrived. Asking again is cheap and
+     idempotent; the server answers with a JoinChannelResponse either way. */
+  rejoinChannels: () => {
+    for (const room of Object.values(get().rooms)) {
+      if (room.kind === "channel") tx("JoinChannel", { ChannelName: room.name });
+    }
   },
 
   close: id => set(state => {

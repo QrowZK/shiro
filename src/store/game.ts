@@ -207,7 +207,10 @@ export const useGame = create<GameState>((set, get) => ({
     try {
       const { launchSpring, onGame } = await import("../net/launch.ts");
       if (!listening) {
-        listening = true;
+        /* Set *after* the registration succeeds. Setting it first meant a
+           failed registration was never retried, and nothing after it ever
+           learned that a game had exited - the lobby sat on "Game running"
+           for the rest of the session. */
         await onGame(s => {
           if (s.kind === "launched") {
             set(state => ({ phase: { kind: "running", pid: s.pid, title: titleOf(state.phase) } }));
@@ -219,6 +222,7 @@ export const useGame = create<GameState>((set, get) => ({
             set({ phase: { kind: "failed", reason: s.reason } });
           }
         });
+        listening = true;
       }
       await rememberWindowState();
       const pid = await launchSpring({
@@ -228,7 +232,14 @@ export const useGame = create<GameState>((set, get) => ({
         myPlayerName: me,
         scriptPassword: c.ScriptPassword ?? "",
       });
-      set(state => ({ phase: { kind: "running", pid, title: titleOf(state.phase) } }));
+      /* Only if nothing has happened to the game since. An engine with a bad
+         script or missing content exits immediately, and that event can arrive
+         before this promise resolves - in which case the phase is already
+         `idle` or `failed`, and announcing "running" over the top of it left
+         the lobby claiming a game that ended before it started. */
+      set(state => (state.phase.kind === "launching"
+        ? { phase: { kind: "running", pid, title: titleOf(state.phase) } }
+        : state));
     } catch (err) {
       set({ phase: { kind: "failed", reason: String((err as Error)?.message ?? err) } });
     }

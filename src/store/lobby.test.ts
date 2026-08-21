@@ -127,3 +127,33 @@ test("a user update that still names a battle keeps it", () => {
   assert.equal(useLobby.getState().users.hexed.BattleID, 11);
   assert.equal(useLobby.getState().users.hexed.Country, "US");
 });
+
+test("an engine change in the same batch as a Welcome does not throw the Welcome away", () => {
+  fresh();
+  useLobby.getState().applyBatch([
+    msg("Welcome", {
+      Engine: "2025.06.21", Game: "Zero-K v1.14.8.0", UserCount: 100, UserCountLimited: false,
+    }),
+    msg("DefaultEngineChanged", { Engine: "2025.07.01" }),
+  ]);
+  const w = useLobby.getState().welcome!;
+  assert.equal(w.Engine, "2025.07.01", "the newer engine wins");
+  assert.equal(w.Game, "Zero-K v1.14.8.0", "and the Welcome it arrived with survives");
+  assert.equal(w.UserCount, 100);
+});
+
+test("a batch that changes nothing leaves the directories alone", () => {
+  fresh();
+  useLobby.getState().applyMessage(msg("User", { Name: "hexed", AccountID: 2 }));
+  const before = useLobby.getState();
+  // A room full of chatter is `Say` after `Say`; cloning every directory for
+  // each frame of it is four new objects a frame, sized by everyone online.
+  useLobby.getState().applyBatch([
+    msg("Say", { Place: 0, Target: "zk", User: "hexed", Text: "hi",
+      IsEmote: false, Ring: false, AllowRelay: true }),
+  ]);
+  const after = useLobby.getState();
+  assert.equal(after.users, before.users, "the user directory was rebuilt for nothing");
+  assert.equal(after.battles, before.battles);
+  assert.equal(after.channels, before.channels);
+});

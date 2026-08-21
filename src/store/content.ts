@@ -94,6 +94,17 @@ export const useContent = create<ContentState>((set, get) => ({
       jobs[id] = { ...prev, ...next };
     };
 
+    /* A job that has finished stays finished.
+       Progress is `\r`-terminated and pumped from a pipe, so the last few
+       lines can arrive after the process has exited and been reported. Applied
+       blindly they flipped a finished job back to "running": the Downloads
+       screen showed a completed download as in progress, and anything waiting
+       on `settled` that had already resolved now disagreed with the store. */
+    const settled = (id: string) => {
+      const j = jobs[id];
+      return Boolean(j) && j.state !== "queued" && j.state !== "running";
+    };
+
     switch (s.kind) {
       case "queued":
         jobs[s.id] = {
@@ -102,10 +113,12 @@ export const useContent = create<ContentState>((set, get) => ({
         order = [s.id, ...state.order.filter(x => x !== s.id)];
         break;
       case "started":
+        if (settled(s.id)) break;
         patch(s.id, { state: "running" });
         active = s.id;
         break;
       case "progress":
+        if (settled(s.id)) break;
         // Guard against a divide-by-zero total, which the format allows.
         patch(s.id, {
           state: "running",
@@ -113,6 +126,7 @@ export const useContent = create<ContentState>((set, get) => ({
         });
         break;
       case "note":
+        if (settled(s.id)) break;
         patch(s.id, { note: s.message });
         break;
       case "finished": {

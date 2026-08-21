@@ -393,8 +393,17 @@ fn search_request(words: &[String], kind: &str) -> Result<String, String> {
 }
 
 /// Search Zero-K's map catalogue.
+///
+/// Async so the SOAP round trip lands on a worker rather than the main thread,
+/// where it froze the window for the length of a search.
 #[tauri::command]
-pub fn zks_find_maps(query: String) -> Result<Vec<MapHit>, String> {
+pub async fn zks_find_maps(query: String) -> Result<Vec<MapHit>, String> {
+    tauri::async_runtime::spawn_blocking(move || find_maps_blocking(query))
+        .await
+        .map_err(|e| format!("the map search did not finish: {e}"))?
+}
+
+fn find_maps_blocking(query: String) -> Result<Vec<MapHit>, String> {
     let words: Vec<String> =
         query.split_whitespace().map(str::to_string).filter(|w| !w.is_empty()).collect();
     if words.is_empty() {
@@ -496,7 +505,13 @@ pub fn parse_game_modes(xml: &str) -> Result<Vec<GameMode>, String> {
 
 /// The featured custom game modes, for the host dialog.
 #[tauri::command]
-pub fn zks_game_modes() -> Result<Vec<GameMode>, String> {
+pub async fn zks_game_modes() -> Result<Vec<GameMode>, String> {
+    tauri::async_runtime::spawn_blocking(game_modes_blocking)
+        .await
+        .map_err(|e| format!("the game-mode list did not finish: {e}"))?
+}
+
+fn game_modes_blocking() -> Result<Vec<GameMode>, String> {
     let body = concat!(
         r#"<?xml version="1.0" encoding="utf-8"?>"#,
         r#"<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"><s:Body>"#,
@@ -671,12 +686,38 @@ pub fn fetch_to(
             .map_err(|e| format!("could not create {}: {e}", parent.display()))?;
     }
 
-    let have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
-    let mut req = client()?.get(url);
-    if have > 0 {
-        req = req.header("Range", format!("bytes={have}-"));
+    let http = client()?;
+    let mut have = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+
+    /* Resuming splices the tail of one response onto the head of another, with
+       nothing tying the two together - no If-Range, no ETag, no validator of
+       any kind. A checksum at the end is what makes that safe, so a resume is
+       only attempted when the service named an md5. Without one the leftover is
+       thrown away and the file fetched whole: re-downloading is cheap next to
+       installing a splice nobody can check. */
+    if have > 0 && expect_md5.is_none() {
+        let _ = std::fs::remove_file(&part);
+        have = 0;
     }
-    let mut res = req.send().map_err(|e| format!("download failed: {e}"))?;
+
+    let fetch = |from: u64| -> Result<reqwest::blocking::Response, String> {
+        let mut req = http.get(url);
+        if from > 0 {
+            req = req.header("Range", format!("bytes={from}-"));
+        }
+        req.send().map_err(|e| format!("download failed: {e}"))
+    };
+
+    let mut res = fetch(have)?;
+
+    /* 416 means the leftover is already as long as the resource - a completed
+       or over-long `.part`. Asking again tomorrow gets the same answer, so the
+       download was stuck for good; drop it and fetch the file whole. */
+    if res.status().as_u16() == 416 {
+        let _ = std::fs::remove_file(&part);
+        have = 0;
+        res = fetch(0)?;
+    }
 
     // Resume only if the server actually agreed to; a 200 to a Range request
     // means it is sending the whole file and appending would corrupt it.
@@ -861,7 +902,9 @@ mod tests {
 
     #[test]
     fn a_blank_search_never_reaches_the_wire() {
-        assert_eq!(zks_find_maps("   ".into()).unwrap(), Vec::new());
+        // The blocking half, since the command itself is now a thin async
+        // wrapper around it - and a test must not need a Tauri runtime.
+        assert_eq!(find_maps_blocking("   ".into()).unwrap(), Vec::new());
     }
 
     #[test]

@@ -178,6 +178,17 @@ pub fn zks_launch_preview(
     })
 }
 
+impl Game {
+    /// Is an engine running right now?
+    ///
+    /// Asked by anything that writes into the data directory: the engine
+    /// rewrites `springsettings.cfg` from memory when it exits, so a change
+    /// saved while it runs is thrown away without a word.
+    pub fn is_running(&self) -> bool {
+        self.running.lock().map(|r| *r).unwrap_or(false)
+    }
+}
+
 #[tauri::command]
 pub fn zks_locate_install(game: State<'_, Game>, root: Option<String>) -> Result<Install, String> {
     // The override is remembered so a launch uses the same install the settings

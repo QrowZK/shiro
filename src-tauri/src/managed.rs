@@ -69,8 +69,23 @@ pub struct ManagedState {
     pub archives: usize,
 }
 
+/// Async because counting archives reads the engine's caches, which run to
+/// megabytes on a full install - not something to do on the main thread even
+/// with the reading memoised.
 #[tauri::command]
-pub fn zks_managed_state(app: tauri::AppHandle, engine_version: Option<String>) -> Result<ManagedState, String> {
+pub async fn zks_managed_state(
+    app: tauri::AppHandle,
+    engine_version: Option<String>,
+) -> Result<ManagedState, String> {
+    tauri::async_runtime::spawn_blocking(move || managed_state_blocking(app, engine_version))
+        .await
+        .map_err(|e| format!("reading the managed install did not finish: {e}"))?
+}
+
+fn managed_state_blocking(
+    app: tauri::AppHandle,
+    engine_version: Option<String>,
+) -> Result<ManagedState, String> {
     let dir = root(&app)?;
     let version = engine_version.unwrap_or_default();
     Ok(ManagedState {

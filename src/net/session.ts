@@ -33,6 +33,8 @@ let timer = 0;
 let session: { creds: Credentials; hash: string; host: string; port: number } | null = null;
 let retry: ReturnType<typeof setTimeout> | null = null;
 let attempt = 0;
+/** Has this session logged in before? A second time is a reconnect. */
+let loggedInBefore = false;
 
 /** Coalesce inbound messages into one store write per animation frame. */
 /* Batching is on the frame, with a timer behind it.
@@ -167,7 +169,13 @@ export async function login(
     // A drop after a good login is a transport problem, not a credentials
     // problem, so it is ours to fix without bothering anyone.
     if (s.kind === "disconnected") scheduleReconnect();
-    if (s.kind === "connected") { attempt = 0; useLobby.getState().setReconnect(0); }
+    /* A socket that opened is not yet a session that works, so the backoff is
+       not reset here: a server that accepts TCP and then drops us would have
+       reset it every time and retried at the first step for ever. What does
+       happen here is cancelling any retry still pending - we are connected,
+       and letting that timer fire would tear this connection down to make
+       another one. */
+    if (s.kind === "connected") cancelRetry();
   }));
   unlisten.push(await onLine(line => {
     const m = parseLine(line);
@@ -205,6 +213,20 @@ export async function login(
         code: d.ResultCode,
         message: d.BanReason ?? "",
       });
+    }
+
+    /* A login the server accepted is what "working" means, and the only thing
+       the backoff should count from. */
+    if (m.cmd === "LoginResponse" && (m.data as { ResultCode?: number }).ResultCode === 0) {
+      attempt = 0;
+      useLobby.getState().setReconnect(0);
+      /* Second time on this session means we dropped and came back. The server
+         re-joins the default channels itself but knows nothing about the ones
+         this player joined by hand. */
+      if (loggedInBefore) {
+        void import("../store/chat").then(c => c.useChat.getState().rejoinChannels());
+      }
+      loggedInBefore = true;
     }
 
     // The server sends Welcome unprompted on connect; that is our cue to log in.
@@ -298,6 +320,7 @@ export async function teardown(): Promise<void> {
   session = null;
   cancelRetry();
   attempt = 0;
+  loggedInBefore = false;
   for (const fn of unlisten) fn();
   unlisten = [];
   // Both halves of the batcher. Cancelling only the frame left the fallback

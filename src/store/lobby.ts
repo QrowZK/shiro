@@ -141,12 +141,26 @@ export const useLobby = create<LobbyState>((set, get) => ({
    * batches per animation frame rather than setting state per message.
    */
   applyBatch: messages => set(state => {
-    const users = { ...state.users };
-    const battles = { ...state.battles };
-    const channels = { ...state.channels };
-    const unhandled = { ...state.unhandled };
+    /* Copy on write. Most batches touch one map, often none - a room's chatter
+       is all `Say` - and cloning every directory on every animation frame was
+       four new objects a frame, each the size of everyone online. */
+    let users = state.users;
+    let battles = state.battles;
+    let channels = state.channels;
+    let unhandled = state.unhandled;
+    const mutUsers = () => (users === state.users ? (users = { ...users }) : users);
+    const mutBattles = () => (battles === state.battles ? (battles = { ...battles }) : battles);
+    const mutChannels = () => (channels === state.channels ? (channels = { ...channels }) : channels);
+    const mutUnhandled = () =>
+      (unhandled === state.unhandled ? (unhandled = { ...unhandled }) : unhandled);
     let chat = state.chat;
     let patch: Partial<LobbyState> = {};
+
+    /* What `Welcome` currently says, including a change made earlier in this
+       same batch. Reading `state.welcome` here meant a `DefaultEngineChanged`
+       arriving alongside a `Welcome` threw the Welcome away and kept the old
+       engine and game. */
+    const welcomeNow = () => patch.welcome ?? state.welcome ?? ({} as T.Welcome);
 
     for (const m of messages) {
       switch (m.cmd) {
@@ -172,31 +186,31 @@ export const useLobby = create<LobbyState>((set, get) => ({
 
         case "User": {
           const u = m.data as T.User;
-          if (u.Name) users[u.Name] = mergeUser(users[u.Name], u);
+          if (u.Name) mutUsers()[u.Name] = mergeUser(users[u.Name], u);
           break;
         }
 
         case "UserDisconnected": {
           const d = m.data as T.UserDisconnected;
-          if (d.Name) delete users[d.Name];
+          if (d.Name && users[d.Name]) delete mutUsers()[d.Name];
           break;
         }
 
         case "BattleAdded":
         case "BattleUpdate": {
           const h = (m.data as T.BattleAdded).Header;
-          if (h?.BattleID != null) battles[h.BattleID] = mergePatch(battles[h.BattleID], h);
+          if (h?.BattleID != null) mutBattles()[h.BattleID] = mergePatch(battles[h.BattleID], h);
           break;
         }
 
         case "DefaultEngineChanged":
           // The status bar reads the engine from Welcome, so keep it current.
-          patch.welcome = { ...(state.welcome ?? {} as T.Welcome),
+          patch.welcome = { ...welcomeNow(),
             Engine: (m.data as T.DefaultEngineChanged).Engine };
           break;
 
         case "DefaultGameChanged":
-          patch.welcome = { ...(state.welcome ?? {} as T.Welcome),
+          patch.welcome = { ...welcomeNow(),
             Game: (m.data as T.DefaultGameChanged).Game };
           break;
 
@@ -204,15 +218,17 @@ export const useLobby = create<LobbyState>((set, get) => ({
           patch.kicked = { reason: (m.data as T.KickFromServer).Reason ?? "No reason given." };
           break;
 
-        case "BattleRemoved":
-          delete battles[(m.data as T.BattleRemoved).BattleID];
+        case "BattleRemoved": {
+          const id = (m.data as T.BattleRemoved).BattleID;
+          if (battles[id]) delete mutBattles()[id];
           break;
+        }
 
         case "JoinChannelResponse": {
           const d = m.data as T.JoinChannelResponse;
           const name = d.ChannelName ?? d.Channel?.ChannelName;
-          if (d.Success && name) {
-            channels[name] = channels[name] ?? { name, users: [] };
+          if (d.Success && name && !channels[name]) {
+            mutChannels()[name] = { name, users: [] };
           }
           break;
         }
@@ -222,7 +238,7 @@ export const useLobby = create<LobbyState>((set, get) => ({
           if (d.ChannelName && d.UserName) {
             const c = channels[d.ChannelName] ?? { name: d.ChannelName, users: [] };
             if (!c.users.includes(d.UserName)) {
-              channels[d.ChannelName] = { ...c, users: [...c.users, d.UserName] };
+              mutChannels()[d.ChannelName] = { ...c, users: [...c.users, d.UserName] };
             }
           }
           break;
@@ -231,8 +247,8 @@ export const useLobby = create<LobbyState>((set, get) => ({
         case "ChannelUserRemoved": {
           const d = m.data as T.ChannelUserRemoved;
           const c = d.ChannelName ? channels[d.ChannelName] : undefined;
-          if (c && d.UserName) {
-            channels[d.ChannelName!] = { ...c, users: c.users.filter(u => u !== d.UserName) };
+          if (c && d.UserName && c.users.includes(d.UserName)) {
+            mutChannels()[d.ChannelName!] = { ...c, users: c.users.filter(u => u !== d.UserName) };
           }
           break;
         }
@@ -257,7 +273,7 @@ export const useLobby = create<LobbyState>((set, get) => ({
         }
 
         default:
-          unhandled[m.cmd] = (unhandled[m.cmd] ?? 0) + 1;
+          mutUnhandled()[m.cmd] = (unhandled[m.cmd] ?? 0) + 1;
       }
     }
 

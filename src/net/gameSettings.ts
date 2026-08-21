@@ -142,8 +142,14 @@ const COMPUTE: Record<string, Compute> = {
   CameraPanSpeed: (value, _env, chosen) => {
     const pan = num(value, 50);
     const middle = num(chosen.MiddlePanSpeed, 10) * (-1 / 200);
+    /* Pan speed 0 is a legitimate choice - the slider's own minimum - and
+       dividing by it produced `-Infinity`, which went into the cfg as the word
+       and left the engine unable to parse its own settings. Upstream divides by
+       the default from its table rather than the live value anyway, so falling
+       back to it here is both finite and what Zero-K does. */
+    const divisor = pan || 50;
     return {
-      MiddleClickScrollSpeed: middle / pan,
+      MiddleClickScrollSpeed: middle / divisor,
       OverheadScrollSpeed: pan,
       RotOverheadScrollSpeed: pan,
       CamFreeScrollSpeed: pan,
@@ -222,7 +228,14 @@ export function springSettingsFor(
 ): SpringSettings {
   const out: SpringSettings = {};
   const write = (pairs: Record<string, number | string>) => {
-    for (const [k, v] of Object.entries(pairs)) out[k] = formatValue(v);
+    for (const [k, v] of Object.entries(pairs)) {
+      /* A computed key that came out Infinity or NaN is a bug here, not a
+         setting: written out it becomes the literal word, and the engine then
+         cannot parse a file it wrote itself. Dropping the key leaves whatever
+         is on disk, which is the safe direction. */
+      if (typeof v === "number" && !Number.isFinite(v)) continue;
+      out[k] = formatValue(v);
+    }
   };
 
   for (const setting of allSettings()) {
@@ -230,6 +243,11 @@ export function springSettingsFor(
     if (only && !only(setting.name)) continue;
     const value = chosen[setting.name];
     if (value === undefined) continue;
+    /* An empty number box means "I cleared this", not "write the default".
+       `num(value, fallback)` turned it into the fallback, so clearing a field
+       and pressing Apply silently set it to Zero-K's default rather than
+       leaving the player's own value alone. */
+    if (setting.kind === "number" && value === "") continue;
 
     if (setting.kind === "number") {
       const compute = setting.computed && COMPUTE[setting.computed];
@@ -243,6 +261,20 @@ export function springSettingsFor(
     if (option.apply) write(option.apply);
     const compute = option.computed && COMPUTE[option.computed];
     if (compute) write(compute(value, env, chosen));
+  }
+
+  /* The compatibility override owns its six keys on this hardware, and Anti
+     Aliasing and Fancy Sky write some of the same ones. Settings are applied in
+     the order upstream declares them, so whichever came later won - and with
+     Apply writing only the diff, changing Anti Aliasing alone wrote its values
+     over an override that was still selected and still meant to be in effect.
+     Re-stated last, but only over keys this write is already touching: a
+     setting nobody changed still does not get rewritten. */
+  const override = COMPUTE.AtiIntelCompatibility_2(
+    chosen.AtiIntelCompatibility_2 ?? "Off", env, chosen,
+  );
+  for (const [key, value] of Object.entries(override)) {
+    if (key in out) out[key] = formatValue(value);
   }
   return out;
 }
