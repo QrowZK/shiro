@@ -46,7 +46,6 @@ interface LobbyState {
 
   users: Record<string, T.User>;
   battles: Record<number, T.BattleHeader>;
-  channels: Record<string, { name: string; users: string[] }>;
   chat: ChatLine[];
 
   /** Messages seen but not yet handled - useful while wiring the remaining screens. */
@@ -81,7 +80,6 @@ interface LobbyState {
 const EMPTY = {
   users: {} as Record<string, T.User>,
   battles: {} as Record<number, T.BattleHeader>,
-  channels: {} as Record<string, { name: string; users: string[] }>,
   chat: [] as ChatLine[],
   unhandled: {} as Record<string, number>,
   reconnect: 0,
@@ -146,11 +144,9 @@ export const useLobby = create<LobbyState>((set, get) => ({
        four new objects a frame, each the size of everyone online. */
     let users = state.users;
     let battles = state.battles;
-    let channels = state.channels;
     let unhandled = state.unhandled;
     const mutUsers = () => (users === state.users ? (users = { ...users }) : users);
     const mutBattles = () => (battles === state.battles ? (battles = { ...battles }) : battles);
-    const mutChannels = () => (channels === state.channels ? (channels = { ...channels }) : channels);
     const mutUnhandled = () =>
       (unhandled === state.unhandled ? (unhandled = { ...unhandled }) : unhandled);
     let chat = state.chat;
@@ -224,34 +220,9 @@ export const useLobby = create<LobbyState>((set, get) => ({
           break;
         }
 
-        case "JoinChannelResponse": {
-          const d = m.data as T.JoinChannelResponse;
-          const name = d.ChannelName ?? d.Channel?.ChannelName;
-          if (d.Success && name && !channels[name]) {
-            mutChannels()[name] = { name, users: [] };
-          }
-          break;
-        }
-
-        case "ChannelUserAdded": {
-          const d = m.data as T.ChannelUserAdded;
-          if (d.ChannelName && d.UserName) {
-            const c = channels[d.ChannelName] ?? { name: d.ChannelName, users: [] };
-            if (!c.users.includes(d.UserName)) {
-              mutChannels()[d.ChannelName] = { ...c, users: [...c.users, d.UserName] };
-            }
-          }
-          break;
-        }
-
-        case "ChannelUserRemoved": {
-          const d = m.data as T.ChannelUserRemoved;
-          const c = d.ChannelName ? channels[d.ChannelName] : undefined;
-          if (c && d.UserName && c.users.includes(d.UserName)) {
-            mutChannels()[d.ChannelName!] = { ...c, users: c.users.filter(u => u !== d.UserName) };
-          }
-          break;
-        }
+        /* Channels themselves live in store/chat.ts, which owns the rooms,
+           the membership and the backlog. This store kept a second, thinner
+           copy that nothing ever read. */
 
         case "Say": {
           const d = m.data as T.Say;
@@ -279,13 +250,13 @@ export const useLobby = create<LobbyState>((set, get) => ({
 
     if (chat !== state.chat && chat.length > MAX_CHAT) chat = chat.slice(-MAX_CHAT);
 
-    return { ...patch, users, battles, channels, chat, unhandled };
+    return { ...patch, users, battles, chat, unhandled };
   }),
 
   /* A reconnect replays the whole directory, so the old one has to go first -
      otherwise battles that closed while we were away never disappear. Chat
      scrollback is deliberately kept: it is the one thing a player would lose. */
-  resetDirectory: () => set({ users: {}, battles: {}, channels: {} }),
+  resetDirectory: () => set({ users: {}, battles: {} }),
 
   /** Acknowledge the kick notice so the dialog can close. */
   clearKick: () => set({ kicked: undefined }),

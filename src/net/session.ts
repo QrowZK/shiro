@@ -8,6 +8,15 @@ import {
 import { parseLine, serialize } from "../protocol/wire";
 import type { CommandName, Message, MessageMap } from "../protocol/registry";
 import type * as T from "../protocol/types";
+import type { Login_ClientTypes, SayPlace } from "../protocol/enums";
+
+/**
+ * `Login_ClientTypes.ZeroKLobby` restated as a literal, so this module does not
+ * import a runtime enum. Checked against the generated enum at compile time -
+ * the same pattern the stores use, and the reason these payloads no longer need
+ * an `as never` to get past the typed registry.
+ */
+const CLIENT_TYPE_ZKLOBBY: Login_ClientTypes.ZeroKLobby = 1;
 import { useLobby, type ConnectionState } from "../store/lobby";
 import { describeRegisterFailure } from "../store/adapters";
 import { useRoom } from "../store/room";
@@ -86,6 +95,21 @@ export interface Credentials {
   password: string;
 }
 
+/**
+ * This installation's id for `Login.InstallID`.
+ *
+ * Lazily imported like the other store reaches, so this module's import graph
+ * stays free of anything that needs a browser.
+ */
+async function installIdentity(): Promise<string> {
+  try {
+    const { useSettings } = await import("../store/settings");
+    return useSettings.getState().ensureInstallId();
+  } catch {
+    return "";
+  }
+}
+
 function cancelRetry(): void {
   if (retry) { clearTimeout(retry); retry = null; }
 }
@@ -147,6 +171,7 @@ export async function login(
   store.reset();
 
   const hash = await passwordHash(creds.password);
+  const installId = await installIdentity();
   session = { creds, hash, host, port };
   attempt = 0;
 
@@ -236,10 +261,10 @@ export async function login(
         Name: creds.name,
         PasswordHash: hash,
         UserID: 0,
-        InstallID: "",
-        ClientType: 1,
+        InstallID: installId,
+        ClientType: CLIENT_TYPE_ZKLOBBY,
         LobbyVersion: LOBBY_VERSION,
-      } as never));
+      }));
     }
     enqueue(m);
   }));
@@ -266,6 +291,7 @@ export async function register(
 ): Promise<void> {
   await teardown();
   const hash = await passwordHash(creds.password);
+  const installId = await installIdentity();
 
   /* Attached before connecting, and *awaited*. `Welcome` arrives the moment the
      socket opens, and a listener that is still a pending promise when it does
@@ -287,8 +313,8 @@ export async function register(
           PasswordHash: hash,
           Email: email,
           UserID: 0,
-          InstallID: "",
-        } as never));
+          InstallID: installId,
+        }));
       }
       if (m.cmd === "RegisterResponse") {
         const d = m.data as { ResultCode: number; BanReason?: string };
@@ -333,8 +359,8 @@ export async function teardown(): Promise<void> {
   await disconnect().catch(() => {});
 }
 
-export function say(text: string, place: number, target?: string): Promise<void> {
+export function say(text: string, place: SayPlace, target?: string): Promise<void> {
   return sendLine(serialize("Say", {
     Place: place, Target: target, Text: text, IsEmote: false, Ring: false, AllowRelay: true,
-  } as never));
+  }));
 }

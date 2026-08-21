@@ -155,5 +155,4 @@ test("a batch that changes nothing leaves the directories alone", () => {
   const after = useLobby.getState();
   assert.equal(after.users, before.users, "the user directory was rebuilt for nothing");
   assert.equal(after.battles, before.battles);
-  assert.equal(after.channels, before.channels);
 });

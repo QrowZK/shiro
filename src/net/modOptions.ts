@@ -221,14 +221,23 @@ export function sections(): { section: ModOptionSection; options: ModOption[] }[
  * May this account change the room's options?
  *
  * The server's rule is `(FounderName != Name || IsAutohost) && !IsAdmin` -> no.
- * `BattleHeader` carries no `IsAutohost`, and does not need to: an autohost's
- * founder is never a person, because the server renames it to
- * `"Autohost #<BattleID>"` and database autohosts run under their own accounts.
- * So being the founder is enough on its own.
+ * Read forwards: the founder may, and so may an admin, anywhere. `BattleHeader`
+ * carries no `IsAutohost`, and does not need to: an autohost's founder is never
+ * a person, because the server renames it to `"Autohost #<BattleID>"` and
+ * database autohosts run under their own accounts. So being the founder is
+ * enough on its own.
+ *
+ * The admin half was dropped when this was first written, which left moderators
+ * looking at a locked panel for something the server would have accepted.
  *
  * Everyone else is refused, including in autohosts through chat - `!setoptions`
  * is `NotIngameNotAutohost`, with no vote path.
  */
-export function canEdit(founder: string | undefined, me: string | undefined): boolean {
-  return Boolean(founder && me && founder === me);
+export function canEdit(
+  founder: string | undefined,
+  me: string | undefined,
+  isAdmin = false,
+): boolean {
+  if (!me) return false;
+  return isAdmin || Boolean(founder && founder === me);
 }

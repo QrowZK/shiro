@@ -74,6 +74,8 @@ pub struct DownloadPlan {
 
 /// Locate `pr-downloader`, which lives beside the engine binary.
 pub fn find_pr_downloader(root: &Path, engine: &str) -> Result<PathBuf, String> {
+    // Same server string, same path component, same guard.
+    crate::engine::check_version(engine)?;
     let spring = install::find_engine(root, engine)?;
     let dir = spring
         .parent()

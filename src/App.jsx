@@ -600,7 +600,7 @@ export default function App() {
       onEditOptions={() => setEditingOptions(true)}
       /* The server's rule, read backwards: only the founder may set options,
          and an autohost's founder is never a person. */
-      optionsLocked={canEditOptions(roomView.founder, me)
+      optionsLocked={canEditOptions(roomView.founder, me, Boolean(liveUsers[me]?.IsAdmin))
         ? undefined : "Only the room's host can change these"}
       chatHeight={settings.roomChatHeight}
       onChatHeight={h => useSettings.getState().set({ roomChatHeight: h })}

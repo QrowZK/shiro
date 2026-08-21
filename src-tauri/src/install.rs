@@ -228,6 +228,10 @@ pub fn engine_candidates(root: &Path, version: &str) -> Vec<PathBuf> {
 
 /// Resolve the engine binary, or say which version is missing.
 pub fn find_engine(root: &Path, version: &str) -> Result<PathBuf, String> {
+    /* The version arrives from the lobby server over a plaintext link and is
+       used as a path component. Checked here rather than at each caller, so
+       every path that turns a server string into a directory gets it. */
+    crate::engine::check_version(version)?;
     for path in engine_candidates(root, version) {
         if path.is_file() {
             return Ok(path);

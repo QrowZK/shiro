@@ -206,6 +206,23 @@ pub fn zka_status(app: tauri::AppHandle) -> Result<Vec<AppStatus>, String> {
     Ok(out)
 }
 
+/// Why this entry cannot be used here, if it cannot.
+///
+/// The catalogue's own reason first, then the platform's: every app in it is a
+/// Windows build, and on Linux the row offered to install a `.exe` that could
+/// never run. Saying so is better than a download that ends in "not
+/// executable", and better than hiding the row - somebody looking for
+/// Sprofiler should find out why it is not here.
+fn why_not(a: &CatalogueApp) -> Option<String> {
+    if let Some(why) = a.unavailable {
+        return Some(why.to_string());
+    }
+    if !cfg!(windows) && a.run.is_some_and(|r| r.to_ascii_lowercase().ends_with(".exe")) {
+        return Some(format!("{} is a Windows program.", a.name));
+    }
+    None
+}
+
 /// Where we remember that somebody removed a bundled app on purpose.
 ///
 /// A sibling of the app's directory rather than a file inside it, because
@@ -227,6 +244,11 @@ pub fn seed_bundled(app: &tauri::AppHandle) -> Result<(), String> {
         let (Some(rel), Some(run)) = (a.bundled, a.run) else {
             continue;
         };
+        // A Windows binary placed on Linux is an app that appears installed and
+        // fails when pressed.
+        if why_not(a).is_some() {
+            continue;
+        }
         if removal_marker(app, a.id)?.exists() {
             continue;
         }
@@ -267,8 +289,8 @@ pub fn seed_bundled(app: &tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn zka_launch(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let a = entry(&id)?;
-    if let Some(why) = a.unavailable {
-        return Err(why.to_string());
+    if let Some(why) = why_not(a) {
+        return Err(why);
     }
     let run = a.run.ok_or_else(|| format!("{} is not something to run", a.name))?;
     let exe = app_dir(&app, a.id)?.join(run);
@@ -341,8 +363,8 @@ fn unpack(bytes: &[u8], dir: &Path) -> Result<(), String> {
 #[tauri::command]
 pub fn zka_install(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let a = entry(&id)?;
-    if let Some(why) = a.unavailable {
-        return Err(why.to_string());
+    if let Some(why) = why_not(a) {
+        return Err(why);
     }
     let (url, want) = match (a.download, a.sha256) {
         (Some(u), Some(h)) => (u, h),
@@ -396,22 +418,41 @@ pub fn zka_install(app: tauri::AppHandle, id: String) -> Result<(), String> {
 pub fn zka_uninstall(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let a = entry(&id)?;
     let dir = app_dir(&app, a.id)?;
+
+    /* The note goes down before the directory does. Written afterwards, a
+       failed write - or a crash between the two - left the app removed with
+       nothing saying so, and the next start put it straight back. */
+    let marker = match a.bundled {
+        Some(_) => {
+            let path = removal_marker(&app, a.id)?;
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            std::fs::write(&path, "removed by the user\n")
+                .map_err(|e| format!("could not record the removal: {e}"))?;
+            Some(path)
+        }
+        None => None,
+    };
+
+    let undo = |marker: &Option<PathBuf>| {
+        if let Some(path) = marker {
+            let _ = std::fs::remove_file(path);
+        }
+    };
+
     if dir.is_dir() {
-        std::fs::remove_dir_all(&dir).map_err(|e| format!("could not remove {}: {e}", dir.display()))?;
+        if let Err(e) = std::fs::remove_dir_all(&dir) {
+            undo(&marker);
+            return Err(format!("could not remove {}: {e}", dir.display()));
+        }
     }
     // Windows has been known to report success while the directory is still
     // going away, and a launcher that says "removed" about something still
     // there is worse than one that admits it failed.
     if dir.exists() {
+        undo(&marker);
         return Err(format!("{} could not be removed - is it running?", a.name));
-    }
-    if a.bundled.is_some() {
-        let marker = removal_marker(&app, a.id)?;
-        if let Some(parent) = marker.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        std::fs::write(&marker, "removed by the user\n")
-            .map_err(|e| format!("could not record the removal: {e}"))?;
     }
     Ok(())
 }

@@ -208,11 +208,11 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
-      # The bundled Sprofiler, fetched from the release the catalogue pins and
-      # checked against the hash it pins. A mismatch fails the build rather
-      # than shipping a binary we cannot vouch for.
-      - name: Fetch the bundled apps
-        run: npm run fetch:apps
+      # No "fetch the bundled apps" step here, unlike the Windows job. The only
+      # bundled app is Sprofiler.exe, and src-tauri/tauri.linux.conf.json clears
+      # bundle.resources on Linux so the .deb/.rpm/.AppImage do not carry a
+      # Windows binary they cannot run. Fetching it would be nine megabytes
+      # downloaded, hashed and then packaged into nothing.
 
       - name: Build
         env:
