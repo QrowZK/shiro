@@ -109,7 +109,12 @@ export const useGame = create<GameState>((set, get) => ({
       if (m.cmd === "ConnectSpring") {
         const d = m.data as T.ConnectSpring;
         set({ last: d, phase: { kind: "launching", title: d.Title } });
-        void get().launch(d);
+        /* Through the content gate, not straight past it. This called `launch`
+           directly, so `prepareAndLaunch` had no callers at all: the preflight,
+           the download and the "Launch anyway" dialog were unreachable, and a
+           matchmaker game on a map the player lacked spawned an engine that sat
+           on "waiting for connection" forever. */
+        void get().prepareAndLaunch(d);
       }
     }
   },

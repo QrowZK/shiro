@@ -138,12 +138,11 @@ export const useContent = create<ContentState>((set, get) => ({
     // anyway, and this keeps the ids in the order the caller listed them.
     for (const item of items) {
       const id = await contentFetch(engine, [item], installRoot);
-      /* "already-queued" is a sentinel, not a job id: the Rust side returns it
-         when dedup left nothing fresh to run. Pushing it into `ids` subscribes
-         a waiter to a job that will never exist - `settled()` never resolves,
-         and the Cancel button aims at nothing. The work is already in flight
-         under an earlier id, so there is nothing here to wait for. */
-      if (id !== "already-queued") ids.push(id);
+      /* Deduplication hands back the id of the job already fetching this, so
+         two callers wanting the same map wait on one download rather than
+         queueing it twice. Guarded anyway: an id we are already waiting on
+         must not be waited on twice. */
+      if (!ids.includes(id)) ids.push(id);
     }
     return ids;
   },

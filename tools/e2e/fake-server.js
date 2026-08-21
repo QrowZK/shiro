@@ -36,9 +36,16 @@
     onSend: null,
     /** Pull the socket out from under the client. */
     drop: reason => emit("zks://status", { kind: "disconnected", reason: reason || "reset by peer" }),
+    /* Content downloads. `missing` is what the preflight reports as absent, so
+       a test can put the launcher through the download gate; `emitContent`
+       stands in for the supervisor's events. */
+    missing: [],
+    lastJobId: null,
+    emitContent: status => emit("zks://content", status),
   };
   window.__ZKS = state;
 
+  let jobCounter = 0;
   const line = (cmd, data) => cmd + " " + JSON.stringify(data);
   const soon = fn => setTimeout(fn, 5);
 
@@ -356,6 +363,19 @@
             items: state.missing || [],
             writable: true,
           };
+
+        /* The real one queues a job and returns its id; the supervisor then
+           reports progress and a finish. Here the test drives those. */
+        case "zks_content_fetch": {
+          const id = "job-" + (++jobCounter);
+          state.lastJobId = id;
+          state.emitContent({ kind: "queued", id, items: args.items || [] });
+          return id;
+        }
+
+        case "zks_content_cancel":
+          state.emitContent({ kind: "finished", id: args.id, outcome: "killed" });
+          return null;
 
         case "zks_launch_preview": {
           const root = state.installRoot

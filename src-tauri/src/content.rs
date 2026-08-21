@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::archives;
 use crate::install;
 use crate::zkcontent;
 
@@ -692,7 +693,23 @@ pub fn zks_content_fetch(
             .cloned()
             .collect();
         if fresh.is_empty() {
-            return Ok(String::from("already-queued"));
+            /* Everything asked for is already queued, so hand back the id of
+               the job doing it rather than a sentinel.
+
+               This used to return the literal "already-queued", which the
+               caller then used as a job id: it waited on a job that would never
+               exist, and Cancel aimed at nothing. Returning the real id means a
+               second caller waits for the first one's download, which is what
+               "it is already happening" should mean. */
+            let existing = q
+                .iter()
+                .find(|j| {
+                    j.items
+                        .iter()
+                        .any(|e| items.iter().any(|i| i.kind == e.kind && i.name == e.name))
+                })
+                .map(|j| j.id.clone());
+            return existing.ok_or_else(|| "already queued, but the job is gone".to_string());
         }
         q.push_back(Job { id: id.clone(), engine, items: fresh.clone() });
         let _ = app.emit(CONTENT_EVENT, ContentStatus::Queued { id: id.clone(), items: fresh });
@@ -760,12 +777,30 @@ pub fn zks_content_preflight(
         Err(e) => (None, Some(e)),
     };
 
+    /* What is missing, not what is needed.
+       This used to push the game and the map in unconditionally, so
+       `items.len() == 0` was never true for a real battle. The caller reads
+       that as "nothing is missing", so every player reported UNSYNCED to every
+       room forever - which is how Zero-K's `!start` came to announce Shiro
+       users as "still downloading the map" in every game they played, and delay
+       each start by ten seconds. It also meant a download was queued on every
+       join even with everything already installed.
+
+       `archives::installed` reads the engine's own scan, so the names compared
+       here are the same ones the server uses. Absence is read as "not known to
+       be here" and still results in a download, which is the safe direction:
+       at worst something already present is fetched again. */
+    let installed = archives::installed(&install.root);
     let mut items = Vec::new();
     if let Some(g) = game.filter(|s| !s.trim().is_empty()) {
-        items.push(ContentItem { kind: ContentKind::Game, name: g });
+        if !installed.has(&g) {
+            items.push(ContentItem { kind: ContentKind::Game, name: g });
+        }
     }
     if let Some(m) = map.filter(|s| !s.trim().is_empty()) {
-        items.push(ContentItem { kind: ContentKind::Map, name: m });
+        if !installed.has(&m) {
+            items.push(ContentItem { kind: ContentKind::Map, name: m });
+        }
     }
 
     // Probe rather than assume. The install root is writable here only because
