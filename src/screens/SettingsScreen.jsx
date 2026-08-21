@@ -362,7 +362,7 @@ function ManagedInstallSection({ engine, managed, onPrepare, onRemove, busy, pro
           untouched. Off puts the original back. */}
       {managed.prepared && onLoadScreen && (
         <Checkbox label="Use Shiro's loading screen"
-          hint="Replaces the screen shown while a match loads. The game itself is not modified."
+          hint="On by default. Replaces the screen shown while a match loads; the game itself is not modified."
           checked={Boolean(loadScreen)}
           onChange={e => onLoadScreen(e.target.checked)} />
       )}

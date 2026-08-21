@@ -40,6 +40,36 @@ pub fn path(root: &Path) -> PathBuf {
     root.join("LuaIntro").join("addons").join("main.lua")
 }
 
+/// Written when somebody turns the screen off, so it stays off.
+///
+/// A sibling of the addon rather than its absence, because absence is also what
+/// a brand-new install looks like - and a launcher that cannot tell those apart
+/// puts the file back every time it starts, which is the same unhelpfulness as
+/// reinstalling an app the user just removed.
+const OFF: &str = ".shiro-loadscreen-off";
+
+fn off_marker(root: &Path) -> PathBuf {
+    root.join(OFF)
+}
+
+/// Turned off on purpose?
+pub fn declined(root: &Path) -> bool {
+    off_marker(root).is_file()
+}
+
+/// Put it in place unless it is already there or somebody said no.
+///
+/// Runs at startup for an install Shiro owns, so the screen is on by default -
+/// including for installs made before it existed, which would otherwise have
+/// needed the switch found and pressed to get something the next install got
+/// for free.
+pub fn ensure_default(root: &Path) -> Result<(), String> {
+    if declined(root) || installed(root) {
+        return Ok(());
+    }
+    install(root)
+}
+
 /// Is Shiro's screen in place here?
 pub fn installed(root: &Path) -> bool {
     std::fs::read_to_string(path(root))
@@ -49,6 +79,8 @@ pub fn installed(root: &Path) -> bool {
 
 /// Write it, replacing anything already at that path.
 pub fn install(root: &Path) -> Result<(), String> {
+    // Asking for it back cancels the note that said not to.
+    let _ = std::fs::remove_file(off_marker(root));
     let file = path(root);
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)
@@ -73,7 +105,13 @@ pub fn remove(root: &Path) -> Result<(), String> {
             file.display()
         ));
     }
-    std::fs::remove_file(&file).map_err(|e| format!("could not remove {}: {e}", file.display()))
+    std::fs::remove_file(&file)
+        .map_err(|e| format!("could not remove {}: {e}", file.display()))?;
+    /* And remember that it was deliberate, so startup does not helpfully put it
+       back. Best-effort: failing to write the note is not a reason to refuse
+       the removal the user asked for. */
+    let _ = std::fs::write(off_marker(root), "Shiro's loading screen was turned off here.\n");
+    Ok(())
 }
 
 #[cfg(test)]
@@ -107,6 +145,26 @@ mod tests {
         assert!(!path(&root).exists());
         // Removing what is not there is not an error - it is the desired state.
         remove(&root).unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn it_is_on_by_default_but_off_stays_off() {
+        let root = temp("default");
+        // A fresh managed install gets it without being asked.
+        ensure_default(&root).unwrap();
+        assert!(installed(&root));
+
+        // Turning it off has to survive the next start, or the switch is a
+        // suggestion rather than a setting.
+        remove(&root).unwrap();
+        assert!(declined(&root));
+        ensure_default(&root).unwrap();
+        assert!(!installed(&root), "startup put back a screen the user removed");
+
+        // And turning it on again clears that.
+        install(&root).unwrap();
+        assert!(installed(&root) && !declined(&root));
         let _ = std::fs::remove_dir_all(&root);
     }
 

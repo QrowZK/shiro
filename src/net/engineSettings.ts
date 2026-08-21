@@ -14,6 +14,7 @@ import { inTauri } from "./connection";
 import {
   inferChoices, changedSpringSettings, changedSettingNames, notNvidiaFromInfolog,
   lupsTemplate, lupsSubstitutions, cmdcolorSubstitutions, isLupsSetting,
+  springSettingsFor, defaultChoices,
   type Chosen, type Environment,
 } from "./gameSettings.ts";
 
@@ -111,6 +112,43 @@ export async function loadGameSettings(installRoot?: string): Promise<LoadedGame
   };
   const { chosen, custom } = inferChoices(current, lups, env);
   return { current, chosen, custom, env };
+}
+
+/**
+ * Give a new installation the settings Zero-K ships with.
+ *
+ * An install Shiro made has never met Zero-K's own settings screen, so
+ * springsettings.cfg holds only whatever the game wrote at runtime - all of it
+ * about how things look, none of it about how they run. Everything else falls
+ * back to the *engine's* defaults, which are not Zero-K's:
+ *
+ *   VSync            engine: -1 (adaptive)     Zero-K: 0 (off)
+ *   HardwareCursor   engine: unset             Zero-K: on
+ *   CameraPanSpeed   engine: unset             Zero-K: 50
+ *
+ * Adaptive vsync is the one that gets reported as "the camera stutters". It
+ * syncs while the frame rate holds and stops when it does not, so the pacing
+ * oscillates instead of being wrong consistently. Zero-K turns it off in every
+ * one of its five presets.
+ *
+ * Only keys that are absent are written. A player who has set something is not
+ * overruled by a launcher deciding it knows better, and an install that already
+ * has a full config is left exactly as it is - which is what makes this safe to
+ * run on every startup rather than only once.
+ *
+ * Returns the keys it wrote, so a caller can say what happened.
+ */
+export async function seedDefaultSettings(installRoot?: string): Promise<string[]> {
+  const { current, env } = await loadGameSettings(installRoot);
+  const defaults = springSettingsFor(defaultChoices(env), env);
+
+  const missing: EngineSettings = {};
+  for (const [key, value] of Object.entries(defaults)) {
+    if (!(key in current)) missing[key] = value;
+  }
+  const names = Object.keys(missing);
+  if (names.length) await writeEngineSettings(missing, installRoot);
+  return names;
 }
 
 /**
