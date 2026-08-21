@@ -1196,6 +1196,35 @@ check("and the bad credentials are not sent again",
 check("and it is not still trying to reconnect",
   !(await seeing(/reconnecting/i)));
 
+/* The two ways a connection can end before a login has begun. Both are the
+   attempt failing, and the player is looking at the login screen either way -
+   so neither is a session to go on dialling for behind it. That retry used to
+   run, unseen, and a server that came back would log the player in with
+   nothing on screen saying so. */
+console.log("a connection that ends before the login does");
+await page.evaluate(() => { window.__ZKS.connectAs = "hang up"; window.__ZKS.connects = 0; });
+await page.locator("input").nth(0).fill(USER);
+await page.locator("input").nth(1).fill(PASS);
+await page.keyboard.press("Enter");
+check("a server that accepts and hangs up is reported, not waited on",
+  await waitFor("hungup", () => seeing(/Lost connection/i)));
+/* Past the first backoff step, which is where a retry would land. */
+await page.waitForTimeout(3000);
+check("and is not dialled again behind the login screen",
+  (await page.evaluate(() => window.__ZKS.connects)) === 1);
+check("which is where we still are",
+  await seeing(/Steam accounts need a lobby password/));
+
+await page.evaluate(() => { window.__ZKS.connectAs = "refuse"; window.__ZKS.connects = 0; });
+await page.locator("input").nth(1).fill(PASS);
+await page.keyboard.press("Enter");
+check("a dial that never connects says so as well",
+  await waitFor("refused-dial", () => seeing(/connection refused/i)));
+await page.waitForTimeout(3000);
+check("and is not retried either",
+  (await page.evaluate(() => window.__ZKS.connects)) === 1);
+await page.evaluate(() => { window.__ZKS.connectAs = "ok"; });
+
 console.log("");
 console.log(`${checks - failures.length}/${checks} checks passed`);
 if (errors.length) {

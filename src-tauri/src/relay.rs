@@ -142,6 +142,19 @@ pub async fn zks_connect(
 
     let slot = relay.conn.clone();
     let reader_app = app.clone();
+
+    /* Taken before the reader exists and held until `Connected` is out, which
+       is what makes installing a connection and announcing it one step.
+       A server that closes the moment it accepts hands the reader an EOF to
+       report while this call is still between spawning it and installing what
+       it spawned - and the reader's own exit goes through this same lock. Left
+       to race, the reader either finds the slot still empty, reads that as a
+       connection that was superseded and leaves without a word, or announces
+       the drop before the connect announces the connection. Either way the UI
+       is left believing it holds a socket that is already gone, with no
+       `Disconnected` to reconnect from and a login sitting on the spinner. */
+    let mut slot_guard = relay.conn.lock().await;
+
     let reader = tokio::spawn(async move {
         let mut lines = BufReader::new(read_half).lines();
         let reason = loop {
@@ -172,12 +185,13 @@ pub async fn zks_connect(
             .ok();
     });
 
-    *relay.conn.lock().await = Some(Conn {
+    *slot_guard = Some(Conn {
         id,
         tx,
         tasks: vec![reader, writer],
     });
 
+    // Still holding the slot, so the reader cannot get in front of this.
     app.emit(STATUS_EVENT, Status::Connected).ok();
     Ok(())
 }
