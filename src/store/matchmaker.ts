@@ -179,4 +179,81 @@ export function secondsLeft(check: ReadyCheck | undefined, now: number = Date.no
   return Math.max(0, Math.ceil((check.expiresAt - now) / 1000));
 }
 
+// ------------------------------------------------------------ categories ---
+
+/**
+ * The least a queue has to be for `groupQueues` to place it. The screen's rows
+ * and the wire's `MatchMakerSetup_Queue` both widen to this.
+ */
+export interface QueueLike {
+  /** The queue's `Name`, which is what `MatchMakerQueueRequest` carries. */
+  id: string;
+  label?: string;
+  description?: string;
+}
+
+export interface QueueGroup<Q extends QueueLike> {
+  id: string;
+  label: string;
+  queues: Q[];
+}
+
+/**
+ * Team size, out of the name if it is there and the description if it is not.
+ *
+ * There is nothing on the wire that groups queues, and the obvious candidates
+ * are not on the wire at all. `MatchMakerSetup.Queue` upstream declares `Mode`
+ * (1v1 / Teams / GameChickens / FFA), `MinSize` and `MaxSize` - and marks every
+ * one of them `[JsonIgnore]`. Our generated type carries them because
+ * gen-protocol.mjs reads the C# members and does not know that attribute, but
+ * they are never serialised and arrive undefined. What actually crosses the
+ * socket is `Name`, `Description`, `Maps`, `Game` and `MaxPartySize`.
+ *
+ * `MaxPartySize` was the other candidate and it separates almost nothing: of
+ * the queues the server runs today, 1v1 is 1, Sortie is 3, Coop is 5, and
+ * Battle along with every casual queue from 2v2+ to 10v10+ is 6.
+ *
+ * So the size it is, and the server writes it down twice. Most queues are named
+ * for it ("1v1 Narrow", "2v2+" ... "10v10+"); the few named for something else
+ * state it in the first line of the description ("Sortie" -> "Play 2v2 or 3v3
+ * with players of similar skill."). Reading the name first matters: the "1v1"
+ * description also mentions "1v1 Narrow", and a description-first rule would
+ * still land on 1v1 but only by luck.
+ *
+ * A queue with a size in neither - "Coop" is the only one today - becomes its
+ * own category. That is also what happens to whatever Zero-K adds next, which
+ * is the point of deriving this rather than writing the list down.
+ */
+const TEAM_SIZE = /(\d{1,2})v(\d{1,2})/;
+
+/** Sorts last, for the queues no size could be read out of. */
+const UNSIZED = Number.MAX_SAFE_INTEGER;
+
+function categoryOf(q: QueueLike): { id: string; label: string; size: number } {
+  const name = q.label || q.id;
+  const m = TEAM_SIZE.exec(name) || TEAM_SIZE.exec(q.description || "");
+  if (m) return { id: m[0], label: m[0], size: Number(m[1]) };
+  return { id: q.id, label: name, size: UNSIZED };
+}
+
+/**
+ * The server's queues, grouped by team size, smallest first, with the ones that
+ * have no size in them last. Order within a category is the server's own.
+ */
+export function groupQueues<Q extends QueueLike>(queues: Q[]): QueueGroup<Q>[] {
+  const sizes = new Map<string, number>();
+  const groups = new Map<string, QueueGroup<Q>>();
+  for (const q of queues) {
+    const c = categoryOf(q);
+    const group = groups.get(c.id);
+    if (group) group.queues.push(q);
+    else {
+      groups.set(c.id, { id: c.id, label: c.label, queues: [q] });
+      sizes.set(c.id, c.size);
+    }
+  }
+  return [...groups.values()].sort((a, b) =>
+    (sizes.get(a.id) ?? UNSIZED) - (sizes.get(b.id) ?? UNSIZED) || a.label.localeCompare(b.label));
+}
+
 registerSlice(messages => useMatchmaker.getState().applyBatch(messages));

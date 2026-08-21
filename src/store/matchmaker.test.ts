@@ -7,7 +7,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import type { Message } from "../protocol/registry.ts";
-import { useMatchmaker, secondsLeft } from "./matchmaker.ts";
+import { useMatchmaker, secondsLeft, groupQueues } from "./matchmaker.ts";
 
 function msg(cmd: string, data: unknown): Message {
   return { cmd, data } as unknown as Message;
@@ -149,4 +149,90 @@ test("a collapsed match says why", () => {
 
 test("secondsLeft with no check is zero, not NaN", () => {
   assert.equal(secondsLeft(undefined, T0), 0);
+});
+
+// ------------------------------------------------------------ categories ---
+
+/* Every queue ZkLobbyServer runs, name and description verbatim out of
+   MatchMaker.cs. The grouping is only worth anything if it holds against the
+   real list, and the real list is the awkward shape: three of the seventeen are
+   named for something other than their size, and one has no size at all. */
+const REAL = [
+  { id: "Sortie", description: "Play 2v2 or 3v3 with players of similar skill." },
+  { id: "Sortie Wide", description: "Play 2v2 or 3v3 with anyone." },
+  { id: "Battle", description: "Play 4v4, 5v5 or 6v6 with players of similar skill." },
+  { id: "Battle Wide", description: "Play 4v4, 5v5 or 6v6 with anyone." },
+  { id: "Coop", description: "Play together, against AI or chickens." },
+  { id: "1v1", description: "Play 1v1 with an opponent of similar skill. Games beyond the "
+    + "matching range of '1v1 Narrow' are unranked and have a bonus for the lower ranked player." },
+  { id: "1v1 Narrow", description: "Play 1v1 with a closely matched opponent." },
+  { id: "1v1 Wide", description: "Play 1v1 with a potentially not-so-closely matched opponent. "
+    + "The matching range is the same as standard '1v1'." },
+  { id: "2v2+", description: "Play a casual 2v2 or larger with anyone." },
+  { id: "3v3+", description: "Play a casual 3v3 or larger with anyone." },
+  { id: "4v4+", description: "Play a casual 4v4 or larger with anyone." },
+  { id: "5v5+", description: "Play a casual 5v5 or larger with anyone." },
+  { id: "6v6+", description: "Play a casual 6v6 or larger with anyone." },
+  { id: "7v7+", description: "Play a casual 7v7 or larger with anyone." },
+  { id: "8v8+", description: "Play a casual 8v8 or larger with anyone." },
+  { id: "9v9+", description: "Play a casual 9v9 or larger with anyone." },
+  { id: "10v10+", description: "Play a casual 10v10 or larger with anyone." },
+];
+
+test("the server's seventeen queues come out as eleven sizes", () => {
+  const groups = groupQueues(REAL);
+  assert.deepEqual(groups.map(g => g.label),
+    ["1v1", "2v2", "3v3", "4v4", "5v5", "6v6", "7v7", "8v8", "9v9", "10v10", "Coop"]);
+  assert.equal(groups.reduce((n, g) => n + g.queues.length, 0), REAL.length,
+    "every queue lands in exactly one category");
+});
+
+test("a queue named for its size is grouped by the name", () => {
+  const groups = groupQueues(REAL);
+  assert.deepEqual(groups.find(g => g.id === "1v1")!.queues.map(q => q.id),
+    ["1v1", "1v1 Narrow", "1v1 Wide"]);
+});
+
+/* Sortie and Battle are the two named for something else. Both state their size
+   in the first line of the description, and both land beside the casual queue of
+   the same size rather than in a category of their own. */
+test("a queue named for something else is grouped by what its description says", () => {
+  const groups = groupQueues(REAL);
+  assert.deepEqual(groups.find(g => g.id === "2v2")!.queues.map(q => q.id),
+    ["Sortie", "Sortie Wide", "2v2+"]);
+  assert.deepEqual(groups.find(g => g.id === "4v4")!.queues.map(q => q.id),
+    ["Battle", "Battle Wide", "4v4+"]);
+});
+
+/* The name is read first on purpose. "1v1"'s own description mentions "1v1
+   Narrow", so description-first would happen to give the same answer here and
+   would be relying on luck; a queue whose description named a different size
+   would land in the wrong place. */
+test("the name wins over a description that mentions another queue", () => {
+  const groups = groupQueues([
+    { id: "3v3 Narrow", description: "Like 5v5 but smaller." },
+  ]);
+  assert.deepEqual(groups.map(g => g.label), ["3v3"]);
+});
+
+/* Coop today, and whatever Zero-K adds next. A category of one is a worse
+   category than none, but it is much better than a queue that silently sorts
+   itself into 1v1 because that happened to be the first group made. */
+test("a queue with no size anywhere is its own category, and sorts last", () => {
+  const groups = groupQueues(REAL);
+  const coop = groups[groups.length - 1];
+  assert.equal(coop.label, "Coop");
+  assert.deepEqual(coop.queues.map(q => q.id), ["Coop"]);
+});
+
+test("two sizeless queues do not collapse into each other", () => {
+  const groups = groupQueues([
+    { id: "Coop", description: "Play together, against AI or chickens." },
+    { id: "Planetwars", description: "Fight for a planet." },
+  ]);
+  assert.deepEqual(groups.map(g => g.label), ["Coop", "Planetwars"]);
+});
+
+test("nothing offered groups to nothing", () => {
+  assert.deepEqual(groupQueues([]), []);
 });

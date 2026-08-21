@@ -595,9 +595,17 @@ export default function App() {
     : D.channelUsers;
 
   // ----------------------------------------------------------- matchmaker ---
+  /* The name titles the row and the description explains it. They used to be
+     the other way round, which reads fine against a fixture whose descriptions
+     are "1v1" and "Teams" and not at all against the server, where every
+     description is a sentence: "Play a casual 2v2 or larger with anyone."
+     `MaxPartySize` is the only other thing MatchMakerSetup actually serialises
+     and it decides whether you can bring your party, so it comes along. */
   const queueRows = mmQueues.map(q => ({
     id: q.Name,
-    label: q.Description || q.Name,
+    label: q.Name,
+    description: q.Description,
+    maxParty: q.MaxPartySize,
     waiting: mmCounts[q.Name] ?? 0,
     ingame: mmIngame[q.Name] ?? 0,
   }));

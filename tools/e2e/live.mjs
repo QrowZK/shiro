@@ -562,45 +562,85 @@ await shot("live-04-chat");
 
 console.log("matchmaker");
 await page.locator("nav button").nth(2).click();
-check("the server's queues are listed", await waitFor("queues", () => seeing(/Teams/) && seeing(/1v1/)));
-const teams = page.getByRole("switch", { name: "Teams" });
-const duel = page.getByRole("switch", { name: "1v1" });
-check("each queue is a switch that says whether you are in it",
-  (await teams.getAttribute("aria-checked")) === "false");
-/* The counts are how somebody picks a queue, so they belong on the row the
-   switch is on, not somewhere else on the screen. */
-check("and the row still carries the counts that queue reports",
+/* The server offers seventeen queues and the centre column shows eleven sizes.
+   Sortie is the proof it is a grouping rather than a shorter list: it is one of
+   the seventeen, it is not named for a size, and it is not on screen until you
+   open the category its description puts it in. */
+check("the server's queues arrive grouped by size rather than as one list",
+  await waitFor("queues", async () => (await seeing(/10v10/)) && (await seeing(/Coop/))
+    && !(await seeing(/Sortie/))));
+await shot("live-05-queues");
+
+/* `name` matches a substring by default, and "1v1" is a substring of the
+   category's own label. Every locator here is exact for that reason. */
+const cat = label => page.getByRole("switch", { name: label + " queues", exact: true });
+const opts = label => page.getByRole("button", { name: new RegExp("^Options for " + label + ":") });
+const queue = name => page.getByRole("switch", { name, exact: true });
+
+const duel = cat("1v1");
+const teams = cat("4v4");
+check("a category is a switch that says whether you are in it",
+  (await duel.getAttribute("aria-checked")) === "false");
+/* The counts are how somebody picks, so they stay on the row the switch is on -
+   added up, because the row now stands for three queues. Battle is 21 waiting
+   and 14 in game and the other two 4v4 queues are empty. */
+check("and the row carries what the queues under it add up to",
   /waiting\s*21[\s\S]*in game\s*14/i.test(await teams.innerText()));
+check("with how much of the category you are in beside it",
+  (await opts("1v1").innerText()).trim() === "0 of 3");
 
 let from = await mark();
-await teams.click();
-check("turning one on sends that queue",
-  await waitFor("mmq", () => sentSince(from, /^MatchMakerQueueRequest \{"Queues":\["Teams"\]\}$/)));
+await duel.click();
+/* MatchMakerQueueRequest carries the whole set you want to be in, so one click
+   on a size can send every queue in it. Server order, not click order. */
+check("turning a size on joins every queue in it",
+  await waitFor("mmq", () => sentSince(from,
+    /^MatchMakerQueueRequest \{"Queues":\["1v1","1v1 Narrow","1v1 Wide"\]\}$/)));
 /* `seeing` is case-insensitive against the whole screen, so "Searching" alone
    would also match a sentence sitting in the idle panel. Leaving is only
    offered while there is something to leave. */
 check("the screen switches to searching",
   await waitFor("searching", async () => (await seeing(/Searching/)) && (await seeing(/Leave all queues/))));
+/* Every MatchMakerStatus restates the counts, including the one that answers a
+   queue request. Joining used to blank every row on the screen. */
+check("without the counts vanishing the moment you join one",
+  await waitFor("counts", async () => /waiting\s*21/i.test(await teams.innerText())));
+check("and the sidebar is showing the three it just joined",
+  await waitFor("side", async () =>
+    (await queue("1v1 Narrow").getAttribute("aria-checked")) === "true"
+    && (await queue("1v1 Wide").getAttribute("aria-checked")) === "true"));
 
-/* The reason the screen is switches at all: MatchMakerQueueRequest carries the
-   whole set you want to be in, so a second queue joins the first instead of
-   replacing it - and there is no request that could say otherwise. */
+/* The sidebar is the whole reason a category can be a single switch: the one
+   person who cares which variant they are in can still say so. */
+from = await mark();
+await queue("1v1 Wide").click();
+check("switching one option off in the sidebar sends the rest, not a drop-out",
+  await waitFor("mmq2", () => sentSince(from,
+    /^MatchMakerQueueRequest \{"Queues":\["1v1","1v1 Narrow"\]\}$/)));
+check("and the category still reads as on, with the count saying it is partial",
+  await waitFor("partial", async () => (await duel.getAttribute("aria-checked")) === "true"
+    && (await opts("1v1").innerText()).trim() === "2 of 3"));
+
+/* Several at once was the point of switches and it survives the grouping. */
+from = await mark();
+await cat("Coop").click();
+check("a second size joins the first rather than replacing it",
+  await waitFor("mmq3", () => sentSince(from,
+    /^MatchMakerQueueRequest \{"Queues":\["Coop","1v1","1v1 Narrow"\]\}$/)));
+check("and the panel names all three queues, so six of them would still be legible",
+  await waitFor("named", async () => (await seeing(/3 queues/)) && (await seeing(/1v1 Narrow/))));
+await shot("live-05-queues-joined");
+
+/* A part-on category reads as on, so the click after it is the one that gets
+   you out - not the one that quietly puts you back in what you turned off. */
 from = await mark();
 await duel.click();
-check("turning a second on sends both, not just the new one",
-  await waitFor("mmq2", () => sentSince(from, /^MatchMakerQueueRequest \{"Queues":\["Teams","1v1"\]\}$/)));
-check("and both switches read as on", await waitFor("both", async () =>
-  (await teams.getAttribute("aria-checked")) === "true"
-  && (await duel.getAttribute("aria-checked")) === "true"));
-
-from = await mark();
-await teams.click();
-check("turning one back off sends the rest, rather than dropping out entirely",
-  await waitFor("mmq3", () => sentSince(from, /^MatchMakerQueueRequest \{"Queues":\["1v1"\]\}$/)));
+check("switching a partly-on size off leaves all of it",
+  await waitFor("mmq4", () => sentSince(from, /^MatchMakerQueueRequest \{"Queues":\["Coop"\]\}$/)));
 check("so the search carries on in what is left",
   await waitFor("still", async () =>
-    (await seeing(/Leave all queues/)) && (await teams.getAttribute("aria-checked")) === "false"
-    && (await duel.getAttribute("aria-checked")) === "true"));
+    (await seeing(/Leave all queues/)) && (await duel.getAttribute("aria-checked")) === "false"
+    && (await cat("Coop").getAttribute("aria-checked")) === "true"));
 
 await page.evaluate(() => window.__ZKS.push('AreYouReady {"MinimumWinChance":0.4,"QuickPlay":false,"SecondsRemaining":30}'));
 check("the ready check interrupts", await waitFor("ready", () => seeing(/Match found\. Ready\?/)));
