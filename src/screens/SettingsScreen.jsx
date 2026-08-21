@@ -345,6 +345,16 @@ function ManagedInstallSection({ engine, managed, onPrepare, onRemove, busy, pro
         <span style={{ font: "var(--text-ui-sm)", color: "var(--signal-warn)" }}>{error}</span>
       )}
 
+      {/* Said plainly, because the engine is the small half. The game is
+          about a gigabyte and lands through the ordinary download queue, so
+          Downloads is where it can be watched or cancelled. */}
+      {managed.engineInstalled && (
+        <span style={{ font: "var(--text-ui-sm)", color: "var(--text-low)", lineHeight: 1.5 }}>
+          The game itself downloads through the normal queue - see Downloads for
+          progress. Maps arrive as battles need them.
+        </span>
+      )}
+
       <div style={{ display: "flex", gap: "var(--sp-4)", alignItems: "center" }}>
         <Button variant="primary" size="sm" disabled={busy || !engine}
           onClick={onPrepare}>

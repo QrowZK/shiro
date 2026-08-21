@@ -45,6 +45,7 @@
     managed: { root: "C:\\Users\\test\\AppData\\Roaming\\shiro\\zk",
       prepared: false, engineInstalled: false, archives: 0 },
     engineAsked: null,
+    lastFetch: null,
     emitContent: status => emit("zks://content", status),
   };
   window.__ZKS = state;
@@ -373,6 +374,7 @@
         case "zks_content_fetch": {
           const id = "job-" + (++jobCounter);
           state.lastJobId = id;
+          state.lastFetch = { installRoot: args.installRoot, items: args.items };
           state.emitContent({ kind: "queued", id, items: args.items || [] });
           return id;
         }

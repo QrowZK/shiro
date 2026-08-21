@@ -686,15 +686,43 @@ export default function App() {
           setManagedProgress(undefined);
           setManagedBusy(true);
           installEngine(version)
-            .then(() => refreshManaged(version),
-              e => setManagedError(String(e?.message ?? e)))
+            .then(async root => {
+              /* Point the rest of the app at the directory we just filled.
+                 `installRoot` is already threaded through detection, the
+                 content preflight, the archive reader and the launcher, so
+                 setting it here is what turns an engine on disk into the
+                 installation Shiro actually uses - there is no second path to
+                 build. */
+              const dir = managedInfo?.root;
+              if (dir) useSettings.getState().set({ installRoot: dir });
+              if (redetect) redetect();
+
+              /* And pull the game in now rather than at the first battle. The
+                 pr-downloader that does it is the one that arrived inside the
+                 engine, in that same directory. */
+              const game = welcome?.Game;
+              if (dir && game) {
+                await useContent.getState()
+                  .fetch(version, [{ kind: "game", name: game }], dir)
+                  .catch(e => setManagedError(String(e?.message ?? e)));
+              }
+              refreshManaged(version);
+              return root;
+            }, e => setManagedError(String(e?.message ?? e)))
             .finally(() => setManagedBusy(false));
         },
         onRemove: () => {
           setManagedError(undefined);
           removeManaged()
-            .then(() => refreshManaged(welcome?.Engine),
-              e => setManagedError(String(e?.message ?? e)));
+            .then(() => {
+              /* Stop pointing at a directory that is no longer there, or the
+                 launcher keeps naming it in error messages. */
+              if (settings.installRoot === managedInfo?.root) {
+                useSettings.getState().set({ installRoot: undefined });
+                if (redetect) redetect();
+              }
+              refreshManaged(welcome?.Engine);
+            }, e => setManagedError(String(e?.message ?? e)));
         },
       } : undefined}
       away={away}

@@ -756,6 +756,18 @@ check("the engine the server asked for is the one requested",
     (await page.evaluate(() => window.__ZKS.engineAsked)) === "2025.06.21"));
 check("and the install reports itself as ready",
   await waitFor("engine-done", () => seeing(/2025\.06\.21 - installed/)));
+/* An engine on disk is not an installation until the rest of the app is
+   pointed at it. `installRoot` is already threaded through detection, the
+   content preflight, the archive reader and the launcher, so this is the one
+   thing that has to happen - and the game download proves it did. */
+check("the game is fetched into the directory Shiro just filled",
+  await waitFor("game-fetch", async () => {
+    const f = await page.evaluate(() => window.__ZKS.lastFetch);
+    return Boolean(f) && f.installRoot === "C:\\Users\\test\\AppData\\Roaming\\shiro\\zk"
+      && f.items.some(i => i.name === "Zero-K v1.14.8.0");
+  }));
+check("and the launcher is pointed at it too",
+  await waitFor("root-set", () => seeing(/AppData\\Roaming\\shiro\\zk|AppData.Roaming.shiro.zk/)));
 await clickText(/Remove it/);
 check("removing it goes back to offering a set-up",
   await waitFor("removed", () => seeing(/Set up an install here/)));
