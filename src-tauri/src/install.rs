@@ -54,15 +54,65 @@ pub fn make_managed(root: &Path) -> Result<(), String> {
 /// Directories that make a folder recognisably a Zero-K data dir rather than
 /// some unrelated folder that happens to be called Zero-K. `engine` alone is
 /// not enough - a bare engine checkout has one too.
-///
-/// A directory Shiro created counts from the moment it exists, because the
-/// engine and the game are on their way into it.
-fn looks_like_zk_root(root: &Path) -> bool {
-    if is_managed(root) {
-        return true;
-    }
+fn has_zk_content(root: &Path) -> bool {
     root.join("engine").is_dir()
         && (root.join("games").is_dir() || root.join("pool").is_dir() || root.join("packages").is_dir())
+}
+
+/// Is this a Zero-K data directory?
+///
+/// A directory Shiro created counts from the moment it exists, because the
+/// engine and the game are on their way into it. What that does *not* buy it is
+/// the front of the queue - see `is_filled`.
+fn looks_like_zk_root(root: &Path) -> bool {
+    is_managed(root) || has_zk_content(root)
+}
+
+/// Is there an engine in here yet - any engine?
+///
+/// Not the one a launch needs: detection does not know the version, and turning
+/// a version into a path is `find_engine`'s job. This asks the cruder question
+/// of whether anything has arrived in a directory at all, and the engine is the
+/// thing that arrives first.
+///
+/// Both layouts `engine_candidates` knows about, and neither matches what an
+/// interrupted download leaves behind: staging is `.partial-<version>` with no
+/// binary in it, and the empty `engine/<platform>/` around it is not an engine
+/// however much it looks like the start of one.
+fn has_engine(root: &Path) -> bool {
+    let engines = root.join("engine");
+    for dir in [engines.join(engine_platform()), engines] {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let version = entry.path();
+            if version.join(engine_exe()).is_file()
+                || version.join("bin").join(engine_exe()).is_file()
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Has anything actually landed here, or is this still a promise?
+///
+/// The marker makes an empty directory count as an install, which is the entire
+/// point of it: the folder has to be handed to the thing that installs the
+/// engine before the engine is in it. It is not a reason to launch out of an
+/// empty folder while a complete Zero-K sits elsewhere on the machine - which
+/// is exactly what a prepared install whose download never arrived did. It was
+/// picked first and the launch then failed at an engine that was not there, in
+/// a directory with nothing in it, on a machine with a working Steam copy.
+///
+/// So a promise ranks below anything that can run a game today, and stops being
+/// a promise as soon as one engine lands - early enough that the rest of the
+/// install still goes in beside it rather than into somebody else's Zero-K.
+fn is_filled(root: &Path) -> bool {
+    if is_managed(root) {
+        return has_engine(root);
+    }
+    has_zk_content(root)
 }
 
 /// Pull library paths out of Steam's `libraryfolders.vdf`.
@@ -150,7 +200,11 @@ fn candidates_with(managed: Option<&Path>) -> Vec<(PathBuf, String)> {
      *
      * First because it is the only candidate that exists because someone asked
      * for it. Everything below is a guess about where an installer might have
-     * put something. */
+     * put something.
+     *
+     * First in the list, that is. `choose` still puts a directory with nothing
+     * in it behind an install that can run a game today - being asked for is
+     * not the same as being ready. */
     if let Some(dir) = managed {
         out.push((dir.to_path_buf(), "Shiro".into()));
     }
@@ -207,16 +261,34 @@ pub fn detect_with(override_root: Option<&str>) -> Result<Install, String> {
     detect()
 }
 
+/// Pick an install out of a probed list.
+///
+/// Two passes over the same order, which is what keeps a marked but still empty
+/// directory from shadowing a real install. The first pass takes the best
+/// candidate that has something in it; only if there is no such thing anywhere
+/// does the second pass fall back to a directory that merely counts as one -
+/// which is the state every managed install starts in and has to be found in.
+///
+/// Split out from `detect` because everything else here can be tested without a
+/// Zero-K on the machine, and the order these are tried in is worth the same.
+fn choose(probed: &[(PathBuf, String)]) -> Option<Install> {
+    let first = |counts: fn(&Path) -> bool| {
+        probed
+            .iter()
+            .find(|(root, _)| counts(root))
+            .map(|(root, source)| Install {
+                root: root.clone(),
+                source: source.clone(),
+            })
+    };
+    first(is_filled).or_else(|| first(looks_like_zk_root))
+}
+
 /// Find the Zero-K install, or explain where we looked.
 pub fn detect() -> Result<Install, String> {
     let probed = candidates();
-    for (root, source) in &probed {
-        if looks_like_zk_root(root) {
-            return Ok(Install {
-                root: root.clone(),
-                source: source.clone(),
-            });
-        }
+    if let Some(found) = choose(&probed) {
+        return Ok(found);
     }
     Err(format!(
         "No Zero-K installation found. Looked in:\n{}",
@@ -284,6 +356,108 @@ pub fn find_engine(root: &Path, version: &str) -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("shiro-install-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// An engine binary where Zero-K files one. Content, not a real engine:
+    /// what is being tested is which directory gets picked, not what runs.
+    fn put_an_engine_in(root: &Path) {
+        let dir = root.join("engine").join(engine_platform()).join("2025.06.21");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(engine_exe()), b"an engine as far as detection is concerned").unwrap();
+    }
+
+    /// A directory that reads as somebody's working Zero-K - a Steam copy, say.
+    fn a_working_install(name: &str) -> PathBuf {
+        let dir = temp(name);
+        put_an_engine_in(&dir);
+        std::fs::create_dir_all(dir.join("pool")).unwrap();
+        dir
+    }
+
+    fn probe(entries: &[(&Path, &str)]) -> Vec<(PathBuf, String)> {
+        entries.iter().map(|(p, s)| (p.to_path_buf(), s.to_string())).collect()
+    }
+
+    #[test]
+    fn an_empty_managed_directory_does_not_shadow_a_working_install() {
+        /* Preparing a managed install marks the directory before anything is
+           downloaded into it, so an engine download that fails leaves a marked
+           folder with nothing in it. It is still probed first - and it still
+           has to lose to a copy that can start the game, or the launch reports
+           "engine is not installed" against a folder that never had one while a
+           complete Zero-K sits on the same machine. */
+        let managed = temp("empty-managed");
+        make_managed(&managed).unwrap();
+        let steam = a_working_install("steam-beside-empty");
+
+        let found = choose(&probe(&[(&managed, "Shiro"), (&steam, "Steam")]))
+            .expect("there was a working install to find");
+        assert_eq!(found.root, steam, "an empty folder was preferred to a real install");
+        assert_eq!(found.source, "Steam");
+
+        let _ = std::fs::remove_dir_all(&managed);
+        let _ = std::fs::remove_dir_all(&steam);
+    }
+
+    #[test]
+    fn a_download_that_stopped_halfway_is_not_an_engine() {
+        /* What an interrupted install leaves behind: `engine/<platform>/`
+           exists, holding the staging directory and no binary. A directory that
+           counts the moment `engine/` appears would call that an install. */
+        let managed = temp("half-managed");
+        make_managed(&managed).unwrap();
+        std::fs::create_dir_all(
+            managed.join("engine").join(engine_platform()).join(".partial-2025.06.21"),
+        )
+        .unwrap();
+        let steam = a_working_install("steam-beside-half");
+
+        let found = choose(&probe(&[(&managed, "Shiro"), (&steam, "Steam")])).unwrap();
+        assert_eq!(found.root, steam, "half a download outranked a working install");
+
+        let _ = std::fs::remove_dir_all(&managed);
+        let _ = std::fs::remove_dir_all(&steam);
+    }
+
+    #[test]
+    fn once_an_engine_lands_the_managed_install_leads_again() {
+        /* And this is why the marker is not written on success instead. The
+           game arrives after the engine, through the pr-downloader inside it,
+           and it has to arrive in the directory that engine is in - not in the
+           Steam install next door, which is where a managed install demoted
+           until it was complete would send several gigabytes. */
+        let managed = temp("engine-only-managed");
+        make_managed(&managed).unwrap();
+        put_an_engine_in(&managed);
+        let steam = a_working_install("steam-beside-engine");
+
+        let found = choose(&probe(&[(&managed, "Shiro"), (&steam, "Steam")])).unwrap();
+        assert_eq!(found.root, managed, "the install being filled lost its place");
+        assert_eq!(found.source, "Shiro");
+
+        let _ = std::fs::remove_dir_all(&managed);
+        let _ = std::fs::remove_dir_all(&steam);
+    }
+
+    #[test]
+    fn an_empty_managed_directory_is_still_found_when_it_is_all_there_is() {
+        // The marker's whole purpose: a directory with nothing in it yet is
+        // where the engine is about to go, and detection has to name it.
+        let managed = temp("only-managed");
+        make_managed(&managed).unwrap();
+
+        let found = choose(&probe(&[(&managed, "Shiro")])).expect("the marked directory was lost");
+        assert_eq!(found.root, managed);
+        assert_eq!(found.source, "Shiro");
+
+        let _ = std::fs::remove_dir_all(&managed);
+    }
 
     #[test]
     fn the_install_shiro_made_is_looked_for_first() {

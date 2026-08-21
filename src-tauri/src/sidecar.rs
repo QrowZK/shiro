@@ -10,11 +10,18 @@
 //! own `luaintro/main.lua` sets `VFS.DEF_MODE = VFS.RAW_FIRST`, which is what
 //! lets both files be found in the data directory at all.
 //!
-//! Three rules this file exists to keep:
+//! Four rules this file exists to keep:
 //!
-//! - **It is written fresh for every launch, and deleted first.** A stale file
-//!   describing last week's match is worse than none: the screen would state,
-//!   confidently, something untrue.
+//! - **It is written fresh for every launch, and cleared when the game ends.** A
+//!   stale file describing last week's match is worse than none: the screen
+//!   would state, confidently, something untrue. Shiro's own launches would
+//!   never see that, since each one writes or clears before it starts anything -
+//!   but an engine started out of the same directory by hand reads whatever is
+//!   left lying there, which is why the clearing outlives the launch.
+//! - **It goes only where Shiro's loading screen goes.** The addon that reads
+//!   it is placed in an install Shiro owns and nowhere else - `loadscreen.rs`
+//!   says why - so anywhere else this is a file nobody reads in a directory
+//!   nobody asked us to write in. `launch.rs` is where that is enforced.
 //! - **Every string is escaped.** A room title is typed by a person and reaches
 //!   here unfiltered. An unescaped quote or newline turns a data file into a
 //!   syntax error, and the addon then draws nothing where the match should be.
@@ -113,9 +120,19 @@ pub fn write(root: &Path, m: &Match) -> Result<(), String> {
         .map_err(|e| format!("could not write {}: {e}", file.display()))
 }
 
-/// Remove it, so a launch that carries no match does not inherit the last one's.
+/// Remove it, so nothing inherits the last match's roster.
 pub fn clear(root: &Path) {
-    let _ = std::fs::remove_file(path(root));
+    let file = path(root);
+    let _ = std::fs::remove_file(&file);
+    /* And the directory, if this was the only thing in it. `remove_dir` refuses
+       a directory that still holds something, which is the question worth
+       asking: with the loading screen installed there is an addon and two
+       pictures in here and the folder stays, and where this file was all Shiro
+       ever put - an install of somebody else's that an older build wrote into -
+       nothing of ours is left behind. */
+    if let Some(dir) = file.parent() {
+        let _ = std::fs::remove_dir(dir);
+    }
 }
 
 #[cfg(test)]
@@ -198,6 +215,9 @@ mod tests {
         write(&root, &sample()).unwrap();
         clear(&root);
         assert!(!path(&root).exists());
+        // And no folder of ours around where it was, for the install this was
+        // never supposed to be written into in the first place.
+        assert!(!root.join("LuaIntro").exists());
         // Clearing what is not there is the desired state, not an error.
         clear(&root);
         let _ = std::fs::remove_dir_all(&root);

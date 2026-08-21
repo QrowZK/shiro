@@ -266,9 +266,9 @@ pub fn zks_launch_spring(
         *running = true;
     }
 
-    let root = game.root.lock().ok().and_then(|r| r.clone());
-    let mut child = match start(&req, root.as_deref()) {
-        Ok(child) => child,
+    let override_root = game.root.lock().ok().and_then(|r| r.clone());
+    let (mut child, root) = match start(&req, override_root.as_deref()) {
+        Ok(started) => started,
         Err(e) => {
             if let Ok(mut r) = game.running.lock() {
                 *r = false;
@@ -286,6 +286,13 @@ pub fn zks_launch_spring(
     let running = game.running.clone();
     std::thread::spawn(move || {
         let code = child.wait().ok().and_then(|s| s.code());
+        /* The match is over, so what the file beside the loading screen says
+           about it stops being true. Nothing else would ever remove it - the
+           next launch through Shiro overwrites it, but an engine started out of
+           this directory by hand reads whatever is there, and would put the
+           roster of a match that finished days ago in front of an unrelated
+           game. */
+        crate::sidecar::clear(&root);
         if let Ok(mut r) = running.lock() {
             *r = false;
         }
@@ -295,23 +302,39 @@ pub fn zks_launch_spring(
     Ok(pid)
 }
 
-/// Resolve install and engine, write the script, spawn.
-fn start(req: &ConnectRequest, root: Option<&str>) -> Result<std::process::Child, String> {
-    let install = install::detect_with(root)?;
-
-    /* Tell the loading screen about the match, or make sure it is not told
-       about the last one. Failing to write it is not a reason to refuse a
-       launch - the screen degrades to the layout without it, and a game is
-       worth more than a caption. */
-    match &req.match_info {
+/// Tell the loading screen what it is loading, or clear what a launch left.
+///
+/// Only written into an install Shiro owns. The screen that reads this file is
+/// only ever placed in one - `loadscreen.rs` says why, and every other entry
+/// point to it already asks - so anywhere else this is a file nothing will read
+/// in a directory that is not ours, and in a Steam install under Program Files
+/// it is a write that fails anyway.
+///
+/// Clearing is not conditional on that, deliberately: Shiro wrote this file
+/// into whatever it launched from before the rule reached here, and nothing
+/// else is ever going to tidy those away.
+///
+/// Failing to write it is not a reason to refuse a launch - the screen degrades
+/// to the layout without it, and a game is worth more than a caption.
+fn tell_the_loading_screen(root: &Path, m: Option<&crate::sidecar::Match>) {
+    match m.filter(|_| install::is_managed(root)) {
         Some(m) => {
-            if let Err(e) = crate::sidecar::write(&install.root, m) {
+            if let Err(e) = crate::sidecar::write(root, m) {
                 eprintln!("could not write the match details: {e}");
-                crate::sidecar::clear(&install.root);
+                crate::sidecar::clear(root);
             }
         }
-        None => crate::sidecar::clear(&install.root),
+        None => crate::sidecar::clear(root),
     }
+}
+
+/// Resolve install and engine, write the script, spawn. Reports the directory
+/// it launched from, which is where the match file has to be cleared later.
+fn start(
+    req: &ConnectRequest,
+    root: Option<&str>,
+) -> Result<(std::process::Child, PathBuf), String> {
+    let install = install::detect_with(root)?;
 
     let exe = install::find_engine(&install.root, &req.engine)?;
     let script = script_path();
@@ -329,13 +352,89 @@ fn start(req: &ConnectRequest, root: Option<&str>) -> Result<std::process::Child
     for (k, v) in &plan.env {
         cmd.env(k, v);
     }
-    cmd.spawn()
-        .map_err(|e| format!("cannot start {}: {e}", plan.exe.display()))
+
+    /* Last, once everything that could refuse the launch has had its say. A
+       launch that fails at a missing engine never draws a loading screen, so a
+       match file written before that check describes a match nothing loaded -
+       and sits there until something else launches. */
+    tell_the_loading_screen(&install.root, req.match_info.as_ref());
+
+    match cmd.spawn() {
+        Ok(child) => Ok((child, install.root)),
+        Err(e) => {
+            // No engine started, so nothing is going to read it and nothing
+            // else would come along to take it away.
+            crate::sidecar::clear(&install.root);
+            Err(format!("cannot start {}: {e}", plan.exe.display()))
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn temp(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("shiro-launch-{name}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn a_match() -> crate::sidecar::Match {
+        crate::sidecar::Match {
+            map: "Comet Catcher Redux".into(),
+            title: "Teams 8v8 - all welcome".into(),
+            teams: vec![crate::sidecar::Team {
+                label: "Team 1".into(),
+                players: vec!["Qrow".into()],
+            }],
+        }
+    }
+
+    #[test]
+    fn the_match_file_only_goes_into_an_install_shiro_owns() {
+        /* The rule loadscreen.rs states and every switch on the screen already
+           honours: somebody else's Zero-K is theirs. The addon that reads this
+           file is never placed in one, so writing it there litters a directory
+           we were not invited into with a file nothing will ever open. */
+        let theirs = temp("someone-elses");
+        tell_the_loading_screen(&theirs, Some(&a_match()));
+        assert!(!crate::sidecar::path(&theirs).exists(), "a match file landed in somebody else's install");
+
+        let ours = temp("managed");
+        install::make_managed(&ours).unwrap();
+        tell_the_loading_screen(&ours, Some(&a_match()));
+        let written = std::fs::read_to_string(crate::sidecar::path(&ours)).unwrap();
+        assert!(written.contains("Comet Catcher Redux"));
+
+        let _ = std::fs::remove_dir_all(&theirs);
+        let _ = std::fs::remove_dir_all(&ours);
+    }
+
+    #[test]
+    fn one_an_older_shiro_left_in_their_install_is_taken_away() {
+        // Before the rule reached here, every launch wrote this wherever it
+        // launched from. Nothing else knows those files are ours.
+        let theirs = temp("their-leftover");
+        crate::sidecar::write(&theirs, &a_match()).unwrap();
+        tell_the_loading_screen(&theirs, Some(&a_match()));
+        assert!(!crate::sidecar::path(&theirs).exists());
+        assert!(!theirs.join("LuaIntro").exists(), "an empty LuaIntro was left in their install");
+        let _ = std::fs::remove_dir_all(&theirs);
+    }
+
+    #[test]
+    fn a_launch_with_no_match_clears_the_last_one() {
+        // The rule sidecar.rs opens with: a file describing a match that is not
+        // the one loading is worse than no file at all.
+        let ours = temp("no-match");
+        install::make_managed(&ours).unwrap();
+        tell_the_loading_screen(&ours, Some(&a_match()));
+        tell_the_loading_screen(&ours, None);
+        assert!(!crate::sidecar::path(&ours).exists());
+        let _ = std::fs::remove_dir_all(&ours);
+    }
 
     fn req() -> ConnectRequest {
         ConnectRequest {
