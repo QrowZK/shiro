@@ -556,6 +556,34 @@ if (launched) {
 }
 check("the room reports the game as running", await waitFor("running", () => seeing(/Game running/)));
 
+/* The content gate. `prepareAndLaunch` had no callers at all: ConnectSpring
+   called `launch` directly, so the preflight, the download and the Downloading
+   dialog were unreachable, and a game on a map the player lacked spawned an
+   engine that sat on "waiting for connection" forever.
+
+   Driven by pushing ConnectSpring rather than pressing Join game, because the
+   previous launch left this room showing a game in progress. */
+console.log("launching without the map");
+await page.evaluate(() => {
+  window.__ZKS.emitGame({ kind: "exited", code: 0 });
+  window.__ZKS.launched = null;
+  window.__ZKS.missing = [{ kind: "map", name: "Some Map Nobody Has" }];
+  window.__ZKS.push("ConnectSpring " + JSON.stringify({
+    Engine: "2025.06.21", Game: "Zero-K v1.14.8.0", Map: "Some Map Nobody Has",
+    Title: "gate test", Ip: "127.0.0.1", Port: 8452, ScriptPassword: "sp-9f2c",
+  }));
+});
+check("the download starts instead of the engine",
+  await waitFor("gate", () => seeing(/Some Map Nobody Has/i)));
+check("and nothing is launched into a map that is not there",
+  !(await page.evaluate(() => Boolean(window.__ZKS.launched))));
+/* Finish it the way the supervisor would, and the launch follows. */
+await page.evaluate(() => window.__ZKS.emitContent({
+  kind: "finished", id: window.__ZKS.lastJobId, outcome: "ok" }));
+check("and once the content lands, the game starts",
+  await waitFor("after-dl", () => page.evaluate(() => Boolean(window.__ZKS.launched))));
+await page.evaluate(() => { window.__ZKS.missing = []; });
+
 console.log("commands from the website");
 const siteMark = await mark();
 await page.evaluate(() => window.__ZKS.push('SiteToLobbyCommand ' + JSON.stringify({

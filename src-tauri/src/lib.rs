@@ -1,3 +1,4 @@
+mod archives;
 mod content;
 mod engine_settings;
 mod game_files;
