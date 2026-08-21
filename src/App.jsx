@@ -692,9 +692,11 @@ export default function App() {
       party={live ? partyMembers.map(n => userToChip(liveUsers[n], n)) : D.channelUsers.slice(0, 2)}
       onInvite={live ? name => useParty.getState().sendInvite(name) : undefined}
       onLeaveParty={live ? () => useParty.getState().leave() : undefined}
+      /* The whole set every time, because that is what the request carries -
+         there is no join and no leave to tell apart. */
       onQueue={live
-        ? (on, picked) => useMatchmaker.getState().setQueues(on ? picked : [])
-        : on => setQueued(on)}
+        ? names => useMatchmaker.getState().setQueues(names)
+        : names => setQueued(names.length > 0)}
       onFake={live ? undefined : () => setCheck(9)} />
   );
   else if (view === "profile") body = (
@@ -743,6 +745,7 @@ export default function App() {
         badges: profiles[profileOf].Badges,
       } : liveUsers[profileOf] ? {
         level: liveUsers[profileOf].Level,
+        rank: liveUsers[profileOf].Rank,
         elo: Math.round(liveUsers[profileOf].EffectiveElo || 0),
         mmElo: Math.round(liveUsers[profileOf].EffectiveMmElo || 0),
         badges: liveUsers[profileOf].Badges,
